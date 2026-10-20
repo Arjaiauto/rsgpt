@@ -1,0 +1,10 @@
+python-dotenv
+requests
+pandas
+google-api-python-client
+groq
+anthropic
+voyageai
+supabase
+rapidfuzz
+tqdm
