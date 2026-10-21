@@ -8,3 +8,4 @@ voyageai
 supabase
 rapidfuzz
 tqdm
+yt-dlp
