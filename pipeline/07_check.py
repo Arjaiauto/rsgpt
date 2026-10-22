@@ -19,6 +19,13 @@ episode's segments (and, for Hindi episodes, translation_segments):
   6. Raj questions and Raj opinions cite at least one segment whose speaker is raj.
   7. Disagreements cite at least one segment labelled raj and one labelled guest
      (both sides of the exchange).
+  8. Every number in the text (digits, a percentage, a year, an amount, or English
+     number words such as "twelve" or "five million") must appear in the cited lines:
+     their text_roman, text_original or English translation, as digits or as
+     English or Hindi number words ("50 hazaar" matches 50,000; "5 million" matches
+     "50 lakh"). A bare "one" is not counted, since it is mostly not a number. For
+     guests the fields are checked against the cited lines of all facts, and for
+     clips the topic against the clip's lines.
 
 A row gets verified = true only when every check passes; otherwise check_notes
 lists the reasons ("check: ..."). Notes that are not check results (the question
@@ -57,6 +64,71 @@ EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 PHONE = re.compile(r"(?<!\d)(?:(?:\+91|0)[\s-]?)?[6-9]\d{4}[\s-]?\d{5}(?!\d)|\+\d{1,3}[\s-]?\d{2,4}[\s-]?\d{3,4}[\s-]?\d{3,4}")
 
 log = logging.getLogger("check")
+
+# ---------- numbers ----------
+
+UNITS = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+         "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+         "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40,
+         "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90, "dozen": 12}
+# Hindi number words in Roman script; only read in the transcript, never in the item text.
+HINDI_UNITS = {"ek": 1, "do": 2, "teen": 3, "char": 4, "chaar": 4, "paanch": 5, "panch": 5, "chhe": 6, "chheh": 6,
+               "saat": 7, "aath": 8, "nau": 9, "das": 10, "gyarah": 11, "barah": 12, "baarah": 12, "pandrah": 15,
+               "bees": 20, "pachchees": 25, "pachees": 25, "tees": 30, "chalis": 40, "chaalis": 40,
+               "pachaas": 50, "pachas": 50, "saath": 60, "sattar": 70, "assi": 80, "nabbe": 90, "sau": 100}
+SCALES = {"hundred": 100, "thousand": 1e3, "k": 1e3, "lakh": 1e5, "lakhs": 1e5, "laakh": 1e5, "million": 1e6,
+          "crore": 1e7, "crores": 1e7, "karod": 1e7, "karor": 1e7, "billion": 1e9, "trillion": 1e12,
+          "hazaar": 1e3, "hazar": 1e3, "hajar": 1e3, "hazaron": 1e3, "arab": 1e9}
+DEVANAGARI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
+# A digit right after a letter is part of a name ("B2C", "A320"), not a number.
+NUMBER_TOKEN = re.compile(r"(?<![a-z\d])\d[\d,]*(?:\.\d+)?|[a-z]+")
+
+
+def numbers_in(text: str, transcript: bool) -> list[tuple[str, float]]:
+    """(as written, value) for each number in the text. In the transcript Hindi words count too; in an item
+    a bare "one" does not, since it is mostly "one of", "the one who" and so on."""
+    tokens = NUMBER_TOKEN.findall(re.sub(r"(\d)k\b", r"\1 k", (text or "").lower().translate(DEVANAGARI_DIGITS)))
+    words = UNITS | (HINDI_UNITS if transcript else {})
+    found, i = [], 0
+    while i < len(tokens):
+        tok, start = tokens[i], i
+        if tok[0].isdigit():
+            value = float(tok.replace(",", "")) if tok.replace(",", "").replace(".", "", 1).isdigit() else None
+            i += 1
+        elif tok in words:
+            value = words[tok]
+            i += 1
+            if value >= 20 and value % 10 == 0 and i < len(tokens) and tokens[i] in words and words[tokens[i]] < 10:
+                value += words[tokens[i]]  # "twenty five"
+                i += 1
+        elif tok in SCALES and tok != "k" and not tok.endswith("s"):
+            value = 1.0  # "a million", "hundred"
+        else:
+            i += 1
+            continue
+        if value is None:
+            continue
+        while i < len(tokens) and tokens[i] in SCALES:
+            value *= SCALES[tokens[i]]
+            i += 1
+        if tokens[start] in SCALES and i == start:
+            i += 1
+        written = " ".join(tokens[start:i]).strip(",")
+        if transcript or written != "one":
+            found.append((written, value))
+            if transcript and i - start > 1 and tokens[start][0].isdigit():
+                found.append((tokens[start], float(tokens[start].replace(",", ""))))  # "5" of "5 million"
+    return found
+
+
+def missing_numbers(texts: list[str], cited_texts: list[str]) -> list[str]:
+    have = {round(v, 6) for t in cited_texts for _, v in numbers_in(t, transcript=True)}
+    missing = []
+    for text in texts:
+        for written, value in numbers_in(text, transcript=False):
+            if round(value, 6) not in have and written not in missing:
+                missing.append(written)
+    return missing
 
 
 def load_captions_module():
@@ -162,6 +234,17 @@ class Episode:
         return " ".join(t["text"] for t in self.translations
                         if t["end_s"] > start + TIME_TOLERANCE and t["start_s"] < end - TIME_TOLERANCE)
 
+    def check_numbers(self, texts: list, cited: list[dict], failures: list) -> None:
+        """Every number in the texts must appear in the cited lines' Roman, original or translation text."""
+        if not cited:
+            return
+        sources = [s["text_roman"] for s in cited] + [s["text_original"] for s in cited]
+        sources += [self.translation_text(s["start_s"], s["end_s"]) for s in cited]
+        flat = [t for x in texts for t in (x if isinstance(x, list) else [x]) if t]
+        missing = missing_numbers(flat, sources)
+        if missing:
+            failures.append(("number not in the cited lines", ", ".join(missing)))
+
 
 def check_insight(row: dict, ep: Episode) -> tuple[list, bool]:
     """Failures as (reason, detail), and whether a quote passed only through the translation."""
@@ -191,6 +274,7 @@ def check_insight(row: dict, ep: Episode) -> tuple[list, bool]:
         missing = [w for w in ("raj", "guest") if not any(s["speaker"] == w for s in cited)]
         if missing:
             failures.append(("disagreement lacks a side", "no line labelled " + " or ".join(missing)))
+    ep.check_numbers([row["text"]], cited, failures)
     failures += [(r, "") for r in contact_details(row["text"])]
     return failures, translated
 
@@ -219,6 +303,7 @@ def check_clip(row: dict, ep: Episode, merged: dict | None) -> list:
         failures.append(("clip does not start at a segment", ""))
     elif match_score(row["opening_line"] or "", first["text_roman"]) < OPENING_LINE_MIN_SCORE:
         failures.append(("opening line does not match the first segment", ""))
+    ep.check_numbers([row["topic"]], cited, failures)
     failures += [(r, "") for r in contact_details(row["opening_line"], row["topic"])]
     return failures
 
@@ -231,7 +316,8 @@ def check_guest(row: dict, ep: Episode, merged: dict | None) -> list:
     if not guest:
         failures.append(("no source segment IDs found for the guest in the run's result file", ""))
     else:
-        ep.check_ids(guest.get("source_segment_ids", []), failures)
+        cited = ep.check_ids(guest.get("source_segment_ids", []), failures)
+        ep.check_numbers([row["name"], row["organisation"], row["role_at_episode"], row["bio"]], cited, failures)
     failures += [(r, "") for r in contact_details(row["name"], row["organisation"], row["role_at_episode"],
                                                   row["bio"], row["sector_tags"] or [])]
     if row.get("linkedin_url") or row.get("youtube_channel_url"):

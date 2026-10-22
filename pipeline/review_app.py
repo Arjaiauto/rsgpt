@@ -230,9 +230,13 @@ def show_item(run_id: str, vid: str, key: tuple[str, int], prefix: str = "", lin
             st.markdown(f"[Open on YouTube at {clock(start)}]({youtube(vid, start)})")
     st.markdown("**Cited transcript lines**")
     if cited:
-        st.markdown("  \n".join(
-            f"[{clock(s['start_s'])}]({youtube(vid, s['start_s'])}) &nbsp; "
-            f"**{SPEAKER_LETTERS.get(s['speaker'], 'U')}** &nbsp; {escape(s['text_roman'])}" for s in cited))
+        shown = []
+        for n, s in enumerate(cited):
+            if n and s["seq"] > cited[n - 1]["seq"] + 1:
+                shown.append("\\[…\\]")  # lines left out between two cited passages
+            shown.append(f"[{clock(s['start_s'])}]({youtube(vid, s['start_s'])}) &nbsp; "
+                         f"**{SPEAKER_LETTERS.get(s['speaker'], 'U')}** &nbsp; {escape(s['text_roman'])}")
+        st.markdown("  \n".join(shown))
     else:
         st.caption("No cited lines found for this item.")
     return item

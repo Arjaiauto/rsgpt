@@ -181,8 +181,12 @@ def build_prompt(item: dict, row: dict, episode: dict, segments: dict[int, dict]
                           for n, f in enumerate(facts, 1))
     prompt = (f"Episode: {episode['title']}\n\nWhat this kind of item must be: {TYPE_RULES[item['type']]}\n\n"
               f"Item ({label}):\n{text}\n\nCited transcript lines:\n")
-    prompt += "\n".join(f"[S{s['id']} {SPEAKER_LETTERS.get(s['speaker'], 'U')} | {clock(s['start_s'])}] "
-                        f"{s['text_roman']}" for s in cited) or "(none)"
+    shown = []
+    for n, s in enumerate(cited):
+        if n and s["seq"] > cited[n - 1]["seq"] + 1:
+            shown.append("[...]")  # lines left out between two cited passages
+        shown.append(f"[S{s['id']} {SPEAKER_LETTERS.get(s['speaker'], 'U')} | {clock(s['start_s'])}] {s['text_roman']}")
+    prompt += "\n".join(shown) or "(none)"
     if episode.get("caption_language") == "hi" and cited:
         english = [t for t in translations if any(t["end_s"] > s["start_s"] + 0.05 and t["start_s"] < s["end_s"] - 0.05
                                                   for s in cited)]
