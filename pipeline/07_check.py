@@ -27,6 +27,8 @@ episode's segments (and, for Hindi episodes, translation_segments):
      guests the fields are checked against the cited lines of all facts, and for
      clips the topic against the clip's lines.
 
+Rules 1-8 are locked with extraction v5 (Gate 1, 2026-10-23) for the full run.
+
 A row gets verified = true only when every check passes; otherwise check_notes
 lists the reasons ("check: ..."). Notes that are not check results (the question
 type of Raj's questions) are kept. The same goes for clips and guests (their
@@ -362,10 +364,6 @@ def run(run_id: str) -> None:
              len(insights), len(clips), len(guests), len(vids), len(merged))
     meta = {e["video_id"]: e for e in fetch(db, "episodes", "video_id,duration_seconds,caption_language",
                                                      order="video_id")}
-    episodes = {}
-    for vid in vids:
-        episodes[vid] = Episode(db, vid, meta.get(vid, {}).get("duration_seconds"),
-                                meta.get(vid, {}).get("caption_language"))
 
     report = defaultdict(lambda: {"total": 0, "passed": 0, "translated": 0, "reasons": defaultdict(list)})
     changes = {"insights": {}, "clips": {}, "guests": {}}
@@ -383,13 +381,18 @@ def run(run_id: str) -> None:
         if any(row.get(k) != v for k, v in values.items()):
             changes[table][row["id"]] = values
 
-    for row in insights:
-        failures, translated = check_insight(row, episodes[row["video_id"]])
-        record("insights", row["type"], row, failures, translated)
-    for row in clips:
-        record("clips", "clip", row, check_clip(row, episodes[row["video_id"]], merged.get(row["video_id"])))
-    for row in guests:
-        record("guests", "guest", row, check_guest(row, episodes[row["video_id"]], merged.get(row["video_id"])))
+    # One episode's segments in memory at a time.
+    for n, vid in enumerate(vids, 1):
+        ep = Episode(db, vid, meta.get(vid, {}).get("duration_seconds"), meta.get(vid, {}).get("caption_language"))
+        for row in (r for r in insights if r["video_id"] == vid):
+            failures, translated = check_insight(row, ep)
+            record("insights", row["type"], row, failures, translated)
+        for row in (r for r in clips if r["video_id"] == vid):
+            record("clips", "clip", row, check_clip(row, ep, merged.get(vid)))
+        for row in (r for r in guests if r["video_id"] == vid):
+            record("guests", "guest", row, check_guest(row, ep, merged.get(vid)))
+        if n % 25 == 0:
+            log.info("checked %s of %s episodes", n, len(vids))
 
     for table in ("insights", "clips", "guests"):
         if changes[table]:

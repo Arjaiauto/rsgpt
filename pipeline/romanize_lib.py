@@ -30,6 +30,9 @@ POLL_SECONDS = 30
 # created so that at most this many schemas not sent before in this run go out per minute.
 NEW_SCHEMAS_PER_MINUTE = 40
 RATE_LIMIT_WAIT_SECONDS = 60  # pause before resending results refused for a rate limit
+# One batch may hold at most 100,000 requests and 256 MB; stay well under both.
+MAX_BATCH_REQUESTS = 50000
+MAX_BATCH_BYTES = 100_000_000
 
 # Prices checked 2026-10-21 (claude-haiku-5-5, prompts up to 100K tokens), USD per
 # million tokens; the Batch API bills half.
@@ -207,17 +210,22 @@ def schema_key(request: Request) -> str:
 
 
 def paced_groups(requests: dict[str, Request]) -> list[dict[str, Request]]:
-    """Split requests so that each group brings at most NEW_SCHEMAS_PER_MINUTE schemas not sent before."""
-    groups, current, new_here, planned = [], {}, set(), set(_schemas_sent)
+    """Split requests so that each group brings at most NEW_SCHEMAS_PER_MINUTE schemas not sent before,
+    and stays under MAX_BATCH_REQUESTS requests and MAX_BATCH_BYTES of JSON."""
+    groups, current, new_here, planned, size = [], {}, set(), set(_schemas_sent), 0
     for custom_id, request in requests.items():
         key = schema_key(request)
-        if key and key not in planned:
-            if len(new_here) >= NEW_SCHEMAS_PER_MINUTE:
-                groups.append(current)
-                current, new_here = {}, set()
+        request_bytes = len(json.dumps(request, ensure_ascii=False).encode("utf-8"))
+        new_schema = key and key not in planned
+        if current and ((new_schema and len(new_here) >= NEW_SCHEMAS_PER_MINUTE)
+                        or len(current) >= MAX_BATCH_REQUESTS or size + request_bytes > MAX_BATCH_BYTES):
+            groups.append(current)
+            current, new_here, size = {}, set(), 0
+        if new_schema:
             new_here.add(key)
             planned.add(key)
         current[custom_id] = request
+        size += request_bytes
     if current:
         groups.append(current)
     return groups
@@ -228,7 +236,7 @@ def run_batch(client: anthropic.Anthropic, requests: dict[str, Request], expecte
     """Send the requests (or resume the saved, uncollected job), wait, and save each chunk's answer.
 
     Requests go out as one batch, or as several a minute apart when they bring more than
-    NEW_SCHEMAS_PER_MINUTE new JSON schemas. save(path, chunk_id, expected_ids, result) stores
+    NEW_SCHEMAS_PER_MINUTE new JSON schemas or exceed the batch size limits. save(path, chunk_id, expected_ids, result) stores
     one result; save_chunk by default. Results refused for a rate limit are not saved, so they
     do not count as attempts; their IDs are returned so the caller can wait and send them again.
     """

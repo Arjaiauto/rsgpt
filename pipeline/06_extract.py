@@ -87,6 +87,10 @@ SPEAKER_DIR = EXTRACT_DIR / "speakers" / "v2"
 # v4 cites each item as a start-to-end passage, gives the guest's bio as cited facts, and
 # asks for clips that start and end on complete thoughts. v5 keeps v4's passages and writes
 # each item only from what its passage says; a disagreement may cite two passages.
+# LOCKED: v5 passed Gate 1 on 2026-10-23 and is the version for the full 500-episode run.
+# The full run reuses v5's run ID (haiku/v5/run_id.txt), so the test episodes already done
+# are skipped and every episode's rows share one run_id. Do not change the prompt, schema
+# or merge rules without a new VERSION and a new Gate 1.
 VERSION = "v5"
 
 MODELS = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5"}
