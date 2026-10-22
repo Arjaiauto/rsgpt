@@ -4,10 +4,12 @@ Two modes, chosen in the sidebar:
 
 - Per episode: pick a run (default: the extract-haiku-v3 run) and an episode, and
   review its verified rows: the guest profile, then insights and clips in time order.
-- Gate 1 sample: a fixed sample of the extract-haiku-v3 run's verified rows across
-  the test episodes: every guest profile, and per episode up to SAMPLE_PER_EPISODE
-  of each type (fewer when an episode has fewer). It is drawn once, at random with
-  a fixed seed, and saved to data/review/, so it stays the same between sessions.
+- Gate 1 sample: a fixed sample of one Haiku run's verified rows across the test
+  episodes (gate1_lib.py): every guest profile, and per episode up to
+  SAMPLE_PER_EPISODE of each type (fewer when an episode has fewer). It is drawn
+  once, at random with a fixed seed, and saved to data/review/, so it stays the
+  same between sessions. Runs that have a saved sample can be picked; the newest
+  is the default.
   Progress is out of the sample total; accuracy is shown overall and per type.
 - Fast review: the Gate 1 sample after the AI pre-check (08_ai_precheck.py). Set 1
   holds every item Sonnet marked not_supported or unsure; set 2 a fixed random 100
@@ -33,7 +35,6 @@ Usage:
 
 import json
 import os
-import random
 import re
 from pathlib import Path
 
@@ -41,18 +42,18 @@ import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client
 
+import gate1_lib
+
 ROOT = Path(__file__).resolve().parent.parent
 EXTRACT_DIR = ROOT / "data" / "extractions"
-REVIEW_DIR = ROOT / "data" / "review"
+REVIEW_DIR = gate1_lib.REVIEW_DIR
 DEFAULT_RUN_PREFIX = "extract-haiku-v3"
+GATE1_RUN_PREFIX = "extract-haiku-v"
 PAGE = 1000
 DISCLAIMER = "Unofficial project, not affiliated with Figuring Out."
 TYPE_LABELS = {"guest": "Guest profile", "quote": "Quote", "disagreement": "Disagreement",
                "raj_opinion": "Raj opinion", "raj_question": "Raj question", "opportunity": "Opportunity",
                "takeaway": "Takeaway", "clip": "Clip"}
-SAMPLE_PER_EPISODE = {"quote": 4, "disagreement": 3, "raj_opinion": 3, "raj_question": 3, "opportunity": 3,
-                      "takeaway": 2, "clip": 2}
-SAMPLE_SEED = 1
 SPEAKER_LETTERS = {"raj": "R", "guest": "G", "unknown": "U"}
 VERDICTS = [("Correct", "correct", "1"), ("Wrong", "wrong", "2"), ("Unsure", "unsure", "3")]
 FAST_PAGE = 10
@@ -150,34 +151,22 @@ def load_episode(run_id: str, vid: str) -> dict:
             "order": [(i["table"], i["id"]) for i in items]}
 
 
-def sample_path(run_id: str) -> Path:
-    return REVIEW_DIR / f"gate1_sample_{run_id}.json"
+sample_path = gate1_lib.sample_path
 
 
 def gate1_sample(run_id: str) -> list[dict]:
     """The saved Gate 1 sample for the run, drawn and saved on first use."""
-    path = sample_path(run_id)
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))["items"]
-    rng = random.Random(SAMPLE_SEED)
-    rows = ([{"table": "guests", "id": r["id"], "type": "guest", "video_id": r["video_id"]}
-             for r in fetch("guests", "id,video_id", run_id=run_id, verified=True)]
-            + [{"table": "insights", "id": r["id"], "type": r["type"], "video_id": r["video_id"]}
-               for r in fetch("insights", "id,video_id,type", run_id=run_id, verified=True)]
-            + [{"table": "clips", "id": r["id"], "type": "clip", "video_id": r["video_id"]}
-               for r in fetch("clips", "id,video_id", run_id=run_id, verified=True)])
-    sample = []
-    for vid in sorted({r["video_id"] for r in rows}):
-        sample += [r for r in rows if r["video_id"] == vid and r["type"] == "guest"]
-        for kind, n in SAMPLE_PER_EPISODE.items():
-            pool = sorted((r for r in rows if r["video_id"] == vid and r["type"] == kind), key=lambda r: r["id"])
-            sample += sorted(rng.sample(pool, min(n, len(pool))), key=lambda r: r["id"])
-    REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({"run_id": run_id, "seed": SAMPLE_SEED, "per_episode": SAMPLE_PER_EPISODE,
-                               "items": sample}, indent=1), encoding="utf-8")
-    tmp.replace(path)
-    return sample
+    return gate1_lib.gate1_sample(run_id, lambda table, columns, **eq: fetch(table, columns, **eq))
+
+
+def gate1_run(runs: list[str], label: str) -> str | None:
+    """Pick a Haiku run in the sidebar: those with a saved sample, newest first (or the newest run if none has one)."""
+    haiku = [r for r in runs if r.startswith(GATE1_RUN_PREFIX)]
+    choices = sorted((r for r in haiku if sample_path(r).exists()), reverse=True) or sorted(haiku, reverse=True)[:1]
+    if not choices:
+        st.error(f"No run starting with {GATE1_RUN_PREFIX}.")
+        return None
+    return st.sidebar.selectbox(label, choices)
 
 
 def latest_verdicts(keys: list[tuple[str, int]]) -> dict[tuple[str, int], str]:
@@ -307,9 +296,8 @@ def episode_mode(runs: list[str]) -> None:
 
 
 def sample_mode(runs: list[str]) -> None:
-    run_id = next((r for r in runs if r.startswith(DEFAULT_RUN_PREFIX)), None)
+    run_id = gate1_run(runs, "Sample of run")
     if run_id is None:
-        st.error(f"No run starting with {DEFAULT_RUN_PREFIX}.")
         return
     sample = gate1_sample(run_id)
     keys = [(s["table"], s["id"]) for s in sample]
@@ -369,10 +357,11 @@ def fast_report(flagged: list, random_keys: list, supported_total: int, verdicts
 
 
 def fast_mode(runs: list[str]) -> None:
-    run_id = next((r for r in runs if r.startswith(DEFAULT_RUN_PREFIX)), None)
+    run_id = gate1_run(runs, "Sample of run")
     files = fast_files(run_id) if run_id else None
     if files is None:
-        st.info("No AI pre-check results yet. Run: .venv\\Scripts\\python.exe pipeline\\08_ai_precheck.py")
+        st.info("No AI pre-check results for this run yet. Run: .venv\\Scripts\\python.exe "
+                f"pipeline\\08_ai_precheck.py --run-id {run_id}")
         return
     pre, fast = files
     sample = gate1_sample(run_id)

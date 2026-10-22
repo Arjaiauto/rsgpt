@@ -20,14 +20,17 @@ each schema once):
    text right under it. The answer holds guest, topics, items (takeaways,
    opportunities with one of the 13 categories in schema.sql, quotes, disagreements,
    Raj's questions and Raj's opinions) and clips (first and last line ID). Every item
-   points to S segment IDs; an item that rests only on T lines is marked translated.
-   A part with no items at all, or no Raj questions while Raj speaks in many turns,
-   is asked once more and the fuller answer kept.
+   gives the S IDs of the first and last line of the whole passage that supports it
+   (at most MAX_SPAN_SECONDS long), and its source_segment_ids are every line in
+   between. The guest's bio is a list of facts, each with its own passage. An item
+   that rests only on T lines is marked translated. A part with no items at all, or
+   no Raj questions while Raj speaks in many turns, is asked once more and the
+   fuller answer kept.
 
-Checks in code: item IDs must be S IDs from the request (unknown IDs are removed,
-an item left with none is dropped); quotes must appear word for word in the cited
-S lines and be under 25 words, otherwise check_notes says so; clips outside 30-90
-seconds are dropped.
+Checks in code: start and end IDs must be S IDs from the request, in order, and at
+most MAX_SPAN_SECONDS apart, otherwise the item (or guest fact) is dropped; quotes
+must appear word for word in the cited S lines and be under 25 words, otherwise
+check_notes says so; clips outside 30-90 seconds are dropped.
 
 An episode over MAX_INPUT_TOKENS (counted with the token-counting endpoint) is
 split into parts that overlap by OVERLAP_SEGMENTS lines. Each part owns the lines
@@ -79,7 +82,9 @@ SPEAKER_DIR = EXTRACT_DIR / "speakers" / "v2"
 # Prompt version of the extraction step. Results of each version live in their own folder,
 # so an earlier version's files are kept for comparison (v1 sits directly in <model>/).
 # v2 used the first speaker labels (one string per chunk); v3 the grouped ones in speakers/v2.
-VERSION = "v3"
+# v4 cites each item as a start-to-end passage, gives the guest's bio as cited facts, and
+# asks for clips that start and end on complete thoughts.
+VERSION = "v4"
 
 MODELS = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5"}
 SPEAKER_MODEL = "haiku"
@@ -98,6 +103,7 @@ QUOTES = (5, 10)
 CLIPS = (4, 8)
 QUOTE_MAX_WORDS = 25
 CLIP_SECONDS = (30, 90)
+MAX_SPAN_SECONDS = 180  # longest passage an item or guest fact may cite
 RAJ_TURNS_FOR_QUESTIONS = 5  # a part where Raj speaks in this many turns should have some of his questions
 
 SPEAKER_CHUNK_LINES = 150
@@ -139,27 +145,33 @@ The transcript lines come in two kinds:
 
 Ground rules:
 1. Only use what is said in the transcript. If you are unsure about something, leave it out. Never invent names, numbers, facts, organisations, questions or opinions, and never fill gaps from your own knowledge.
-2. Every item must point to the S line IDs (numbers only, without the "S") where it is said. Cite the lines that actually contain it, not whole stretches.
+2. Every item gives start_id and end_id: the S IDs (numbers only, without the "S") of the first and last line of the whole passage that supports it. Someone who reads only the lines from start_id to end_id must be able to check the item: include the question that leads into an answer, the complete explanation and, for an exchange, both sides. Do not cut a passage off mid-sentence. A passage is at most {MAX_SPAN_SECONDS // 60} minutes long (check the timestamps); if the support is spread wider than that, leave the item out.
 3. If an item rests only on what the T lines say, because you could not confirm it from the S lines, also list those T IDs and set translated to true. Otherwise translated is false and translation_line_ids may be empty.
 4. Write takeaways, opportunities, disagreements, opinions, questions and topics in the third person in English ("Raj argues...", "The guest says..."). Never write as Raj in the first person.
 5. Never include phone numbers, email addresses or other contact details.
 
 What to return. Takeaways, opportunities, quotes, disagreements, Raj's questions and Raj's opinions all go in the one "items" list, each with its kind; category is "none" except for opportunities, and question_type is "none" except for Raj's questions.
-- guest: the main guest's name, organisation, role at the time of the episode, sector tags, and a bio of 2-3 lines using only what was said in the episode. Use empty strings and lists for anything not said.
+- guest: the main guest's name, organisation, role at the time of the episode and sector tags, and facts: a short list of facts about the guest (3-6), each one sentence with its own start_id and end_id. Only facts actually said in the episode, and the name, organisation and role must each be backed by one of the facts. Use empty strings and lists for anything not said.
 - topics: short tags for what the episode covers.
-- takeaway: the key takeaways (the request says how many).
-- opportunity: every concrete opportunity mentioned (a sector, business idea, market gap, skill, career path, investment theme, hiring signal, policy shift, place, tool, contrarian take, resource or warning), each with one category: {", ".join(CATEGORIES)}.
-- quote: short, striking quotes (the request says how many), under {QUOTE_MAX_WORDS} words each, copied exactly as written in the cited S lines: same words, same spelling, same fillers and repetitions, never from T lines and never translated, corrected or tidied.
-- disagreement: every real disagreement between Raj and the guest, saying what each one holds.
-- raj_question: every distinct question Raj asks the guest, written in English, each with a type: {", ".join(QUESTION_TYPES)}. A long episode usually has dozens.
-- raj_opinion: every opinion Raj states himself (not his questions, not the guest's views).
-- clips: stretches of {CLIP_SECONDS[0]}-{CLIP_SECONDS[1]} seconds that make sense on their own (the request says how many), each as the S ID of its first and last line, with a short topic and a score from 0 to 1 for how strong a standalone clip it is. Check the timestamps: the last line should start {CLIP_SECONDS[0]}-{CLIP_SECONDS[1]} seconds after the first.
+- takeaway: the key takeaways (the request says how many); the passage holds the full explanation.
+- opportunity: every concrete opportunity mentioned (a sector, business idea, market gap, skill, career path, investment theme, hiring signal, policy shift, place, tool, contrarian take, resource or warning), each with one category: {", ".join(CATEGORIES)}. The passage holds the full explanation.
+- quote: short, striking quotes (the request says how many), under {QUOTE_MAX_WORDS} words each, copied exactly as written in the cited S lines: same words, same spelling, same fillers and repetitions, never from T lines and never translated, corrected or tidied. Its passage is just the line or lines that hold it.
+- disagreement: every real disagreement between Raj and the guest, saying what each one holds. The passage must hold both Raj's side and the guest's side in their own words; if it cannot, leave the disagreement out.
+- raj_question: every distinct question Raj asks the guest, written in English as the full question, each with a type: {", ".join(QUESTION_TYPES)}. The passage starts where Raj starts asking and holds the whole question, not only a closing phrase like "what do you think". A long episode usually has dozens.
+- raj_opinion: every opinion Raj states himself (not his questions, not the guest's views); the passage holds his full statement.
+- clips: stretches of {CLIP_SECONDS[0]}-{CLIP_SECONDS[1]} seconds that make sense on their own (the request says how many), each as the S ID of its first and last line, with a short topic and a score from 0 to 1 for how strong a standalone clip it is. Start at the beginning of a sentence or of Raj's question, never mid-sentence or with a reference to something said before, and end where a complete thought ends (the answer finished), so a viewer who sees only the clip follows it. Check the timestamps: the last line should start {CLIP_SECONDS[0]}-{CLIP_SECONDS[1]} seconds after the first.
 
 A list is empty only if the episode truly has nothing of that kind."""
 
 
 def _ids() -> dict:
     return {"type": "array", "items": {"type": "integer"}}
+
+
+def _passage(**props) -> dict:
+    """An object citing a passage by its first and last S ID."""
+    props |= {"start_id": {"type": "integer"}, "end_id": {"type": "integer"}}
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
 
 KINDS = {"takeaways": "takeaway", "opportunities": "opportunity", "quotes": "quote",
@@ -187,9 +199,9 @@ OUTPUT_SCHEMA = {
             "properties": {"name": {"type": "string"}, "organisation": {"type": "string"},
                            "role_at_episode": {"type": "string"},
                            "sector_tags": {"type": "array", "items": {"type": "string"}},
-                           "bio": {"type": "string"}, "source_segment_ids": _ids(), "translation_line_ids": _ids(),
-                           "translated": {"type": "boolean"}},
-            "required": ["name", "organisation", "role_at_episode", "sector_tags", "bio", "source_segment_ids",
+                           "facts": {"type": "array", "items": _passage(text={"type": "string"})},
+                           "translation_line_ids": _ids(), "translated": {"type": "boolean"}},
+            "required": ["name", "organisation", "role_at_episode", "sector_tags", "facts",
                          "translation_line_ids", "translated"],
             "additionalProperties": False},
         "topics": {"type": "array", "items": {
@@ -198,16 +210,11 @@ OUTPUT_SCHEMA = {
                            "translated": {"type": "boolean"}},
             "required": ["tag", "source_segment_ids", "translation_line_ids", "translated"],
             "additionalProperties": False}},
-        "items": {"type": "array", "items": {
-            "type": "object",
-            "properties": {"kind": {"type": "string", "enum": list(KINDS.values())}, "text": {"type": "string"},
-                           "category": {"type": "string", "enum": [*CATEGORIES, "none"]},
-                           "question_type": {"type": "string", "enum": [*QUESTION_TYPES, "none"]},
-                           "source_segment_ids": _ids(), "translation_line_ids": _ids(),
-                           "translated": {"type": "boolean"}},
-            "required": ["kind", "text", "category", "question_type", "source_segment_ids", "translation_line_ids",
-                         "translated"],
-            "additionalProperties": False}},
+        "items": {"type": "array", "items": _passage(
+            kind={"type": "string", "enum": list(KINDS.values())}, text={"type": "string"},
+            category={"type": "string", "enum": [*CATEGORIES, "none"]},
+            question_type={"type": "string", "enum": [*QUESTION_TYPES, "none"]},
+            translation_line_ids=_ids(), translated={"type": "boolean"})},
         "clips": {"type": "array", "items": {
             "type": "object",
             "properties": {"first_id": {"type": "integer"}, "last_id": {"type": "integer"},
@@ -651,6 +658,20 @@ def save_part(path: Path, custom_id: str, info: dict, result) -> None:
 
 # ---------- merging and checking ----------
 
+def passage_ids(item: dict, lines: list[dict], order: dict[int, int], s_ids: set[int], stats: dict) -> dict | None:
+    """The item with source_segment_ids set to every line from start_id to end_id, or None if the passage is bad."""
+    a, b = item["start_id"], item["end_id"]
+    if a not in s_ids or b not in s_ids or order[a] > order[b]:
+        stats["bad_passages_dropped"] += 1
+        return None
+    if lines[order[b]]["end"] - lines[order[a]]["start"] > MAX_SPAN_SECONDS:
+        stats["long_passages_dropped"] += 1
+        return None
+    out = {k: v for k, v in item.items() if k not in ("start_id", "end_id")}
+    out["source_segment_ids"] = [lines[i]["id"] for i in range(order[a], order[b] + 1)]
+    return out
+
+
 def clean_ids(item: dict, s_ids: set[int], t_ids: set[int], stats: dict) -> dict | None:
     ids = [i for i in item.get("source_segment_ids", []) if i in s_ids]
     stats["unknown_ids_removed"] += len(item.get("source_segment_ids", [])) - len(ids)
@@ -700,7 +721,8 @@ def merge(ep: dict, lines: list[dict], plan: dict, answers: list[dict]) -> dict:
     by_id = {l["id"]: l for l in lines}
     order = {l["id"]: i for i, l in enumerate(lines)}
     t_ids = {l["t_id"] for l in lines if l["t_id"] is not None}
-    stats = {"unknown_ids_removed": 0, "dropped_no_ids": 0, "quotes_not_verbatim": 0, "quotes_too_long": 0,
+    stats = {"bad_passages_dropped": 0, "long_passages_dropped": 0, "guest_facts_dropped": 0,
+             "unknown_ids_removed": 0, "dropped_no_ids": 0, "quotes_not_verbatim": 0, "quotes_too_long": 0,
              "clips_bad_ids": 0, "clips_dropped_off_length": 0, "takeaways_trimmed": 0, "quotes_trimmed": 0,
              "clips_trimmed": 0, "opportunities_without_category": 0}
     merged = {k: [] for k in ITEM_LISTS}
@@ -713,7 +735,8 @@ def merge(ep: dict, lines: list[dict], plan: dict, answers: list[dict]) -> dict:
         lists = by_kind(answer, stats)
         for name in KINDS:
             for item in lists[name]:
-                item = clean_ids(item, span_ids, t_ids, stats)
+                item = passage_ids(item, lines, order, span_ids, stats)
+                item = item and clean_ids(item, span_ids, t_ids, stats)
                 if item and item["source_segment_ids"][0] in core_ids:
                     merged[name].append(item)
         for clip in answer["clips"]:
@@ -735,9 +758,15 @@ def merge(ep: dict, lines: list[dict], plan: dict, answers: list[dict]) -> dict:
             topic = clean_ids(topic, span_ids, t_ids, stats)
             if topic:
                 topics.append(topic)
-        guest = clean_ids(answer["guest"], span_ids, t_ids, stats) if answer["guest"]["name"].strip() else None
-        if guest:
-            guests.append(guest)
+        if answer["guest"]["name"].strip():
+            guest = dict(answer["guest"])
+            facts = [passage_ids(f, lines, order, span_ids, stats) for f in guest["facts"]]
+            stats["guest_facts_dropped"] += sum(f is None for f in facts)
+            guest["facts"] = [f for f in facts if f and f["text"].strip()]
+            guest["source_segment_ids"] = sorted({i for f in guest["facts"] for i in f["source_segment_ids"]})
+            guest = clean_ids(guest, span_ids, t_ids, stats)
+            if guest:
+                guests.append(guest)
 
     for quote in merged["quotes"]:
         notes = []
@@ -759,8 +788,10 @@ def merge(ep: dict, lines: list[dict], plan: dict, answers: list[dict]) -> dict:
     if guests:
         guest = dict(guests[0])
         for other in guests[1:]:
-            for field in ("organisation", "role_at_episode", "bio"):
+            for field in ("organisation", "role_at_episode"):
                 guest[field] = guest[field] or other[field]
+            known = {normalise(f["text"]) for f in guest["facts"]}
+            guest["facts"] = guest["facts"] + [f for f in other["facts"] if normalise(f["text"]) not in known]
             guest["sector_tags"] = guest["sector_tags"] + [t for t in other["sector_tags"]
                                                            if t.lower() not in {x.lower() for x in guest["sector_tags"]}]
             guest["source_segment_ids"] = sorted({*guest["source_segment_ids"], *other["source_segment_ids"]})
@@ -791,7 +822,7 @@ def write_rows(db, key: str, ep: dict, lines: list[dict], result: dict) -> dict:
     if g:
         row = {"name": g["name"], "organisation": g["organisation"] or None,
                "role_at_episode": g["role_at_episode"] or None, "sector_tags": g["sector_tags"],
-               "bio": g["bio"] or None, "video_id": vid, "model": model, "run_id": run_id}
+               "bio": "\n".join(f["text"] for f in g["facts"]) or None, "video_id": vid, "model": model, "run_id": run_id}
         guest_id = db_call("guests insert", lambda: db.table("guests").insert(row).execute()).data[0]["id"]
     rows = []
     for name, type_ in KINDS.items():

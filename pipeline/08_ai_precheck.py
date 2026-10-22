@@ -1,9 +1,10 @@
 """AI pre-check of the Gate 1 sample: does each item's cited transcript support it?
 
-For every item in the saved Gate 1 sample (data/review/gate1_sample_<run_id>.json,
-drawn by review_app.py), claude-sonnet-5-5 gets the item and the transcript lines
+For every item in the run's Gate 1 sample (data/review/gate1_sample_<run_id>.json,
+drawn by gate1_lib.py if it is not there yet), claude-sonnet-5-5 gets the item and the transcript lines
 it cites, with their speaker letters and Roman text and, for Hindi episodes, the
-English translation lines over the same times. It answers with one fixed JSON
+English translation lines over the same times. A guest profile whose result file
+lists cited facts (extraction v4 on) is shown fact by fact, each with its lines. It answers with one fixed JSON
 schema: verdict (supported / not_supported / unsure) and a one-line reason.
 
 Requests go through the Message Batches API, one per item. Each answer is saved to
@@ -19,7 +20,6 @@ random FAST_RANDOM_SIZE of the supported ones. review_app.py's "Fast review" mod
 reads both files.
 
 Usage:
-    .venv\\Scripts\\python.exe pipeline\\08_ai_precheck.py
     .venv\\Scripts\\python.exe pipeline\\08_ai_precheck.py --run-id extract-haiku-v3-20261022-215258
 """
 
@@ -37,11 +37,11 @@ from anthropic.types.message_create_params import MessageCreateParamsNonStreamin
 from anthropic.types.messages.batch_create_params import Request
 from dotenv import load_dotenv
 
+import gate1_lib
 import romanize_lib
 
 ROOT = Path(__file__).resolve().parent.parent
-REVIEW_DIR = ROOT / "data" / "review"
-DEFAULT_RUN_ID = "extract-haiku-v3-20261022-215258"
+REVIEW_DIR = gate1_lib.REVIEW_DIR
 
 MODEL = "claude-sonnet-5-5"
 EFFORT = "medium"
@@ -173,6 +173,12 @@ def build_prompt(item: dict, row: dict, episode: dict, segments: dict[int, dict]
     ids = cited_ids(item, row, list(segments.values()), merged)
     cited = sorted((segments[i] for i in ids if i in segments), key=lambda s: s["seq"])
     text, label = describe(item, row)
+    facts = ((merged or {}).get("guest") or {}).get("facts") if item["type"] == "guest" else None
+    if facts:
+        # v4 guest: list each fact with the lines it cites.
+        text = "\n".join(text.splitlines()[:3]) + "\nSectors: " + ", ".join(row["sector_tags"] or []) + "\nFacts:\n"
+        text += "\n".join(f"{n}. {f['text']} (lines S{f['source_segment_ids'][0]} to S{f['source_segment_ids'][-1]})"
+                          for n, f in enumerate(facts, 1))
     prompt = (f"Episode: {episode['title']}\n\nWhat this kind of item must be: {TYPE_RULES[item['type']]}\n\n"
               f"Item ({label}):\n{text}\n\nCited transcript lines:\n")
     prompt += "\n".join(f"[S{s['id']} {SPEAKER_LETTERS.get(s['speaker'], 'U')} | {clock(s['start_s'])}] "
@@ -230,10 +236,12 @@ def cost(usages: list[dict]) -> float:
 # ---------- run ----------
 
 def run(run_id: str) -> None:
-    sample_path = REVIEW_DIR / f"gate1_sample_{run_id}.json"
-    if not sample_path.exists():
-        sys.exit(f"{sample_path.relative_to(ROOT)} not found: open the Gate 1 sample mode in review_app.py first")
-    sample = read_json(sample_path)["items"]
+    db = check.captions.supabase_client()
+    if not gate1_lib.sample_path(run_id).exists():
+        log.info("Drawing the Gate 1 sample for %s", run_id)
+    sample = gate1_lib.gate1_sample(run_id, lambda table, columns, **eq: check.fetch(db, table, columns, **eq))
+    if not sample:
+        sys.exit(f"No verified rows in run {run_id}")
     answer_dir = REVIEW_DIR / "ai_precheck" / run_id
     job_path = answer_dir / "batch_job.json"
 
@@ -241,7 +249,6 @@ def run(run_id: str) -> None:
     log.info("%s items in the sample, %s still to check", len(sample), len(todo))
     prompts, cited = {}, {}
     if todo:
-        db = check.captions.supabase_client()
         rows = {}
         for table in ("guests", "insights", "clips"):
             rows |= {(table, i): r for i, r in by_id(db, table, [s["id"] for s in sample if s["table"] == table]).items()}
@@ -329,7 +336,7 @@ def report(sample: list[dict], results: list[dict], usages: list[dict], missing:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--run-id", default=DEFAULT_RUN_ID)
+    parser.add_argument("--run-id", required=True)
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")

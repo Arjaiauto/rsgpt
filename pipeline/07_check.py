@@ -17,6 +17,8 @@ episode's segments (and, for Hindi episodes, translation_segments):
   4. Clips are CLIP_SECONDS long.
   5. No phone number or email address appears in any text field.
   6. Raj questions and Raj opinions cite at least one segment whose speaker is raj.
+  7. Disagreements cite at least one segment labelled raj and one labelled guest
+     (both sides of the exchange).
 
 A row gets verified = true only when every check passes; otherwise check_notes
 lists the reasons ("check: ..."). Notes that are not check results (the question
@@ -185,6 +187,10 @@ def check_insight(row: dict, ep: Episode) -> tuple[list, bool]:
         if not any(s["speaker"] == "raj" for s in cited):
             who = Counter(s["speaker"] for s in cited)
             failures.append(("cites no line labelled Raj", ", ".join(f"{k} {v}" for k, v in who.items())))
+    if row["type"] == "disagreement" and cited:
+        missing = [w for w in ("raj", "guest") if not any(s["speaker"] == w for s in cited)]
+        if missing:
+            failures.append(("disagreement lacks a side", "no line labelled " + " or ".join(missing)))
     failures += [(r, "") for r in contact_details(row["text"])]
     return failures, translated
 
