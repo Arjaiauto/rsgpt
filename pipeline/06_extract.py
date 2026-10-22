@@ -78,7 +78,8 @@ EXTRACT_DIR = DATA_DIR / "extractions"
 SPEAKER_DIR = EXTRACT_DIR / "speakers" / "v2"
 # Prompt version of the extraction step. Results of each version live in their own folder,
 # so an earlier version's files are kept for comparison (v1 sits directly in <model>/).
-VERSION = "v2"
+# v2 used the first speaker labels (one string per chunk); v3 the grouped ones in speakers/v2.
+VERSION = "v3"
 
 MODELS = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5"}
 SPEAKER_MODEL = "haiku"
