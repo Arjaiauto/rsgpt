@@ -5,6 +5,11 @@ Lines go to claude-haiku-5-5 through the Message Batches API in chunks, as
 own JSON file as soon as it arrives, so a rerun only sends chunks that are
 missing or came back incomplete. A converted line is checked in code: if its
 word count is more than WORD_TOLERANCE away from the original, it is flagged.
+
+Every request uses the same JSON schema (OUTPUT_SCHEMA), so the API compiles it
+once rather than once per request; it allows only so many new schemas a minute.
+A result refused for a rate limit is not saved, so it does not count as an
+attempt, and is sent again in a later round.
 """
 
 import json
@@ -21,6 +26,10 @@ MODEL = "claude-haiku-5-5"
 MAX_TOKENS = 16000
 WORD_TOLERANCE = 0.20
 POLL_SECONDS = 30
+# Safety net for the API's limit on new JSON schemas (50 a minute): batches are
+# created so that at most this many schemas not sent before in this run go out per minute.
+NEW_SCHEMAS_PER_MINUTE = 40
+RATE_LIMIT_WAIT_SECONDS = 60  # pause before resending results refused for a rate limit
 
 # Prices checked 2026-10-21 (claude-haiku-5-5, prompts up to 100K tokens), USD per
 # million tokens; the Batch API bills half.
@@ -84,6 +93,8 @@ OUTPUT_SCHEMA = {
 
 log = logging.getLogger("romanize")
 
+_schemas_sent: set[str] = set()  # schemas already sent in this run, which the API has compiled
+
 
 def guess_guest(title: str) -> str:
     """A spelling hint only: the part of an episode title that looks like the guest's name."""
@@ -143,6 +154,14 @@ def chunk_cost(path: Path) -> float:
     return sum(cost_of(u) for u in [*record.get("earlier_usage", []), record["usage"]])
 
 
+def rate_limited(result) -> bool:
+    """A result refused for a rate limit (including the JSON-schema compilation limit): try again later."""
+    if result.type != "errored":
+        return False
+    error = getattr(result.error, "error", None)
+    return getattr(error, "type", "") == "rate_limit_error" or "rate limit" in str(result.error).lower()
+
+
 def save_chunk(path: Path, chunk_id: str, expected_ids: list[str], result) -> None:
     """Save one batch result. Usage is recorded even when the answer is unusable, since it was paid for."""
     record = {"chunk_id": chunk_id, "result_type": result.type, "complete": False,
@@ -182,48 +201,99 @@ def save_chunk(path: Path, chunk_id: str, expected_ids: list[str], result) -> No
         log.error("%s: %s; will be sent again", chunk_id, record["error"] or result.type)
 
 
-def run_batch(client: anthropic.Anthropic, requests: dict[str, Request], expected: dict[str, list[str]],
-              job_path: Path, chunk_dir: Path, save=None) -> None:
-    """Send the requests as one batch (or resume the saved one), wait, and save each chunk's answer.
+def schema_key(request: Request) -> str:
+    fmt = request["params"].get("output_config", {}).get("format")
+    return json.dumps(fmt, sort_keys=True) if fmt else ""
 
-    save(path, chunk_id, expected_ids, result) stores one result; save_chunk by default.
+
+def paced_groups(requests: dict[str, Request]) -> list[dict[str, Request]]:
+    """Split requests so that each group brings at most NEW_SCHEMAS_PER_MINUTE schemas not sent before."""
+    groups, current, new_here, planned = [], {}, set(), set(_schemas_sent)
+    for custom_id, request in requests.items():
+        key = schema_key(request)
+        if key and key not in planned:
+            if len(new_here) >= NEW_SCHEMAS_PER_MINUTE:
+                groups.append(current)
+                current, new_here = {}, set()
+            new_here.add(key)
+            planned.add(key)
+        current[custom_id] = request
+    if current:
+        groups.append(current)
+    return groups
+
+
+def run_batch(client: anthropic.Anthropic, requests: dict[str, Request], expected: dict[str, list[str]],
+              job_path: Path, chunk_dir: Path, save=None) -> list[str]:
+    """Send the requests (or resume the saved, uncollected job), wait, and save each chunk's answer.
+
+    Requests go out as one batch, or as several a minute apart when they bring more than
+    NEW_SCHEMAS_PER_MINUTE new JSON schemas. save(path, chunk_id, expected_ids, result) stores
+    one result; save_chunk by default. Results refused for a rate limit are not saved, so they
+    do not count as attempts; their IDs are returned so the caller can wait and send them again.
     """
     save = save or save_chunk
     job = json.loads(job_path.read_text(encoding="utf-8")) if job_path.exists() else None
-    if job and not job.get("collected") and set(requests) <= set(job["custom_ids"]):
-        log.info("Resuming batch %s", job["batch_id"])
+    if job and not job.get("collected") and set(requests) & set(job["custom_ids"]):
+        job.setdefault("batch_ids", [job.pop("batch_id")] if "batch_id" in job else [])
+        log.info("Resuming batches %s", ", ".join(job["batch_ids"]))
     else:
-        batch = client.messages.batches.create(requests=list(requests.values()))
-        job = {"batch_id": batch.id, "custom_ids": sorted(requests), "collected": False}
+        job = {"batch_ids": [], "custom_ids": [], "collected": False}
+    to_send = {c: r for c, r in requests.items() if c not in job["custom_ids"]}
+    for n, group in enumerate(paced_groups(to_send)):
+        if n:
+            log.info("Waiting 60s before the next batch, to keep new JSON schemas under %s a minute",
+                     NEW_SCHEMAS_PER_MINUTE)
+            time.sleep(60)
+        batch = client.messages.batches.create(requests=list(group.values()))
+        _schemas_sent.update(schema_key(r) for r in group.values())
+        job["batch_ids"].append(batch.id)
+        job["custom_ids"] = sorted({*job["custom_ids"], *group})
         job_path.write_text(json.dumps(job, indent=2), encoding="utf-8")
-        log.info("Batch %s created with %s requests", batch.id, len(requests))
+        log.info("Batch %s created with %s requests", batch.id, len(group))
 
-    last = None
-    while True:
-        batch = client.messages.batches.retrieve(job["batch_id"])
-        counts = batch.request_counts
-        state = (batch.processing_status, counts.processing, counts.succeeded, counts.errored)
-        if state != last:
-            log.info("Batch %s: %s (processing %s, succeeded %s, errored %s)", batch.id, *state)
-            last = state
-        if batch.processing_status == "ended":
-            break
-        time.sleep(POLL_SECONDS)
+    for batch_id in job["batch_ids"]:
+        last = None
+        while True:
+            batch = client.messages.batches.retrieve(batch_id)
+            counts = batch.request_counts
+            state = (batch.processing_status, counts.processing, counts.succeeded, counts.errored)
+            if state != last:
+                log.info("Batch %s: %s (processing %s, succeeded %s, errored %s)", batch.id, *state)
+                last = state
+            if batch.processing_status == "ended":
+                break
+            time.sleep(POLL_SECONDS)
 
-    for result in client.messages.batches.results(job["batch_id"]):
-        path = chunk_dir / f"{result.custom_id}.json"
-        if result.custom_id in expected and not chunk_done(path):
+    limited = []
+    for batch_id in job["batch_ids"]:
+        for result in client.messages.batches.results(batch_id):
+            path = chunk_dir / f"{result.custom_id}.json"
+            if result.custom_id not in expected or chunk_done(path):
+                continue
+            if rate_limited(result.result):
+                limited.append(result.custom_id)
+                continue
             save(path, result.custom_id, expected[result.custom_id], result.result)
+    if limited:
+        log.warning("%s requests refused for a rate limit, not counted as attempts; they will be sent again: %s",
+                    len(limited), ", ".join(limited[:5]))
     job["collected"] = True
     job_path.write_text(json.dumps(job, indent=2), encoding="utf-8")
+    return limited
+
+
+def wait_after_rate_limit(limited: list[str]) -> None:
+    if limited:
+        log.info("Waiting %ss before sending them again", RATE_LIMIT_WAIT_SECONDS)
+        time.sleep(RATE_LIMIT_WAIT_SECONDS)
 
 
 # ---------- translation with exact line IDs ----------
 #
 # Each request carries at most TRANSLATION_UNIT_LINES lines, each prefixed with its ID,
-# and a JSON schema whose properties are exactly those IDs (all required, nothing
-# else allowed), so every line gets its own translation under its own ID. Answers
-# are still checked in code: missing, extra, duplicated or empty IDs reject the
+# and asks for them back as {"lines": [{"id", "text"}]} under the shared OUTPUT_SCHEMA.
+# The IDs are checked in code: missing, extra, duplicated or empty IDs reject the
 # answer. A unit that fails TRANSLATION_ATTEMPTS times is split in half and each
 # half retried; a single line gets SINGLE_LINE_ATTEMPTS tries.
 #
@@ -245,11 +315,6 @@ LENGTH_MIN_WORDS = 4
 CONTEXT_LINES = 2
 
 
-def ids_schema(ids: list[str]) -> dict:
-    return {"type": "object", "properties": {i: {"type": "string"} for i in ids},
-            "required": list(ids), "additionalProperties": False}
-
-
 def translation_request(unit_id: str, lines: list[dict], title: str, guest: str, system: str,
                         before: list[dict] | None = None, after: list[dict] | None = None) -> Request:
     numbered = "\n".join(f"[{l['id']}] {l['text']}" for l in lines)
@@ -259,7 +324,7 @@ def translation_request(unit_id: str, lines: list[dict], title: str, guest: str,
     prompt += f"Lines to translate ({len(lines)}), each numbered with its id:\n{numbered}\n"
     if after:
         prompt += "\nContext after (do not translate):\n" + "\n".join(l["text"] for l in after) + "\n"
-    prompt += ("\nReturn a JSON object with exactly these ids as keys, each mapped to the English "
+    prompt += ("\nReturn every one of these ids exactly once, in order, each with the English "
                "translation of that line only.")
     return Request(
         custom_id=unit_id,
@@ -268,22 +333,14 @@ def translation_request(unit_id: str, lines: list[dict], title: str, guest: str,
             max_tokens=MAX_TOKENS,
             system=system,
             output_config={"effort": TRANSLATION_EFFORT,
-                           "format": {"type": "json_schema", "schema": ids_schema([l["id"] for l in lines])}},
+                           "format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
             messages=[{"role": "user", "content": prompt}],
         ),
     )
 
 
-def _no_duplicates(pairs: list[tuple]) -> dict:
-    keys = [k for k, _ in pairs]
-    dupes = sorted({k for k in keys if keys.count(k) > 1})
-    if dupes:
-        raise ValueError(f"duplicated ids {dupes[:5]}")
-    return dict(pairs)
-
-
 def save_translation(path: Path, unit_id: str, expected_ids: list[str], result) -> None:
-    """Like save_chunk, for answers shaped {id: text}; rejects missing, extra, duplicated or empty ids."""
+    """Like save_chunk, but rejects answers with missing, extra, duplicated or empty ids."""
     record = {"chunk_id": unit_id, "result_type": result.type, "complete": False,
               "usage": {"input_tokens": 0, "output_tokens": 0}, "lines": {}, "error": ""}
     if result.type == "succeeded":
@@ -296,20 +353,24 @@ def save_translation(path: Path, unit_id: str, expected_ids: list[str], result) 
             record["error"] = f"stop_reason {msg.stop_reason}"
         else:
             try:
-                answer = json.loads(text, object_pairs_hook=_no_duplicates)
-                if not isinstance(answer, dict):
-                    raise ValueError("not a JSON object")
+                items = json.loads(text)["lines"]
+                if not all(isinstance(l, dict) and isinstance(l.get("id"), str) for l in items):
+                    raise ValueError("lines are not objects with an id")
+                ids = [l["id"] for l in items]
+                answer = {l["id"]: l.get("text", "") for l in items}
                 missing = [i for i in expected_ids if i not in answer]
-                extra = [i for i in answer if i not in expected_ids]
+                extra = sorted({i for i in ids if i not in expected_ids})
+                duplicated = sorted({i for i in ids if ids.count(i) > 1})
                 empty = [i for i in expected_ids if i in answer and not str(answer[i]).strip()]
-                problems = [f"{name} {ids[:5]}" for name, ids in
-                            (("missing", missing), ("extra", extra), ("empty", empty)) if ids]
+                problems = [f"{name} {found[:5]}" for name, found in
+                            (("missing", missing), ("extra", extra), ("duplicated", duplicated),
+                             ("empty", empty)) if found]
                 if problems:
                     record["error"] = "; ".join(problems)
                 else:
                     record["lines"] = {i: str(answer[i]).strip() for i in expected_ids}
                     record["complete"] = True
-            except (json.JSONDecodeError, ValueError) as exc:
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
                 record["error"] = f"rejected: {exc}"
     elif result.type == "errored":
         record["error"] = str(result.error)[:500]
@@ -405,7 +466,7 @@ def translate_episodes(client: anthropic.Anthropic, episodes: list[dict], unit_d
         requests = {u: translation_request(u, lines, ep["title"], ep["guest"], systems[ep["key"]])
                     for u, (ep, lines) in pending.items()}
         expected = {u: [l["id"] for l in lines] for u, (_, lines) in pending.items()}
-        run_batch(client, requests, expected, job_path, unit_dir, save=save_translation)
+        wait_after_rate_limit(run_batch(client, requests, expected, job_path, unit_dir, save=save_translation))
     pending, done, failed = plan_units()
     for u, (ep, _) in pending.items():
         log.error("%s: still unfinished after %s rounds", u, TRANSLATION_MAX_ROUNDS)
@@ -430,7 +491,8 @@ def translate_episodes(client: anthropic.Anthropic, episodes: list[dict], unit_d
                     pending[f"{line_id}-r"] = (ep, index[line_id])
         return pending, retried
 
-    for round_no in range(1, SINGLE_LINE_ATTEMPTS + 1):
+    # Rounds refused for a rate limit do not use up a line's attempts, so allow more rounds than attempts.
+    for round_no in range(1, TRANSLATION_MAX_ROUNDS + 1):
         pending, _ = plan_retries()
         if not pending:
             break
@@ -442,7 +504,7 @@ def translate_episodes(client: anthropic.Anthropic, episodes: list[dict], unit_d
                                               before=ep["lines"][max(0, i - CONTEXT_LINES):i],
                                               after=ep["lines"][i + 1:i + 1 + CONTEXT_LINES])
             expected[u] = [line["id"]]
-        run_batch(client, requests, expected, job_path, unit_dir, save=save_translation)
+        wait_after_rate_limit(run_batch(client, requests, expected, job_path, unit_dir, save=save_translation))
     _, retried = plan_retries()
 
     report = {}

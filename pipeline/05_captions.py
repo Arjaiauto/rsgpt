@@ -382,7 +382,8 @@ EPISODE_PAUSE_SECONDS = (20, 40)
 YOUTUBE_RETRIES = 3
 BACKOFF_429_SECONDS = 180  # wait before retry n is n times this
 ROMAN_CHUNK_LINES = 60
-ROMAN_ROUNDS = 3  # batches per run; later rounds resend only chunks that failed
+ROMAN_ROUNDS = 3  # tries per chunk per run; later rounds resend only chunks that failed
+ROMAN_MAX_ROUNDS = 12  # batches per run, counting rounds whose chunks were refused for a rate limit
 DB_BATCH = 500
 
 FALLBACK = {"en": "groq", "hi": "sarvam"}
@@ -735,18 +736,23 @@ def romanize_step(states: dict[str, dict]) -> float:
     all_paths = [roman_chunk_path(c) for cs in chunks.values() for c in cs]
     spent_before = sum(romanize_lib.chunk_cost(p) for p in all_paths)
     client = anthropic.Anthropic(max_retries=MAX_RETRIES + 2)
-    for round_no in range(1, ROMAN_ROUNDS + 1):
+    tries: dict[str, int] = {}  # this run's tries per chunk; a rate-limit refusal is not a try
+    for round_no in range(1, ROMAN_MAX_ROUNDS + 1):
         requests, expected = {}, {}
         for state in todo:
             guest = romanize_lib.guess_guest(state["title"])
             for chunk_id, lines in chunks[state["video_id"]].items():
-                if not romanize_lib.chunk_done(roman_chunk_path(chunk_id)):
+                if not romanize_lib.chunk_done(roman_chunk_path(chunk_id)) and tries.get(chunk_id, 0) < ROMAN_ROUNDS:
                     requests[chunk_id] = romanize_lib.build_request(chunk_id, lines, state["title"], guest)
                     expected[chunk_id] = [l["id"] for l in lines]
         if not requests:
             break
         log.info("Romanization round %s: %s chunks for %s episodes", round_no, len(requests), len(todo))
-        romanize_lib.run_batch(client, requests, expected, ROMAN_JOB_PATH, ROMAN_CHUNK_DIR)
+        limited = romanize_lib.run_batch(client, requests, expected, ROMAN_JOB_PATH, ROMAN_CHUNK_DIR)
+        for chunk_id in requests:
+            if chunk_id not in limited:
+                tries[chunk_id] = tries.get(chunk_id, 0) + 1
+        romanize_lib.wait_after_rate_limit(limited)
 
     for state in todo:
         vid, ids = state["video_id"], list(chunks[state["video_id"]])
@@ -784,15 +790,18 @@ def line_id(vid: str, seq: int) -> str:
 def redo_translations(states: dict[str, dict]) -> None:
     """Throw away the set's translations: delete their translation_segments rows and mark them pending.
 
-    The old answers stay on disk but are not reused: the new step keeps its answers in
-    TRANSLATION_UNIT_DIR under different names.
+    Their saved answers are moved to TRANSLATION_UNIT_DIR/replaced, so they are kept but not reused.
     """
     db = supabase_client()
+    replaced = TRANSLATION_UNIT_DIR / "replaced"
     for state in states.values():
         if state["language"] != "hi" or not state["segments"]:
             continue
         vid = state["video_id"]
         db_call("translation delete", lambda: db.table("translation_segments").delete().eq("video_id", vid).execute())
+        for path in TRANSLATION_UNIT_DIR.glob(f"{vid}-*.json"):
+            replaced.mkdir(parents=True, exist_ok=True)
+            path.replace(replaced / f"{time.strftime('%Y%m%d-%H%M%S')}-{path.name}")
         state["earlier_translation_cost_usd"] = (state.get("earlier_translation_cost_usd", 0.0)
                                                  + state.get("translation_cost_usd", 0.0))
         state.update({"translation": "pending", "translation_segments": None, "translation_cost_usd": 0.0,

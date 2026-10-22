@@ -7,8 +7,9 @@ data/bakeoff/<video_id>_youtube_auto_orig.json, are translated by
 claude-haiku-5-5 through the Message Batches API. Each caption line keeps an ID
 (<video_id>-L<index in the window>, the same IDs 06_romanize.py uses) and its
 timing. Translation runs through romanize_lib.translate_episodes: at most 40
-lines per request with a JSON schema allowing exactly their IDs, retries and
-halving for answers with missing, extra or duplicated IDs, and a length check
+lines per request under one fixed JSON schema, a check in code that the IDs
+come back exactly as sent, retries and halving for answers with missing, extra
+or duplicated IDs, and a length check
 whose flagged lines are translated again one at a time.
 
 Results: data/bakeoff/<video_id>_haiku_translation.json, in the same shape as
