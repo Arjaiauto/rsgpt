@@ -3,11 +3,15 @@
 Two steps, each with one fixed JSON schema for every request (so the API compiles
 each schema once):
 
-1. Speakers (always claude-haiku-5-5). Each episode's lines go in chunks of
-   SPEAKER_CHUNK_LINES, with a few lines of context either side, and come back as
-   one letter per line in a single string: r = Raj, g = guest, u = unknown. The
-   length must match the number of lines. A chunk whose answer is all one letter or
-   more than half u is asked again, and the best answer kept.
+1. Speakers (always claude-haiku-5-5, low effort). Each episode's lines go in chunks
+   of SPEAKER_CHUNK_LINES, with a few lines of context either side, shown in groups of
+   SPEAKER_GROUP_LINES headed by the S ID of each group's first line. Each group comes
+   back as {"from_id", "letters"} with one letter per line: r = Raj, g = guest,
+   u = unknown. Every group is checked on its own: good groups are kept, and only
+   missing or wrong-length ones are asked again (with the rest of the chunk shown as
+   context). A group that is mostly u is asked again while it has tries left and its
+   best answer kept; one with no usable answer after SPEAKER_ATTEMPTS tries is left
+   unknown. The labels are written to segments.speaker.
 
 2. Extraction (--model haiku or sonnet). One request per episode, or per part for
    long episodes. The input is the episode title and date, then every segment as
@@ -31,11 +35,11 @@ up to the middle of each overlap, and items come from the part that owns their
 first segment, so nothing is counted twice.
 
 Results:
-  data/extractions/speakers/<video_id>.json         speaker letters per segment (chunk answers in chunks/)
+  data/extractions/speakers/v2/<video_id>.json      speaker letters per segment (chunk answers in chunks/)
   data/extractions/<model>/<VERSION>/<video_id>.json  merged extraction (part answers in parts/)
   guests, insights, clips   rows with verified = false, model and run_id; rerunning replaces only the
                             rows of the same run_id, so earlier runs stay for comparison
-  segments.speaker          from step 1, written by the haiku run
+  segments.speaker          from step 1
 
 Resumable: speaker answers, split plans, part answers, merged files, the run ID and
 the batch IDs are saved as they are made, so a rerun only sends what is missing and
@@ -43,7 +47,7 @@ only writes what has not been written. Results refused for a rate limit are not
 counted as attempts and are sent again after a pause (romanize_lib.run_batch).
 
 Usage:
-    .venv\\Scripts\\python.exe pipeline\\06_extract.py --model haiku|sonnet --set test_set|all
+    .venv\\Scripts\\python.exe pipeline\\06_extract.py --model haiku|sonnet --set test_set|all [--speakers-only]
 """
 
 import argparse
@@ -70,7 +74,8 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 CANDIDATES_CSV = DATA_DIR / "candidates.csv"
 EXTRACT_DIR = DATA_DIR / "extractions"
-SPEAKER_DIR = EXTRACT_DIR / "speakers"
+# Speaker labels in groups of 10 (the first try, one string per chunk, is kept in speakers/).
+SPEAKER_DIR = EXTRACT_DIR / "speakers" / "v2"
 # Prompt version of the extraction step. Results of each version live in their own folder,
 # so an earlier version's files are kept for comparison (v1 sits directly in <model>/).
 VERSION = "v2"
@@ -94,12 +99,13 @@ QUOTE_MAX_WORDS = 25
 CLIP_SECONDS = (30, 90)
 RAJ_TURNS_FOR_QUESTIONS = 5  # a part where Raj speaks in this many turns should have some of his questions
 
-SPEAKER_CHUNK_LINES = 400
+SPEAKER_CHUNK_LINES = 150
+SPEAKER_GROUP_LINES = 10
 SPEAKER_CONTEXT = (8, 4)  # unlabelled lines shown before and after a chunk
-SPEAKER_ATTEMPTS = 3
+SPEAKER_ATTEMPTS = 3  # tries per group
+SPEAKER_EFFORT = "low"
 SPEAKER_MAX_TOKENS = 16000
-SPEAKER_MAX_UNKNOWN = 0.5
-SPEAKER_MIN_LINES_FOR_ONE_LABEL = 50  # a chunk this long that is all one letter is suspicious
+SPEAKER_MAX_UNKNOWN = 0.5  # a group with more unknown lines than this is asked again while it has tries left
 LETTERS = {"r": "raj", "g": "guest", "u": "unknown"}
 
 DB_PAGE = 1000
@@ -117,9 +123,12 @@ SPEAKER_PROMPT = """You label who speaks each line of a transcript of the Figuri
 For every line under "Lines to label", give one letter, in order:
 r = Raj, g = the guest, u = unknown (only when you really cannot tell, for example a line split between both speakers).
 
-Lines are fragments of running speech: a speaker usually keeps talking for several lines, and a question from Raj is usually followed by the guest's answer. Use the context lines to follow the conversation, but do not label them.
+The lines come in groups headed "--- Group S<id> ... ---", where <id> is the S ID of the group's first line. For every line of a group marked "label", give one letter, in order:
+r = Raj, g = the guest, u = unknown (only when you really cannot tell, for example a line split between both speakers).
 
-Return "labels": exactly one letter per line to label, written in groups of 10 separated by a space (for example "rrrrgggggg gggggggggg ggrrr")."""
+Lines are fragments of running speech: a speaker usually keeps talking for several lines, and a question from Raj is usually followed by the guest's answer. Use the context lines and the groups marked "context only" to follow the conversation, but do not label them.
+
+Return "groups": one entry per group marked "label", with from_id (the S ID in its heading, as a number) and letters (exactly one letter per line of that group, for example "rrrrgggggg")."""
 
 SYSTEM_PROMPT = f"""You read the transcript of one episode of the Figuring Out podcast and extract structured research notes from it. Raj Shamani is the host: he asks the questions. The guest answers them.
 
@@ -155,8 +164,15 @@ def _ids() -> dict:
 KINDS = {"takeaways": "takeaway", "opportunities": "opportunity", "quotes": "quote",
          "disagreements": "disagreement", "raj_questions": "raj_question", "raj_opinions": "raj_opinion"}
 
-SPEAKER_SCHEMA = {"type": "object", "properties": {"labels": {"type": "string"}}, "required": ["labels"],
-                  "additionalProperties": False}
+SPEAKER_SCHEMA = {
+    "type": "object",
+    "properties": {"groups": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"from_id": {"type": "integer"}, "letters": {"type": "string"}},
+        "required": ["from_id", "letters"], "additionalProperties": False}}},
+    "required": ["groups"],
+    "additionalProperties": False,
+}
 
 # One fixed schema for every extraction request. Every property is required: the API
 # allows only 24 optional ones, and required properties come back in schema order. The
@@ -359,99 +375,148 @@ def speaker_chunks(lines: list[dict]) -> list[tuple[int, int]]:
     return [(i, min(len(lines), i + SPEAKER_CHUNK_LINES)) for i in range(0, len(lines), SPEAKER_CHUNK_LINES)]
 
 
-def speaker_request(custom_id: str, ep: dict, lines: list[dict], lo: int, hi: int) -> Request:
-    before, after = lines[max(0, lo - SPEAKER_CONTEXT[0]):lo], lines[hi:hi + SPEAKER_CONTEXT[1]]
+def speaker_groups(lines: list[dict], lo: int, hi: int) -> dict[int, list[dict]]:
+    """The chunk's lines in groups of SPEAKER_GROUP_LINES, keyed by the S ID of each group's first line."""
+    return {lines[i]["id"]: lines[i:min(hi, i + SPEAKER_GROUP_LINES)] for i in range(lo, hi, SPEAKER_GROUP_LINES)}
+
+
+def speaker_request(custom_id: str, ep: dict, lines: list[dict], lo: int, hi: int, wanted: list[int]) -> Request:
+    """Ask for the letters of the wanted groups; the chunk's other groups are shown as context."""
     fmt = lambda ls: "\n".join(f"[S{l['id']} | {clock(l['start'])}] {l['text']}" for l in ls)
+    before, after = lines[max(0, lo - SPEAKER_CONTEXT[0]):lo], lines[hi:hi + SPEAKER_CONTEXT[1]]
     prompt = (f"Episode title: {ep['title']}\nGuest (from the title, a hint only): "
               f"{romanize_lib.guess_guest(ep['title'])}\n\n")
     if before:
         prompt += f"Context before (do not label):\n{fmt(before)}\n\n"
-    prompt += f"Lines to label ({hi - lo}):\n{fmt(lines[lo:hi])}\n"
+    for first, group in speaker_groups(lines, lo, hi).items():
+        label = f"label, {len(group)} lines" if first in wanted else "context only, do not label"
+        prompt += f"--- Group S{first} ({label}) ---\n{fmt(group)}\n"
     if after:
         prompt += f"\nContext after (do not label):\n{fmt(after)}\n"
-    prompt += f"\nReturn exactly {hi - lo} letters, one per line to label, in groups of 10."
+    prompt += (f"\nReturn {len(wanted)} groups, one for each group marked \"label\": from_id is the S ID in the "
+               f"group's heading and letters has exactly one letter per line of that group.")
     return Request(custom_id=custom_id, params=MessageCreateParamsNonStreaming(
         model=MODELS[SPEAKER_MODEL], max_tokens=SPEAKER_MAX_TOKENS, system=SPEAKER_PROMPT,
-        output_config={"effort": EFFORT, "format": {"type": "json_schema", "schema": SPEAKER_SCHEMA}},
+        output_config={"effort": SPEAKER_EFFORT, "format": {"type": "json_schema", "schema": SPEAKER_SCHEMA}},
         messages=[{"role": "user", "content": prompt}]))
 
 
-def labels_problem(letters: str) -> str:
-    """Why a full-length answer looks wrong, or "" if it looks fine."""
-    if len(letters) >= SPEAKER_MIN_LINES_FOR_ONE_LABEL and len(set(letters)) == 1:
-        return f"all lines '{letters[0]}'"
-    if letters.count("u") > SPEAKER_MAX_UNKNOWN * len(letters):
-        return f"{letters.count('u')} of {len(letters)} lines unknown"
-    return ""
+def weak(letters: str) -> bool:
+    return letters.count("u") > SPEAKER_MAX_UNKNOWN * len(letters)
 
 
-def save_speakers(path: Path, custom_id: str, expected: int, result) -> None:
-    """Keep a speaker answer; one with the wrong length is rejected, a suspicious one asked again."""
+def save_speakers(path: Path, custom_id: str, info: dict, result) -> None:
+    """Check each requested group on its own: keep the good ones, leave the rest for the next round.
+
+    info has sizes ({first S ID: lines in the group}) and wanted (the groups asked for). A group
+    whose letters are mostly u is asked again while it has tries left, and its best answer kept.
+    A group that never gets a usable answer in SPEAKER_ATTEMPTS tries is left unknown.
+    """
     old = read_json(path) if path.exists() else None
     record = {"custom_id": custom_id, "result_type": result.type, "complete": False,
               "usage": {"input_tokens": 0, "output_tokens": 0}, "error": "",
-              "candidates": old.get("candidates", []) if old else []}
+              "done": dict(old["done"]) if old else {}, "failed": list(old["failed"]) if old else [],
+              "tries": dict(old["tries"]) if old else {}, "weak": dict(old["weak"]) if old else {}}
+    answers: dict[str, str] = {}
     if result.type == "succeeded":
         answer = answer_from(result.message, record)
         if answer is not None:
-            letters = re.sub(r"\s", "", str(answer.get("labels", ""))).lower()
-            if len(letters) != expected or set(letters) - set(LETTERS):
-                record["error"] = f"{len(letters)} letters for {expected} lines" if len(letters) != expected \
-                    else f"unexpected letters {sorted(set(letters) - set(LETTERS))}"
-            else:
-                problem = labels_problem(letters)
-                record["candidates"].append(letters)
-                if problem:
-                    record["error"] = f"suspicious: {problem}"
+            for g in answer.get("groups", []):
+                key = str(g.get("from_id"))
+                letters = re.sub(r"\s", "", str(g.get("letters", ""))).lower()
+                answers.setdefault(key, letters)  # a group answered twice: the first answer counts
     else:
         record["error"] = str(getattr(result, "error", "") or result.type)[:500]
-    tries = 1 + (len(old.get("earlier_usage", [])) + 1 if old else 0)
-    if record["candidates"] and (not record["error"] or tries >= SPEAKER_ATTEMPTS):
-        # The best answer so far: fewest unknown lines, and not all one letter if possible.
-        best = min(record["candidates"], key=lambda l: (bool(labels_problem(l)), l.count("u")))
-        record |= {"complete": True, "labels": best, "note": labels_problem(best)}
-        record["error"] = ""
+    problems = []
+    for first in info["wanted"]:
+        key, size = str(first), info["sizes"][str(first)]
+        record["tries"][key] = record["tries"].get(key, 0) + 1
+        letters = answers.get(key)
+        if letters is None:
+            problems.append(f"S{key} missing")
+        elif len(letters) != size:
+            problems.append(f"S{key} {len(letters)} letters for {size} lines")
+        elif set(letters) - set(LETTERS):
+            problems.append(f"S{key} unexpected letters {''.join(sorted(set(letters) - set(LETTERS)))}")
+        else:
+            best = min([letters, *([record["weak"][key]] if key in record["weak"] else [])], key=lambda l: l.count("u"))
+            if weak(best) and record["tries"][key] < SPEAKER_ATTEMPTS:
+                record["weak"][key] = best
+                problems.append(f"S{key} mostly unknown")
+            else:
+                record["done"][key] = best
+                record["weak"].pop(key, None)
+                continue
+        if record["tries"][key] >= SPEAKER_ATTEMPTS:
+            if key in record["weak"]:
+                record["done"][key] = record["weak"].pop(key)
+            else:
+                record["failed"].append(key)
+    if problems and not record["error"]:
+        record["error"] = "; ".join(problems[:6]) + (f" (+{len(problems) - 6} more)" if len(problems) > 6 else "")
+    record["complete"] = all(k in record["done"] or k in record["failed"] for k in info["sizes"])
+    if record["complete"] and record["failed"]:
+        record["note"] = f"groups left unknown: {', '.join('S' + k for k in record['failed'])}"
     save_record(path, record, old)
 
 
-def speaker_step(client, episodes: list[dict], lines_of: dict) -> dict[str, dict]:
-    """Speaker letters for each episode, {video_id: {segment id: raj|guest|unknown}}."""
+def speaker_step(client, db, episodes: list[dict], lines_of: dict) -> dict[str, dict]:
+    """Speaker letters for each episode, {video_id: {segment id: raj|guest|unknown}}, also written to segments."""
     chunk_dir, job_path = SPEAKER_DIR / "chunks", SPEAKER_DIR / "batch_job.json"
     chunk_dir.mkdir(parents=True, exist_ok=True)
     todo = [ep for ep in episodes if ep["video_id"] in lines_of and not speaker_path(ep["video_id"]).exists()]
     for round_no in range(1, MAX_ROUNDS + 1):
-        requests, expected = {}, {}
+        requests, info = {}, {}
         for ep in todo:
             vid, lines = ep["video_id"], lines_of[ep["video_id"]]
             for n, (lo, hi) in enumerate(speaker_chunks(lines)):
-                cid, path = f"{vid}-s{n:03d}", chunk_dir / f"{vid}-s{n:03d}.json"
-                if not romanize_lib.chunk_done(path) and romanize_lib.attempts(path) < SPEAKER_ATTEMPTS:
-                    requests[cid], expected[cid] = speaker_request(cid, ep, lines, lo, hi), hi - lo
+                cid, path = f"{vid}-c{n:03d}", chunk_dir / f"{vid}-c{n:03d}.json"
+                if romanize_lib.chunk_done(path):
+                    continue
+                record = read_json(path) if path.exists() else {"done": {}, "failed": []}
+                sizes = {str(k): len(g) for k, g in speaker_groups(lines, lo, hi).items()}
+                wanted = [int(k) for k in sizes if k not in record["done"] and k not in record["failed"]]
+                requests[cid] = speaker_request(cid, ep, lines, lo, hi, wanted)
+                info[cid] = {"sizes": sizes, "wanted": wanted}
         if not requests:
             break
-        log.info("Speaker round %s: %s chunks", round_no, len(requests))
-        romanize_lib.wait_after_rate_limit(romanize_lib.run_batch(client, requests, expected, job_path, chunk_dir,
+        log.info("Speaker round %s: %s chunks, %s groups", round_no, len(requests),
+                 sum(len(i["wanted"]) for i in info.values()))
+        romanize_lib.wait_after_rate_limit(romanize_lib.run_batch(client, requests, info, job_path, chunk_dir,
                                                                   save=save_speakers))
     for ep in todo:
         vid, lines = ep["video_id"], lines_of[ep["video_id"]]
-        paths = [chunk_dir / f"{vid}-s{n:03d}.json" for n in range(len(speaker_chunks(lines)))]
-        letters, notes = "", []
+        paths = [chunk_dir / f"{vid}-c{n:03d}.json" for n in range(len(speaker_chunks(lines)))]
+        if not all(romanize_lib.chunk_done(p) for p in paths):
+            log.error("%s: speaker chunks unfinished after %s rounds; rerun to continue", vid, MAX_ROUNDS)
+            continue
+        letters, failed = {}, []
         for path, (lo, hi) in zip(paths, speaker_chunks(lines)):
-            record = read_json(path) if path.exists() else {}
-            if record.get("complete"):
-                letters += record["labels"]
-                if record.get("note"):
-                    notes.append(f"{path.stem}: {record['note']}")
-            else:
-                letters += "u" * (hi - lo)
-                notes.append(f"{path.stem}: no usable answer, lines left unknown")
+            record = read_json(path)
+            failed += [f"{path.stem}/S{k}" for k in record["failed"]]
+            for first, group in speaker_groups(lines, lo, hi).items():
+                for l, c in zip(group, record["done"].get(str(first), "u" * len(group))):
+                    letters[str(l["id"])] = LETTERS[c]
         usage = add_usage(paths)
         write_json(speaker_path(vid), {
-            "video_id": vid, "model": MODELS[SPEAKER_MODEL], "chunks": len(paths), "notes": notes,
-            "usage": usage, "cost_usd": round(cost(SPEAKER_MODEL, usage), 6),
-            "speakers": {str(l["id"]): LETTERS[c] for l, c in zip(lines, letters)}})
-    return {ep["video_id"]: read_json(speaker_path(ep["video_id"]))["speakers"]
-            for ep in episodes if speaker_path(ep["video_id"]).exists()}
+            "video_id": vid, "model": MODELS[SPEAKER_MODEL], "effort": SPEAKER_EFFORT, "chunks": len(paths),
+            "failed_groups": failed, "usage": usage, "cost_usd": round(cost(SPEAKER_MODEL, usage), 6),
+            "db_written": False, "speakers": letters})
+
+    # Write labels to segments (also any left unwritten by an earlier run).
+    result = {}
+    for ep in episodes:
+        path = speaker_path(ep["video_id"])
+        if not path.exists():
+            continue
+        record = read_json(path)
+        if not record["db_written"]:
+            write_speakers(db, ep["video_id"], record["speakers"])
+            record["db_written"] = True
+            write_json(path, record)
+            log.info("%s: speakers written for %s segments", ep["video_id"], len(record["speakers"]))
+        result[ep["video_id"]] = record["speakers"]
+    return result
 
 
 def raj_turns(lines: list[dict], speakers: dict[str, str]) -> int:
@@ -763,7 +828,7 @@ def write_speakers(db, vid: str, speakers: dict[str, str]) -> None:
 
 # ---------- run ----------
 
-def run(key: str, which: str) -> None:
+def run(key: str, which: str, speakers_only: bool = False) -> None:
     model = MODELS[key]
     client = anthropic.Anthropic(max_retries=MAX_RETRIES)
     db = captions.supabase_client()
@@ -787,7 +852,10 @@ def run(key: str, which: str) -> None:
     if skipped:
         log.info("%s episodes have no transcript in the database yet, skipped", len(skipped))
 
-    speakers = speaker_step(client, episodes, lines_of)
+    speakers = speaker_step(client, db, episodes, lines_of)
+    if speakers_only:
+        print_speaker_summary(episodes)
+        return
     todo, plans = [], {}
     for ep in episodes:
         vid = ep["video_id"]
@@ -836,19 +904,13 @@ def run(key: str, which: str) -> None:
         if not path.exists():
             continue
         result = read_json(path)
-        if result["db_written"] and (key != SPEAKER_MODEL or result.get("speakers_written")):
+        if result["db_written"]:
             continue
-        if not result["db_written"]:
-            lines = lines_of.get(vid) or episode_lines(db, ep)
-            result["db_rows"] = write_rows(db, key, ep, lines, result)
-            result["db_written"] = True
-            write_json(path, result)
-            log.info("%s: wrote %s", vid, result["db_rows"])
-        if key == SPEAKER_MODEL and not result.get("speakers_written"):
-            write_speakers(db, vid, result["speakers"])
-            result["speakers_written"] = True
-            write_json(path, result)
-            log.info("%s: speakers written for %s segments", vid, len(result["speakers"]))
+        lines = lines_of.get(vid) or episode_lines(db, ep)
+        result["db_rows"] = write_rows(db, key, ep, lines, result)
+        result["db_written"] = True
+        write_json(path, result)
+        log.info("%s: wrote %s", vid, result["db_rows"])
 
     print_summary(key, episodes, run_id)
 
@@ -871,22 +933,13 @@ def print_summary(key: str, episodes: list[dict], run_id: str) -> None:
     vids = {ep["video_id"] for ep in episodes}
     usage = add_usage(p for p in part_dir(key).glob("*.json")
                       if (m := re.fullmatch(r"(.+)-p\d+", p.stem)) and m.group(1) in vids)
-    speaker_files = [read_json(speaker_path(v)) for v in vids if speaker_path(v).exists()]
-    speaker_usage = {k: sum(s["usage"][k] for s in speaker_files) for k in ("input_tokens", "output_tokens")}
+    print_speaker_summary(episodes)
     print()
     print(f"=== {MODELS[key]} (Batch API, effort {EFFORT}, prompt {VERSION}, run {run_id}) ===")
     print(f"Episodes done: {len(done)} of {len(episodes)} ({sum(r['parts'] > 1 for r in done)} split into parts)")
     counts = {"guest": sum(1 for r in done if r["guest"]), "topics": sum(len(r["topics"]) for r in done)}
     counts |= {name: sum(len(r[name]) for r in done) for name in ITEM_LISTS}
     print("Items: " + ", ".join(f"{k} {v}" for k, v in counts.items()))
-    who: dict[str, int] = {}
-    for s in speaker_files:
-        for w in s["speakers"].values():
-            who[w] = who.get(w, 0) + 1
-    print("Speakers: " + ", ".join(f"{k} {v:,}" for k, v in sorted(who.items())))
-    for s in speaker_files:
-        for note in s["notes"]:
-            print(f"    speakers {note}")
     checks: dict[str, int] = {}
     for r in done:
         for k, v in r["checks"].items():
@@ -899,16 +952,38 @@ def print_summary(key: str, episodes: list[dict], run_id: str) -> None:
     print(f"Failures: {len(failed)}")
     for f in failed:
         print(f"    {f}")
-    print(f"Speaker step ({MODELS[SPEAKER_MODEL]}): {speaker_usage['input_tokens']:,} in, "
-          f"{speaker_usage['output_tokens']:,} out, USD {cost(SPEAKER_MODEL, speaker_usage):.4f}")
     print(f"Extraction, all attempts: {usage['input_tokens']:,} in, {usage['output_tokens']:,} out, "
           f"USD {cost(key, usage):.4f} (USD {BATCH_PRICES[key][0]}/{BATCH_PRICES[key][1]} per million tokens in/out)")
+
+
+def print_speaker_summary(episodes: list[dict]) -> None:
+    files = {ep["video_id"]: read_json(speaker_path(ep["video_id"])) for ep in episodes
+             if speaker_path(ep["video_id"]).exists()}
+    usage = {k: sum(s["usage"][k] for s in files.values()) for k in ("input_tokens", "output_tokens")}
+    who: dict[str, int] = {}
+    print()
+    print(f"=== Speakers ({MODELS[SPEAKER_MODEL]}, effort {SPEAKER_EFFORT}, groups of {SPEAKER_GROUP_LINES}) ===")
+    print(f"Episodes labelled: {len(files)} of {len(episodes)}, "
+          f"written to segments: {sum(s['db_written'] for s in files.values())}")
+    for vid, s in files.items():
+        letters = list(s["speakers"].values())
+        for w in letters:
+            who[w] = who.get(w, 0) + 1
+        print(f"    {vid}: {100 * letters.count('unknown') / len(letters):.0f}% unknown"
+              + (f"; groups left unknown: {', '.join(s['failed_groups'])}" if s["failed_groups"] else ""))
+    total = sum(who.values()) or 1
+    print("Speakers: " + ", ".join(f"{k} {v:,} ({100 * v / total:.0f}%)" for k, v in sorted(who.items())))
+    print(f"Groups left unknown: {sum(len(s['failed_groups']) for s in files.values())}")
+    print(f"Speaker step, all attempts: {usage['input_tokens']:,} in, {usage['output_tokens']:,} out, "
+          f"USD {cost(SPEAKER_MODEL, usage):.4f}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--model", choices=MODELS, required=True)
     parser.add_argument("--set", choices=["test_set", "all"], required=True)
+    parser.add_argument("--speakers-only", action="store_true",
+                        help="only label speakers and write them to segments; no extraction")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -917,7 +992,7 @@ def main() -> None:
     load_dotenv(ROOT / ".env")
     if not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("ANTHROPIC_API_KEY must be set in .env")
-    run(args.model, args.set)
+    run(args.model, args.set, args.speakers_only)
 
 
 if __name__ == "__main__":
