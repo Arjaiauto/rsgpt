@@ -32,7 +32,12 @@ Two steps:
             4b. Every line of a Hindi episode is translated into English by
                claude-haiku-5-5 through the Batch API, line by line with its
                timing, with the rules tested in 07_translate.py (romanize_lib.py).
-               The Sarvam fallback episodes are translated from their Roman text.
+               At most 40 lines per request, each numbered with its ID, and a
+               JSON schema that allows exactly those IDs; answers with missing,
+               extra or duplicated IDs are retried, then split in half. Lines
+               whose English length is far off (length check) are translated
+               again one at a time. The Sarvam fallback episodes are translated
+               from their Roman text.
             5. Segments and translation lines are written to Supabase with
                source = youtube_auto, and episodes.status becomes 'transcribed'.
             Fallback: with no automatic track, an original track that is neither
@@ -57,7 +62,7 @@ Usage:
     .venv\\Scripts\\python.exe pipeline\\05_captions.py list [--set bakeoff|test_set|all]
     .venv\\Scripts\\python.exe pipeline\\05_captions.py download
     .venv\\Scripts\\python.exe pipeline\\05_captions.py download-auto
-    .venv\\Scripts\\python.exe pipeline\\05_captions.py transcribe --set test_set|all
+    .venv\\Scripts\\python.exe pipeline\\05_captions.py transcribe --set test_set|all [--redo-translations]
 """
 
 import argparse
@@ -366,8 +371,8 @@ def cmd_download_auto() -> None:
 TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
 ROMAN_CHUNK_DIR = TRANSCRIPTS_DIR / "roman_chunks"
 ROMAN_JOB_PATH = TRANSCRIPTS_DIR / "roman_job.json"
-TRANSLATION_CHUNK_DIR = TRANSCRIPTS_DIR / "translation_chunks"
-TRANSLATION_JOB_PATH = TRANSCRIPTS_DIR / "translation_job.json"
+TRANSLATION_UNIT_DIR = TRANSCRIPTS_DIR / "translation_units"
+TRANSLATION_JOB_PATH = TRANSCRIPTS_DIR / "translation_units_job.json"
 SARVAM_JOB_PATH = TRANSCRIPTS_DIR / "sarvam_job.json"
 AUDIO_RESULTS_DIR = TRANSCRIPTS_DIR / "audio"
 
@@ -378,8 +383,6 @@ YOUTUBE_RETRIES = 3
 BACKOFF_429_SECONDS = 180  # wait before retry n is n times this
 ROMAN_CHUNK_LINES = 60
 ROMAN_ROUNDS = 3  # batches per run; later rounds resend only chunks that failed
-# Sarvam lines are 15-20 s paragraphs, not caption phrases, so they go in smaller chunks.
-TRANSLATION_CHUNK_LINES = {"youtube_auto": 60, "sarvam": 20}
 DB_BATCH = 500
 
 FALLBACK = {"en": "groq", "hi": "sarvam"}
@@ -774,71 +777,74 @@ def romanize_step(states: dict[str, dict]) -> float:
 
 # ----- translation -----
 
-def translation_chunks(state: dict) -> dict[str, list[dict]]:
-    vid, size = state["video_id"], TRANSLATION_CHUNK_LINES[state["source"]]
-    lines = [{"id": f"{vid}-L{s['seq']:05d}", "text": s["text_original"]} for s in state["segments"]]
-    return {f"{vid}-t{n:03d}": lines[i:i + size] for n, i in enumerate(range(0, len(lines), size))}
+def line_id(vid: str, seq: int) -> str:
+    return f"{vid}-L{seq:05d}"
 
 
-def translation_chunk_path(chunk_id: str) -> Path:
-    return TRANSLATION_CHUNK_DIR / f"{chunk_id}.json"
+def redo_translations(states: dict[str, dict]) -> None:
+    """Throw away the set's translations: delete their translation_segments rows and mark them pending.
+
+    The old answers stay on disk but are not reused: the new step keeps its answers in
+    TRANSLATION_UNIT_DIR under different names.
+    """
+    db = supabase_client()
+    for state in states.values():
+        if state["language"] != "hi" or not state["segments"]:
+            continue
+        vid = state["video_id"]
+        db_call("translation delete", lambda: db.table("translation_segments").delete().eq("video_id", vid).execute())
+        state["earlier_translation_cost_usd"] = (state.get("earlier_translation_cost_usd", 0.0)
+                                                 + state.get("translation_cost_usd", 0.0))
+        state.update({"translation": "pending", "translation_segments": None, "translation_cost_usd": 0.0,
+                      "db_translation": False, "translation_flagged": [], "translation_fixed": [],
+                      "translation_still_flagged": []})
+        save_state(state)
+        log.info("%s: translation rows deleted, to be translated again", vid)
 
 
 def translate_step(states: dict[str, dict], failed: list[str]) -> dict:
     """Step 4b: English translation of every line of the Hindi episodes. Returns counts for the summary."""
     todo = [s for s in states.values() if s["language"] == "hi" and s["segments"] and s["translation"] != "ok"]
-    report = {"episodes": 0, "lines": 0, "failed_lines": []}
+    report = {"episodes": 0, "lines": 0, "flagged": 0, "fixed": 0, "still_flagged": [], "failed_lines": []}
     if not todo:
         return report
     if not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("ANTHROPIC_API_KEY must be set in .env for translation")
-    TRANSLATION_CHUNK_DIR.mkdir(parents=True, exist_ok=True)
-    chunks = {s["video_id"]: translation_chunks(s) for s in todo}
+    episodes = [{"key": s["video_id"], "title": s["title"], "guest": romanize_lib.guess_guest(s["title"]),
+                 # YouTube captions are Devanagari; Sarvam's fallback text is already Roman Hinglish.
+                 "roman": s["source"] == "sarvam",
+                 "lines": [{"id": line_id(s["video_id"], seg["seq"]), "text": seg["text_original"]}
+                           for seg in s["segments"]]}
+                for s in todo]
     client = anthropic.Anthropic(max_retries=MAX_RETRIES + 2)
-    for round_no in range(1, ROMAN_ROUNDS + 1):
-        requests, expected = {}, {}
-        for state in todo:
-            # YouTube captions are Devanagari; Sarvam's fallback text is already Roman Hinglish.
-            system = romanize_lib.translation_prompt(roman=state["source"] == "sarvam")
-            guest = romanize_lib.guess_guest(state["title"])
-            for chunk_id, lines in chunks[state["video_id"]].items():
-                if not romanize_lib.chunk_done(translation_chunk_path(chunk_id)):
-                    requests[chunk_id] = romanize_lib.build_request(chunk_id, lines, state["title"], guest, system=system,
-                                                                    effort=romanize_lib.TRANSLATION_EFFORT)
-                    expected[chunk_id] = [l["id"] for l in lines]
-        if not requests:
-            break
-        log.info("Translation round %s: %s chunks for %s episodes", round_no, len(requests), len(todo))
-        romanize_lib.run_batch(client, requests, expected, TRANSLATION_JOB_PATH, TRANSLATION_CHUNK_DIR)
+    results = romanize_lib.translate_episodes(client, episodes, TRANSLATION_UNIT_DIR, TRANSLATION_JOB_PATH)
 
     for state in todo:
-        vid, ids = state["video_id"], list(chunks[state["video_id"]])
-        incomplete = [c for c in ids if not romanize_lib.chunk_done(translation_chunk_path(c))]
-        if incomplete:
-            for c in incomplete:
-                done = romanize_lib.chunk_lines(translation_chunk_path(c)) if translation_chunk_path(c).exists() else {}
-                report["failed_lines"] += [l["id"] for l in chunks[vid][c] if l["id"] not in done]
-            log.error("%s: translation chunks %s still incomplete; rerun to resend them", vid, ", ".join(incomplete))
-            failed.append(f"{vid}: translation incomplete ({', '.join(incomplete)})")
+        vid, result = state["video_id"], results[state["video_id"]]
+        report["flagged"] += len(result["flagged"])
+        report["fixed"] += len(result["fixed"])
+        report["still_flagged"] += result["still_flagged"]
+        report["failed_lines"] += result["failed"]
+        if not result["complete"]:
+            missing = [line_id(vid, seg["seq"]) for seg in state["segments"]
+                       if line_id(vid, seg["seq"]) not in result["lines"]]
+            log.error("%s: %s lines have no translation; rerun to retry", vid, len(missing))
+            failed.append(f"{vid}: translation incomplete ({len(missing)} lines)")
             continue
-        converted = {}
-        for c in ids:
-            converted |= romanize_lib.chunk_lines(translation_chunk_path(c))
-        lines = []
-        for seg in state["segments"]:
-            text = converted[f"{vid}-L{seg['seq']:05d}"].strip()
-            if not text:
-                report["failed_lines"].append(f"{vid}-L{seg['seq']:05d} (empty)")
-                continue
-            lines.append({"seq": seg["seq"], "start": seg["start"], "end": seg["end"], "text": text})
-        state["translation_segments"] = lines
+        state["translation_segments"] = [
+            {"seq": seg["seq"], "start": seg["start"], "end": seg["end"],
+             "text": result["lines"][line_id(vid, seg["seq"])]} for seg in state["segments"]]
         state["translation"] = "ok"
         state["db_translation"] = False
-        state["translation_cost_usd"] = round(sum(romanize_lib.chunk_cost(translation_chunk_path(c)) for c in ids), 6)
+        state["translation_cost_usd"] = round(result["cost"], 6)
+        state["translation_flagged"] = result["flagged"]
+        state["translation_fixed"] = result["fixed"]
+        state["translation_still_flagged"] = result["still_flagged"]
         save_state(state)
         report["episodes"] += 1
-        report["lines"] += len(lines)
-        log.info("%s: translated %s lines", vid, len(lines))
+        report["lines"] += len(state["translation_segments"])
+        log.info("%s: translated %s lines; length check flagged %s, %s fixed on retry", vid,
+                 len(state["translation_segments"]), len(result["flagged"]), len(result["fixed"]))
     return report
 
 
@@ -864,12 +870,16 @@ def replace_rows(db, table: str, vid: str, rows: list[dict]) -> None:
         db_call(f"{table} insert", lambda: db.table(table).insert(batch).execute())
 
 
-def db_step(states: dict[str, dict]) -> None:
-    """Step 5: segments and translation lines into Supabase, then episodes.status = 'transcribed'."""
+def supabase_client():
     url, key = os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_KEY")
     if not url or not key:
         sys.exit("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in .env")
-    db = create_client(url, key)
+    return create_client(url, key)
+
+
+def db_step(states: dict[str, dict]) -> None:
+    """Step 5: segments and translation lines into Supabase, then episodes.status = 'transcribed'."""
+    db = supabase_client()
     for state in states.values():
         vid = state["video_id"]
         ready = state["segments"] and (state["romanized"] or state["language"] != "hi"
@@ -897,7 +907,8 @@ def db_step(states: dict[str, dict]) -> None:
 
 def costs(states: list[dict]) -> dict[str, float]:
     totals = {"Haiku romanization (USD)": sum(s["roman_cost_usd"] for s in states),
-              "Haiku translation (USD)": sum(s.get("translation_cost_usd", 0.0) for s in states),
+              "Haiku translation (USD)": sum(s.get("translation_cost_usd", 0.0)
+                                             + s.get("earlier_translation_cost_usd", 0.0) for s in states),
               "Groq (USD)": 0.0, "Sarvam (INR)": 0.0}
     for s in states:
         if s["audio_cost"]:
@@ -941,9 +952,13 @@ def print_transcribe_summary(which: str, episodes: list[dict], states: dict[str,
     print(f"English translations (Hindi episodes, all runs): "
           + (", ".join(f"{k} {v}" for k, v in sorted(translations.items())) or "none"))
     print(f"Translated this run:   {translated['lines']:,} lines in {translated['episodes']} episodes")
-    print(f"Lines that failed translation: {len(translated['failed_lines'])}")
-    for line_id in translated["failed_lines"]:
-        print(f"    {line_id}")
+    print(f"Length check: {translated['flagged']} lines flagged, {translated['fixed']} fixed on their own retry, "
+          f"{len(translated['still_flagged'])} still off")
+    for failed_id in translated["still_flagged"]:
+        print(f"    still off: {failed_id}")
+    print(f"Lines with no translation: {len(translated['failed_lines'])}")
+    for failed_id in translated["failed_lines"]:
+        print(f"    {failed_id}")
     after = costs(done)
     print("Cost, these episodes (all runs):  " + ", ".join(f"{k} {v:.4f}" for k, v in after.items()))
     print("Cost, this run:                   " + ", ".join(f"{k} {after[k] - before.get(k, 0.0):.4f}" for k in after))
@@ -956,7 +971,7 @@ def print_transcribe_summary(which: str, episodes: list[dict], states: dict[str,
             print(f"    {f}")
 
 
-def cmd_transcribe(which: str) -> None:
+def cmd_transcribe(which: str, redo_translations_first: bool = False) -> None:
     load_dotenv(ROOT / ".env")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     CAPTIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -967,6 +982,8 @@ def cmd_transcribe(which: str) -> None:
     failed: list[str] = []
     log.info("%s episodes in set %s, %s already started", len(episodes), which, len(states))
 
+    if redo_translations_first:
+        redo_translations(states)
     youtube_step(episodes, states, failed)
     audio_step(episodes, states, failed)
     romanize_step(states)
@@ -984,6 +1001,9 @@ def main() -> None:
     sub.add_parser("download-auto", help="download automatic captions (original + English) for the bake-off")
     p_tr = sub.add_parser("transcribe", help="main transcript step: captions, romanization, fallback, database")
     p_tr.add_argument("--set", choices=["test_set", "all"], required=True)
+    p_tr.add_argument("--redo-translations", action="store_true",
+                      help="delete the set's translation_segments rows and translate again (once; rerun without "
+                           "it to resume)")
     args = parser.parse_args()
 
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -997,7 +1017,7 @@ def main() -> None:
     elif args.command == "download-auto":
         cmd_download_auto()
     else:
-        cmd_transcribe(args.set)
+        cmd_transcribe(args.set, args.redo_translations)
 
 
 if __name__ == "__main__":
