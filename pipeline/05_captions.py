@@ -16,26 +16,63 @@ Two steps:
             the original-language one (<lang>-orig) for every episode, and the
             automatic English translation ("en") where the original is not
             English. Written as youtube_auto_orig and youtube_auto_en results.
+  transcribe  The main transcript step for a set of episodes (--set test_set|all):
+            1. Download the original-language automatic track (<lang>-orig, json3).
+               The episode's language comes from that track (hi-orig = Hindi,
+               en-orig = English) and is written to episodes.caption_language.
+            2. For Hindi episodes, also download YouTube's automatic English
+               translation ("en").
+            3. Each caption phrase becomes a segment. Its start is when its first
+               word is spoken; its end is when the next phrase starts (capped at
+               the phrase's display time), not the rolling-display end in json3.
+            4. Hindi lines are romanized by claude-haiku-5-5 through the Batch API
+               with the rules in romanize_lib.py. A line whose word count is more
+               than 20% off keeps its Devanagari original and is logged. English
+               episodes keep text_roman = text_original.
+            5. Segments and translation lines are written to Supabase with
+               source = youtube_auto, and episodes.status becomes 'transcribed'.
+            Fallback: with no automatic track, an original track that is neither
+            Hindi nor English, or captions covering under 80% of the episode, the
+            episode is transcribed from audio (03_download_audio.py) instead:
+            Groq whisper-large-v3 for English, Sarvam saaras:v4 translit for Hindi
+            (source groq / sarvam), using the bake-off code in 04_bakeoff.py.
+            English-track episodes averaging under 100 words per minute are listed
+            as suspect (Hindi speech may have been heard as English); they are not
+            reprocessed.
 
 Safe to rerun: episodes already in subs_index.csv are skipped, as are tracks
 already downloaded. Network errors are retried; episodes that still fail are
-recorded with an error and retried on the next run.
+recorded with an error and retried on the next run. For transcribe, each
+episode's progress is kept in data/transcripts/<video_id>.json, batch and
+Sarvam job IDs are saved, and each step is skipped once done. YouTube gets a
+20-40 second pause between episodes; on HTTP 429 the script backs off, and if
+YouTube keeps refusing it stops asking for the rest of the run (rerun later).
 
 Usage:
     .venv\\Scripts\\python.exe pipeline\\05_captions.py list [--set bakeoff|test_set|all]
     .venv\\Scripts\\python.exe pipeline\\05_captions.py download
     .venv\\Scripts\\python.exe pipeline\\05_captions.py download-auto
+    .venv\\Scripts\\python.exe pipeline\\05_captions.py transcribe --set test_set|all
 """
 
 import argparse
 import csv
+import importlib.util
 import json
 import logging
+import os
+import random
 import sys
 import time
 from pathlib import Path
 
+import anthropic
+import httpx
 import yt_dlp
+from dotenv import load_dotenv
+from supabase import create_client
+
+import romanize_lib
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
@@ -319,6 +356,566 @@ def cmd_download_auto() -> None:
         print(f"Failed: {', '.join(failed)}")
 
 
+# ---------- transcribe ----------
+
+TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
+ROMAN_CHUNK_DIR = TRANSCRIPTS_DIR / "roman_chunks"
+ROMAN_JOB_PATH = TRANSCRIPTS_DIR / "roman_job.json"
+SARVAM_JOB_PATH = TRANSCRIPTS_DIR / "sarvam_job.json"
+AUDIO_RESULTS_DIR = TRANSCRIPTS_DIR / "audio"
+
+MIN_COVERAGE = 0.80
+SUSPECT_WORDS_PER_MINUTE = 100
+EPISODE_PAUSE_SECONDS = (20, 40)
+TRANSLATION_PAUSE_SECONDS = (5, 10)
+YOUTUBE_RETRIES = 3
+BACKOFF_429_SECONDS = 180  # wait before retry n is n times this
+ROMAN_CHUNK_LINES = 60
+ROMAN_ROUNDS = 3  # batches per run; later rounds resend only chunks that failed
+DB_BATCH = 500
+
+FALLBACK = {"en": "groq", "hi": "sarvam"}
+GROQ_MODEL = "whisper-large-v3"
+SARVAM_PARAMS = {"model": "saaras:v4", "mode": "translit", "language_code": "unknown", "with_timestamps": True}
+
+
+class YouTubeRefused(RuntimeError):
+    """YouTube kept answering 429 after every back-off."""
+
+
+def load_module(filename: str):
+    spec = importlib.util.spec_from_file_location(Path(filename).stem, Path(__file__).with_name(filename))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def state_path(vid: str) -> Path:
+    return TRANSCRIPTS_DIR / f"{vid}.json"
+
+
+def load_state(vid: str) -> dict | None:
+    path = state_path(vid)
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+def save_state(state: dict) -> None:
+    path = state_path(state["video_id"])
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=1, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def fetch_auto_track(episode: dict, langs: list[str]) -> dict:
+    """Download automatic caption tracks matching langs (yt-dlp patterns); returns the video info.
+
+    Backs off on HTTP 429 and raises YouTubeRefused if YouTube still refuses after every retry.
+    """
+    options = {
+        "quiet": True, "no_warnings": True, "noprogress": True, "skip_download": True,
+        "writesubtitles": False, "writeautomaticsub": True,
+        "subtitleslangs": langs, "subtitlesformat": "json3",
+        "outtmpl": str(CAPTIONS_DIR / f"{episode['video_id']}.%(ext)s"),
+        "sleep_interval_subtitles": 5,
+    }
+    for attempt in range(1, YOUTUBE_RETRIES + 1):
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:
+                return ydl.extract_info(episode["url"], download=True)
+        except yt_dlp.utils.DownloadError as exc:
+            refused = "429" in str(exc)
+            if attempt == YOUTUBE_RETRIES:
+                if refused:
+                    raise YouTubeRefused(str(exc).strip()[:300]) from exc
+                raise
+            wait = BACKOFF_429_SECONDS * attempt if refused else 15 * attempt
+            log.warning("%s: %s, retrying in %ss", episode["video_id"],
+                        "YouTube answered 429" if refused else str(exc).strip()[:200], wait)
+            time.sleep(wait)
+    raise AssertionError("unreachable")
+
+
+def phrase_segments(path: Path) -> list[dict]:
+    """Caption phrases with when they are spoken.
+
+    json3 automatic tracks show phrases in a rolling two-line window, so an event's
+    dDurationMs runs until the line scrolls away, well after it was said. A phrase
+    starts at its first word and ends when the next phrase starts, capped at its
+    display end. Newline-only "aAppend" events are skipped.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    phrases = []
+    for event in data.get("events", []):
+        segs = event.get("segs") or []
+        if event.get("aAppend") or not segs:
+            continue
+        text = " ".join("".join(s.get("utf8", "") for s in segs).split())
+        if not text:
+            continue
+        start = (event["tStartMs"] + segs[0].get("tOffsetMs", 0)) / 1000
+        phrases.append({"start": start, "shown_until": (event["tStartMs"] + event.get("dDurationMs", 0)) / 1000,
+                        "text": text})
+    segments = []
+    for i, p in enumerate(phrases):
+        next_start = phrases[i + 1]["start"] if i + 1 < len(phrases) else p["shown_until"]
+        end = max(p["start"], min(next_start, p["shown_until"]))
+        segments.append({"start": round(p["start"], 2), "end": round(end, 2), "text": p["text"]})
+    return segments
+
+
+def coverage(segments: list[dict], duration: float) -> float:
+    """Share of the episode inside at least one segment."""
+    covered, reach = 0.0, 0.0
+    for s in sorted(segments, key=lambda s: s["start"]):
+        start, end = max(s["start"], reach), min(s["end"], duration)
+        if end > start:
+            covered += end - start
+        reach = max(reach, s["end"])
+    return covered / duration if duration else 0.0
+
+
+def orig_track_file(vid: str) -> Path | None:
+    found = sorted(CAPTIONS_DIR.glob(f"{vid}.*-orig.json3"))
+    return found[0] if found else None
+
+
+def csv_language(episode: dict) -> str | None:
+    lang = episode.get("default_audio_language", "").lower().split("-")[0]
+    return lang if lang in ("en", "hi") else None
+
+
+def new_state(episode: dict) -> dict:
+    return {"video_id": episode["video_id"], "title": episode["title"],
+            "duration_seconds": float(episode["duration_seconds"]),
+            "track": None, "language": None, "source": None, "coverage": None, "fallback_reason": "",
+            "words_per_minute": None, "suspect": False, "segments": None,
+            "romanized": False, "flagged_seqs": [], "roman_cost_usd": 0.0,
+            "translation": "n/a", "translation_segments": None,
+            "audio_cost": None, "db_segments": False, "db_translation": False}
+
+
+def decide_from_track(state: dict, episode: dict, track: Path | None) -> None:
+    """Sets language, source and (for caption episodes) segments from the downloaded original track."""
+    vid = state["video_id"]
+    lang = track.name[len(vid) + 1:-len("-orig.json3")].split("-")[0] if track else None
+    state["track"] = track.name if track else None
+    if lang in ("en", "hi"):
+        state["language"] = lang
+        segments = phrase_segments(track)
+        state["coverage"] = round(coverage(segments, state["duration_seconds"]), 3)
+        if state["coverage"] >= MIN_COVERAGE:
+            state["source"] = "youtube_auto"
+            state["segments"] = [{"seq": i, "start": s["start"], "end": s["end"], "text_original": s["text"],
+                                  "text_roman": s["text"] if lang == "en" else None}
+                                 for i, s in enumerate(segments)]
+            if lang == "en":
+                words = sum(len(s["text"].split()) for s in segments)
+                state["words_per_minute"] = round(words / (state["duration_seconds"] / 60), 1)
+                state["suspect"] = state["words_per_minute"] < SUSPECT_WORDS_PER_MINUTE
+            else:
+                state["translation"] = "pending"
+            return
+        state["fallback_reason"] = f"captions cover {state['coverage']:.0%} of the episode"
+    else:
+        # No usable track: guess the language for the audio model from the episode metadata.
+        state["language"] = csv_language(episode) or "en"
+        state["fallback_reason"] = (f"original track is {track.name}, not Hindi or English" if track
+                                    else "no automatic captions")
+    state["source"] = FALLBACK[state["language"]]
+    log.warning("%s: %s; falling back to %s (%s)", vid, state["fallback_reason"], state["source"],
+                state["language"])
+
+
+def youtube_step(episodes: list[dict], states: dict[str, dict], failed: list[str]) -> None:
+    """Steps 1-3: original track, language, segments, and the English translation for Hindi episodes."""
+    contacted = False
+    translations_refused = False
+    for ep in episodes:
+        vid = ep["video_id"]
+        state = states.get(vid)
+        need_orig = state is None
+        need_translation = (state is not None and state["translation"] == "pending")
+        if not need_orig and not (need_translation and not translations_refused):
+            continue
+        if contacted:
+            time.sleep(random.uniform(*EPISODE_PAUSE_SECONDS))
+        if need_orig:
+            state = new_state(ep)
+            track = orig_track_file(vid)
+            if track is None:
+                contacted = True
+                try:
+                    fetch_auto_track(ep, [r".*-orig"])
+                except YouTubeRefused as exc:
+                    log.error("%s: YouTube keeps answering 429 (%s); stopping YouTube downloads for this run", vid, exc)
+                    failed.append(f"{vid}: YouTube 429, rerun later")
+                    return
+                except Exception as exc:
+                    log.error("%s: caption lookup failed: %s", vid, str(exc).strip()[:300])
+                    failed.append(f"{vid}: caption lookup failed")
+                    continue
+                track = orig_track_file(vid)
+            decide_from_track(state, ep, track)
+            states[vid] = state
+            save_state(state)
+            log.info("%s: %s, %s, coverage %s, %s segments", vid, state["track"] or "no track", state["language"],
+                     state["coverage"], len(state["segments"] or []))
+        if state["translation"] == "pending" and not translations_refused:
+            en_track = CAPTIONS_DIR / f"{vid}.en.json3"
+            if not en_track.exists():
+                if contacted or need_orig:
+                    time.sleep(random.uniform(*TRANSLATION_PAUSE_SECONDS))
+                contacted = True
+                try:
+                    info = fetch_auto_track(ep, ["en"])
+                    if "en" not in (info.get("automatic_captions") or {}):
+                        state["translation"] = "unavailable"
+                except YouTubeRefused as exc:
+                    log.error("%s: YouTube refused the English translation (%s); skipping translations "
+                              "for the rest of this run", vid, exc)
+                    translations_refused = True
+                except Exception as exc:
+                    log.error("%s: translation download failed: %s", vid, str(exc).strip()[:300])
+            if en_track.exists():
+                state["translation_segments"] = phrase_segments(en_track)
+                state["translation"] = "ok"
+                log.info("%s: English translation, %s lines", vid, len(state["translation_segments"]))
+            save_state(state)
+
+
+# ----- audio fallback -----
+
+def groq_cost(seconds: float, bakeoff) -> float:
+    return max(seconds, bakeoff.GROQ_MIN_BILLED_SECONDS) / 3600 * bakeoff.SERVICES["groq_large"]["price_per_hour"]
+
+
+def transcribe_groq_episode(state: dict, bakeoff, client) -> None:
+    vid = state["video_id"]
+    manifest = json.loads((AUDIO_DIR / vid / "manifest.json").read_text(encoding="utf-8"))
+    out_dir = AUDIO_RESULTS_DIR / vid
+    out_dir.mkdir(parents=True, exist_ok=True)
+    segments, cost = [], 0.0
+    for piece in manifest["pieces"]:
+        out = out_dir / f"{piece['file']}.groq.json"
+        if not out.exists():
+            log.info("%s: Groq %s %s", vid, GROQ_MODEL, piece["file"])
+            response = client.audio.transcriptions.create(
+                file=(f"{vid}_{piece['file']}", (AUDIO_DIR / vid / piece["file"]).read_bytes()),
+                model=GROQ_MODEL, language="en", response_format="verbose_json",
+                timestamp_granularities=["segment"], temperature=0.0)
+            raw = response.model_dump() if hasattr(response, "model_dump") else dict(response)
+            out.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        raw = json.loads(out.read_text(encoding="utf-8"))
+        offset = piece["start_seconds"]
+        segments += [{"start": s["start"] + offset, "end": s["end"] + offset, "text": s["text"].strip()}
+                     for s in raw.get("segments") or [] if s["text"].strip()]
+        cost += groq_cost(piece["duration_seconds"], bakeoff)
+    finish_audio_state(state, segments, {"currency": "USD", "amount": round(cost, 6)})
+
+
+def finish_audio_state(state: dict, segments: list[dict], cost: dict) -> None:
+    state["segments"] = [{"seq": i, "start": round(s["start"], 2), "end": round(s["end"], 2),
+                          "text_original": s["text"], "text_roman": s["text"]} for i, s in enumerate(segments)]
+    state["audio_cost"] = cost
+    state["translation"] = "n/a"
+    save_state(state)
+    log.info("%s: %s segments from %s", state["video_id"], len(segments), state["source"])
+
+
+def transcribe_sarvam_episodes(states: list[dict], bakeoff, key: str) -> None:
+    """One Sarvam batch job for every piece of every Hindi fallback episode."""
+    pieces = {}  # Sarvam file name -> (state, piece)
+    for state in states:
+        manifest = json.loads((AUDIO_DIR / state["video_id"] / "manifest.json").read_text(encoding="utf-8"))
+        for piece in manifest["pieces"]:
+            pieces[f"{state['video_id']}__{piece['file']}"] = (state, piece)
+    job = json.loads(SARVAM_JOB_PATH.read_text(encoding="utf-8")) if SARVAM_JOB_PATH.exists() else None
+    if job and (job.get("collected") or not set(pieces) <= set(job["files"])):
+        job = None
+    if job is None:
+        created = bakeoff.sarvam_request("POST", bakeoff.SARVAM_BASE, key, json={"job_parameters": SARVAM_PARAMS})
+        job = {"job_id": created["job_id"], "files": sorted(pieces), "uploaded": False, "started": False}
+        SARVAM_JOB_PATH.write_text(json.dumps(job, indent=2), encoding="utf-8")
+        log.info("Sarvam job %s created for %s pieces", job["job_id"], len(pieces))
+    if not job["uploaded"]:
+        resp = bakeoff.sarvam_request("POST", f"{bakeoff.SARVAM_BASE}/upload-files", key,
+                                      json={"job_id": job["job_id"], "files": job["files"]})
+        azure = resp.get("storage_container_type", "").startswith("Azure")
+        for name in job["files"]:
+            state, piece = pieces[name]
+            headers = {"Content-Type": "audio/mpeg"} | ({"x-ms-blob-type": "BlockBlob"} if azure else {})
+            data = (AUDIO_DIR / state["video_id"] / piece["file"]).read_bytes()
+            bakeoff.storage_request("PUT", resp["upload_urls"][name]["file_url"], data=data, headers=headers)
+        job["uploaded"] = True
+        SARVAM_JOB_PATH.write_text(json.dumps(job, indent=2), encoding="utf-8")
+    if not job["started"]:
+        bakeoff.sarvam_request("POST", f"{bakeoff.SARVAM_BASE}/{job['job_id']}/start", key)
+        job["started"] = True
+        SARVAM_JOB_PATH.write_text(json.dumps(job, indent=2), encoding="utf-8")
+    status = bakeoff.wait_for_sarvam(key, job)
+    outputs = {d["inputs"][0]["file_name"]: d["outputs"][0]["file_name"]
+               for d in status.get("job_details") or [] if d.get("state") == "Success"}
+    links = bakeoff.sarvam_request("POST", f"{bakeoff.SARVAM_BASE}/download-files", key,
+                                   json={"job_id": job["job_id"], "files": list(outputs.values())})
+    for name, out_name in outputs.items():
+        state, piece = pieces[name]
+        out = AUDIO_RESULTS_DIR / state["video_id"] / f"{piece['file']}.sarvam.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if not out.exists():
+            raw = bakeoff.storage_request("GET", links["download_urls"][out_name]["file_url"]).json()
+            out.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    job["collected"] = True
+    SARVAM_JOB_PATH.write_text(json.dumps(job, indent=2), encoding="utf-8")
+
+    price = bakeoff.SERVICES["sarvam_translit"]["price_per_hour"]
+    for state in states:
+        manifest = json.loads((AUDIO_DIR / state["video_id"] / "manifest.json").read_text(encoding="utf-8"))
+        outs = [AUDIO_RESULTS_DIR / state["video_id"] / f"{p['file']}.sarvam.json" for p in manifest["pieces"]]
+        if not all(o.exists() for o in outs):
+            log.error("%s: Sarvam returned no result for some pieces; rerun to retry", state["video_id"])
+            continue
+        segments = []
+        for piece, out in zip(manifest["pieces"], outs):
+            for s in bakeoff.sarvam_segments(json.loads(out.read_text(encoding="utf-8"))):
+                if s["text"].strip():
+                    segments.append({"start": s["start"] + piece["start_seconds"],
+                                     "end": s["end"] + piece["start_seconds"], "text": s["text"].strip()})
+        seconds = sum(p["duration_seconds"] for p in manifest["pieces"])
+        finish_audio_state(state, segments, {"currency": "INR", "amount": round(seconds / 3600 * price, 4)})
+
+
+def audio_step(episodes: list[dict], states: dict[str, dict], failed: list[str]) -> None:
+    todo = [states[ep["video_id"]] for ep in episodes
+            if ep["video_id"] in states and states[ep["video_id"]]["source"] in ("groq", "sarvam")
+            and states[ep["video_id"]]["segments"] is None]
+    if not todo:
+        return
+    log.info("%s episodes need audio transcription", len(todo))
+    download_audio = load_module("03_download_audio.py")
+    bakeoff = load_module("04_bakeoff.py")
+    by_id = {ep["video_id"]: ep for ep in episodes}
+    ready = []
+    for state in todo:
+        try:
+            download_audio.process(by_id[state["video_id"]])
+            ready.append(state)
+        except Exception as exc:
+            log.error("%s: audio download failed: %s", state["video_id"], str(exc).strip()[:300])
+            failed.append(f"{state['video_id']}: audio download failed")
+    groq_states = [s for s in ready if s["source"] == "groq"]
+    sarvam_states = [s for s in ready if s["source"] == "sarvam"]
+    if groq_states:
+        if not os.environ.get("GROQ_API_KEY"):
+            sys.exit("GROQ_API_KEY must be set in .env for the Groq fallback")
+        client = bakeoff.Groq(api_key=os.environ["GROQ_API_KEY"], max_retries=MAX_RETRIES + 2, timeout=600)
+        for state in groq_states:
+            try:
+                transcribe_groq_episode(state, bakeoff, client)
+            except Exception as exc:
+                log.error("%s: Groq failed: %s", state["video_id"], exc)
+                failed.append(f"{state['video_id']}: Groq failed")
+    if sarvam_states:
+        if not os.environ.get("SARVAM_API_KEY"):
+            sys.exit("SARVAM_API_KEY must be set in .env for the Sarvam fallback")
+        try:
+            transcribe_sarvam_episodes(sarvam_states, bakeoff, os.environ["SARVAM_API_KEY"])
+        except Exception as exc:
+            log.error("Sarvam failed: %s", exc)
+            failed.append(f"Sarvam: {exc}")
+
+
+# ----- romanization -----
+
+def roman_chunks(state: dict) -> dict[str, list[dict]]:
+    vid = state["video_id"]
+    lines = [{"id": f"{vid}-L{s['seq']:05d}", "text": s["text_original"]} for s in state["segments"]]
+    return {f"{vid}-c{n:03d}": lines[i:i + ROMAN_CHUNK_LINES]
+            for n, i in enumerate(range(0, len(lines), ROMAN_CHUNK_LINES))}
+
+
+def roman_chunk_path(chunk_id: str) -> Path:
+    return ROMAN_CHUNK_DIR / f"{chunk_id}.json"
+
+
+def romanize_step(states: dict[str, dict]) -> float:
+    """Step 4 for Hindi caption episodes. Returns what this run spent."""
+    todo = [s for s in states.values()
+            if s["language"] == "hi" and s["source"] == "youtube_auto" and s["segments"] and not s["romanized"]]
+    if not todo:
+        return 0.0
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        sys.exit("ANTHROPIC_API_KEY must be set in .env for romanization")
+    ROMAN_CHUNK_DIR.mkdir(parents=True, exist_ok=True)
+    chunks = {s["video_id"]: roman_chunks(s) for s in todo}
+    all_paths = [roman_chunk_path(c) for cs in chunks.values() for c in cs]
+    spent_before = sum(romanize_lib.chunk_cost(p) for p in all_paths)
+    client = anthropic.Anthropic(max_retries=MAX_RETRIES + 2)
+    for round_no in range(1, ROMAN_ROUNDS + 1):
+        requests, expected = {}, {}
+        for state in todo:
+            guest = romanize_lib.guess_guest(state["title"])
+            for chunk_id, lines in chunks[state["video_id"]].items():
+                if not romanize_lib.chunk_done(roman_chunk_path(chunk_id)):
+                    requests[chunk_id] = romanize_lib.build_request(chunk_id, lines, state["title"], guest)
+                    expected[chunk_id] = [l["id"] for l in lines]
+        if not requests:
+            break
+        log.info("Romanization round %s: %s chunks for %s episodes", round_no, len(requests), len(todo))
+        romanize_lib.run_batch(client, requests, expected, ROMAN_JOB_PATH, ROMAN_CHUNK_DIR)
+
+    for state in todo:
+        vid, ids = state["video_id"], list(chunks[state["video_id"]])
+        if not all(romanize_lib.chunk_done(roman_chunk_path(c)) for c in ids):
+            log.error("%s: some romanization chunks still incomplete; rerun to resend them", vid)
+            continue
+        converted = {}
+        for c in ids:
+            converted |= romanize_lib.chunk_lines(roman_chunk_path(c))
+        flagged = []
+        for seg in state["segments"]:
+            text = converted[f"{vid}-L{seg['seq']:05d}"].strip()
+            if romanize_lib.is_flagged(seg["text_original"], text):
+                flagged.append(seg["seq"])
+                log.warning("%s seq %s flagged (%s -> %s words), keeping original: %s | %s", vid, seg["seq"],
+                            romanize_lib.word_count(seg["text_original"]), romanize_lib.word_count(text),
+                            seg["text_original"], text)
+                seg["text_roman"] = seg["text_original"]
+            else:
+                seg["text_roman"] = text
+        state["flagged_seqs"] = flagged
+        state["roman_cost_usd"] = round(sum(romanize_lib.chunk_cost(roman_chunk_path(c)) for c in ids), 6)
+        state["romanized"] = True
+        save_state(state)
+        log.info("%s: romanized %s lines, %s flagged", vid, len(state["segments"]), len(flagged))
+    return sum(romanize_lib.chunk_cost(p) for p in all_paths) - spent_before
+
+
+# ----- database -----
+
+def db_call(what: str, fn):
+    for attempt in range(1, MAX_RETRIES + 3):
+        try:
+            return fn()
+        except httpx.TransportError as exc:
+            if attempt == MAX_RETRIES + 2:
+                raise
+            log.warning("%s: network error (%s), retrying in %ss", what, exc, 5 * attempt)
+            time.sleep(5 * attempt)
+    raise AssertionError("unreachable")
+
+
+def replace_rows(db, table: str, vid: str, rows: list[dict]) -> None:
+    """Delete an episode's rows and insert them again, so a half-finished earlier write is redone."""
+    db_call(f"{table} delete", lambda: db.table(table).delete().eq("video_id", vid).execute())
+    for i in range(0, len(rows), DB_BATCH):
+        batch = rows[i:i + DB_BATCH]
+        db_call(f"{table} insert", lambda: db.table(table).insert(batch).execute())
+
+
+def db_step(states: dict[str, dict]) -> None:
+    """Step 5: segments and translation lines into Supabase, then episodes.status = 'transcribed'."""
+    url, key = os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        sys.exit("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in .env")
+    db = create_client(url, key)
+    for state in states.values():
+        vid = state["video_id"]
+        ready = state["segments"] and (state["romanized"] or state["language"] != "hi"
+                                       or state["source"] != "youtube_auto")
+        if ready and not state["db_segments"]:
+            rows = [{"video_id": vid, "seq": s["seq"], "start_s": s["start"], "end_s": s["end"], "speaker": "unknown",
+                     "text_original": s["text_original"], "text_roman": s["text_roman"], "source": state["source"]}
+                    for s in state["segments"]]
+            replace_rows(db, "segments", vid, rows)
+            db_call("episodes update", lambda: db.table("episodes").update(
+                {"caption_language": state["language"], "status": "transcribed"}).eq("video_id", vid).execute())
+            state["db_segments"] = True
+            save_state(state)
+            log.info("%s: %s segments written, status transcribed", vid, len(rows))
+        if state["translation"] == "ok" and not state["db_translation"]:
+            rows = [{"video_id": vid, "start_s": s["start"], "end_s": s["end"], "text": s["text"]}
+                    for s in state["translation_segments"]]
+            replace_rows(db, "translation_segments", vid, rows)
+            state["db_translation"] = True
+            save_state(state)
+            log.info("%s: %s translation lines written", vid, len(rows))
+
+
+# ----- summary -----
+
+def costs(states: list[dict]) -> dict[str, float]:
+    totals = {"Haiku (USD)": sum(s["roman_cost_usd"] for s in states), "Groq (USD)": 0.0, "Sarvam (INR)": 0.0}
+    for s in states:
+        if s["audio_cost"]:
+            label = "Groq (USD)" if s["source"] == "groq" else "Sarvam (INR)"
+            totals[label] += s["audio_cost"]["amount"]
+    return totals
+
+
+def print_transcribe_summary(which: str, episodes: list[dict], states: dict[str, dict], before: dict[str, float],
+                             failed: list[str]) -> None:
+    done = [states[ep["video_id"]] for ep in episodes if ep["video_id"] in states]
+
+    def tally(key: str) -> str:
+        counts: dict[str, int] = {}
+        for s in done:
+            counts[s[key] or "?"] = counts.get(s[key] or "?", 0) + 1
+        return ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))
+
+    romanized = [s for s in done if s["romanized"]]
+    print()
+    print(f"Set {which}: {len(episodes)} episodes, {len(done)} looked at, "
+          f"{sum(s['db_segments'] for s in done)} written to the database")
+    print(f"Episodes per language: {tally('language')}")
+    print(f"Episodes per source:   {tally('source')}")
+    for s in done:
+        if s["fallback_reason"]:
+            print(f"    {s['video_id']} -> {s['source']}: {s['fallback_reason']}")
+    suspects = [s for s in done if s["suspect"]]
+    print(f"Suspect (English track under {SUSPECT_WORDS_PER_MINUTE} words/min): {len(suspects)}")
+    for s in suspects:
+        print(f"    {s['video_id']}  {s['words_per_minute']} words/min  {s['title'][:80]}")
+    print(f"Lines romanized:       {sum(len(s['segments']) for s in romanized):,} in {len(romanized)} Hindi episodes")
+    print(f"Flagged lines (kept in Devanagari): {sum(len(s['flagged_seqs']) for s in romanized)}")
+    for s in romanized:
+        if s["flagged_seqs"]:
+            print(f"    {s['video_id']}: seq {', '.join(map(str, s['flagged_seqs']))}")
+    translations = {}
+    for s in done:
+        if s["language"] == "hi" and s["source"] == "youtube_auto":
+            translations[s["translation"]] = translations.get(s["translation"], 0) + 1
+    print(f"English translations (Hindi caption episodes): "
+          + (", ".join(f"{k} {v}" for k, v in sorted(translations.items())) or "none"))
+    after = costs(done)
+    print("Cost, these episodes (all runs):  " + ", ".join(f"{k} {v:.4f}" for k, v in after.items()))
+    print("Cost, this run:                   " + ", ".join(f"{k} {after[k] - before.get(k, 0.0):.4f}" for k in after))
+    not_done = [ep["video_id"] for ep in episodes if not (states.get(ep["video_id"]) or {}).get("db_segments")]
+    if not_done:
+        print(f"Not finished, rerun to continue: {', '.join(not_done)}")
+    if failed:
+        print("Problems:")
+        for f in failed:
+            print(f"    {f}")
+
+
+def cmd_transcribe(which: str) -> None:
+    load_dotenv(ROOT / ".env")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    CAPTIONS_DIR.mkdir(parents=True, exist_ok=True)
+    TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+    episodes = read_episodes(which)
+    states = {ep["video_id"]: s for ep in episodes if (s := load_state(ep["video_id"]))}
+    before = costs(list(states.values()))
+    failed: list[str] = []
+    log.info("%s episodes in set %s, %s already started", len(episodes), which, len(states))
+
+    youtube_step(episodes, states, failed)
+    audio_step(episodes, states, failed)
+    romanize_step(states)
+    db_step(states)
+    print_transcribe_summary(which, episodes, states, before, failed)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -326,17 +923,22 @@ def main() -> None:
     p_list.add_argument("--set", choices=SETS, default="bakeoff")
     sub.add_parser("download", help="download uploaded captions for the bake-off episodes")
     sub.add_parser("download-auto", help="download automatic captions (original + English) for the bake-off")
+    p_tr = sub.add_parser("transcribe", help="main transcript step: captions, romanization, fallback, database")
+    p_tr.add_argument("--set", choices=["test_set", "all"], required=True)
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # log lines carry Devanagari
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
 
     if args.command == "list":
         cmd_list(args.set)
     elif args.command == "download":
         cmd_download()
-    else:
+    elif args.command == "download-auto":
         cmd_download_auto()
+    else:
+        cmd_transcribe(args.set)
 
 
 if __name__ == "__main__":
