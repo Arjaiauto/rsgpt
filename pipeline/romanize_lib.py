@@ -40,6 +40,31 @@ Rules:
 
 Return every input line exactly once, with its id unchanged."""
 
+# Translation into English, as tested on the bake-off (07_translate.py). {script_note}
+# says what script the lines are in: DEVANAGARI_NOTE for YouTube captions,
+# ROMAN_NOTE for Sarvam's Roman-script Hinglish.
+TRANSLATION_EFFORT = "medium"
+DEVANAGARI_NOTE = "The captions are in Devanagari; English words in them are also written in Devanagari."
+ROMAN_NOTE = ("The captions are in Roman-script Hinglish (Hindi typed in Latin letters, mixed with English); "
+              "English words in them are written normally.")
+TRANSLATION_PROMPT = """You translate YouTube automatic captions of a Hindi/Hinglish podcast into English, line by line. {script_note}
+
+Rules:
+1. Faithful meaning: translate what is said, including hedges, repetitions and unfinished thoughts. Do not summarise, shorten, explain or add commentary.
+2. Natural spoken English, the way the speaker would say it in English. Keep the conversational tone; do not make it formal.
+3. Keep names of people, places, companies and brands, and all numbers, amounts and dates exactly as said. Use the episode title and guest name given with the lines as spelling hints for names.
+4. English words written in {english_script} stay as those English words.
+5. Lines are fragments of running speech and often break mid-sentence. Read the neighbouring lines for context, but each output line must carry only the meaning of its own line's words; never move content from one line to another. If a line is only part of a sentence, translate that part as a fragment, and leave a line that is only a filler or a sound as a short equivalent.
+
+Return every input line exactly once, with its id unchanged."""
+
+
+def translation_prompt(roman: bool = False) -> str:
+    if roman:
+        return TRANSLATION_PROMPT.format(script_note=ROMAN_NOTE, english_script="the lines")
+    return TRANSLATION_PROMPT.format(script_note=DEVANAGARI_NOTE, english_script="Devanagari")
+
+
 OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -72,7 +97,9 @@ def guess_guest(title: str) -> str:
     return "unknown (see title)"
 
 
-def build_request(chunk_id: str, lines: list[dict], title: str, guest: str) -> Request:
+def build_request(chunk_id: str, lines: list[dict], title: str, guest: str,
+                  system: str = SYSTEM_PROMPT, effort: str = "low") -> Request:
+    """One batch request for a chunk of lines; system and effort default to romanization's."""
     body = "\n".join(json.dumps({"id": l["id"], "text": l["text"]}, ensure_ascii=False) for l in lines)
     prompt = (f"Episode title: {title}\nGuest: {guest}\n\n"
               f"Caption lines ({len(lines)}), one JSON object per line:\n{body}")
@@ -81,8 +108,8 @@ def build_request(chunk_id: str, lines: list[dict], title: str, guest: str) -> R
         params=MessageCreateParamsNonStreaming(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            output_config={"effort": "low", "format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
+            system=system,
+            output_config={"effort": effort, "format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
             messages=[{"role": "user", "content": prompt}],
         ),
     )

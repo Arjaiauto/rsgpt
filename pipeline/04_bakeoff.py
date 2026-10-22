@@ -70,8 +70,11 @@ SERVICES = {
     "youtube_haiku_roman": {"label": "YouTube + Haiku romanized", "external": True},
     # Made by 05_captions.py download-auto; shown here, never run here.
     "youtube_auto_orig": {"label": "YouTube auto (original)", "external": True},
-    # Left out for now: YouTube answered 429 to every translation request (2026-10-21).
-    # "youtube_auto_en": {"label": "YouTube auto (English translation)", "external": True},
+    # YouTube has answered 429 to every translation request since 2026-10-21; for the
+    # Hindi episodes 07_translate.py writes a note saying so instead.
+    "youtube_auto_en": {"label": "YouTube auto (English translation)", "external": True},
+    # Made by 07_translate.py from youtube_auto_orig; shown here, never run here.
+    "haiku_translation": {"label": "Haiku translation", "external": True},
 }
 GROQ_SERVICES = [s for s in SERVICES if s.startswith("groq")]
 SARVAM_SERVICES = [s for s in SERVICES if s.startswith("sarvam")]

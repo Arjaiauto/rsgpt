@@ -20,8 +20,8 @@ Two steps:
             1. Download the original-language automatic track (<lang>-orig, json3).
                The episode's language comes from that track (hi-orig = Hindi,
                en-orig = English) and is written to episodes.caption_language.
-            2. For Hindi episodes, also download YouTube's automatic English
-               translation ("en").
+            2. (YouTube's automatic English translation track is no longer used:
+               YouTube kept refusing it with HTTP 429. See step 4b.)
             3. Each caption phrase becomes a segment. Its start is when its first
                word is spoken; its end is when the next phrase starts (capped at
                the phrase's display time), not the rolling-display end in json3.
@@ -29,6 +29,10 @@ Two steps:
                with the rules in romanize_lib.py. A line whose word count is more
                than 20% off keeps its Devanagari original and is logged. English
                episodes keep text_roman = text_original.
+            4b. Every line of a Hindi episode is translated into English by
+               claude-haiku-5-5 through the Batch API, line by line with its
+               timing, with the rules tested in 07_translate.py (romanize_lib.py).
+               The Sarvam fallback episodes are translated from their Roman text.
             5. Segments and translation lines are written to Supabase with
                source = youtube_auto, and episodes.status becomes 'transcribed'.
             Fallback: with no automatic track, an original track that is neither
@@ -44,9 +48,10 @@ Safe to rerun: episodes already in subs_index.csv are skipped, as are tracks
 already downloaded. Network errors are retried; episodes that still fail are
 recorded with an error and retried on the next run. For transcribe, each
 episode's progress is kept in data/transcripts/<video_id>.json, batch and
-Sarvam job IDs are saved, and each step is skipped once done. YouTube gets a
-20-40 second pause between episodes; on HTTP 429 the script backs off, and if
-YouTube keeps refusing it stops asking for the rest of the run (rerun later).
+Sarvam job IDs are saved, and each step is skipped once done (a rerun only
+processes what is missing). YouTube gets a 20-40 second pause between
+episodes; on HTTP 429 the script backs off, and if YouTube keeps refusing it
+stops asking for the rest of the run (rerun later).
 
 Usage:
     .venv\\Scripts\\python.exe pipeline\\05_captions.py list [--set bakeoff|test_set|all]
@@ -361,17 +366,20 @@ def cmd_download_auto() -> None:
 TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
 ROMAN_CHUNK_DIR = TRANSCRIPTS_DIR / "roman_chunks"
 ROMAN_JOB_PATH = TRANSCRIPTS_DIR / "roman_job.json"
+TRANSLATION_CHUNK_DIR = TRANSCRIPTS_DIR / "translation_chunks"
+TRANSLATION_JOB_PATH = TRANSCRIPTS_DIR / "translation_job.json"
 SARVAM_JOB_PATH = TRANSCRIPTS_DIR / "sarvam_job.json"
 AUDIO_RESULTS_DIR = TRANSCRIPTS_DIR / "audio"
 
 MIN_COVERAGE = 0.80
 SUSPECT_WORDS_PER_MINUTE = 100
 EPISODE_PAUSE_SECONDS = (20, 40)
-TRANSLATION_PAUSE_SECONDS = (5, 10)
 YOUTUBE_RETRIES = 3
 BACKOFF_429_SECONDS = 180  # wait before retry n is n times this
 ROMAN_CHUNK_LINES = 60
 ROMAN_ROUNDS = 3  # batches per run; later rounds resend only chunks that failed
+# Sarvam lines are 15-20 s paragraphs, not caption phrases, so they go in smaller chunks.
+TRANSLATION_CHUNK_LINES = {"youtube_auto": 60, "sarvam": 20}
 DB_BATCH = 500
 
 FALLBACK = {"en": "groq", "hi": "sarvam"}
@@ -490,7 +498,7 @@ def new_state(episode: dict) -> dict:
             "track": None, "language": None, "source": None, "coverage": None, "fallback_reason": "",
             "words_per_minute": None, "suspect": False, "segments": None,
             "romanized": False, "flagged_seqs": [], "roman_cost_usd": 0.0,
-            "translation": "n/a", "translation_segments": None,
+            "translation": "n/a", "translation_segments": None, "translation_cost_usd": 0.0,
             "audio_cost": None, "db_segments": False, "db_translation": False}
 
 
@@ -527,60 +535,34 @@ def decide_from_track(state: dict, episode: dict, track: Path | None) -> None:
 
 
 def youtube_step(episodes: list[dict], states: dict[str, dict], failed: list[str]) -> None:
-    """Steps 1-3: original track, language, segments, and the English translation for Hindi episodes."""
+    """Steps 1-3: original track, language and segments."""
     contacted = False
-    translations_refused = False
     for ep in episodes:
         vid = ep["video_id"]
-        state = states.get(vid)
-        need_orig = state is None
-        need_translation = (state is not None and state["translation"] == "pending")
-        if not need_orig and not (need_translation and not translations_refused):
+        if vid in states:
             continue
-        if contacted:
-            time.sleep(random.uniform(*EPISODE_PAUSE_SECONDS))
-        if need_orig:
-            state = new_state(ep)
+        state = new_state(ep)
+        track = orig_track_file(vid)
+        if track is None:
+            if contacted:
+                time.sleep(random.uniform(*EPISODE_PAUSE_SECONDS))
+            contacted = True
+            try:
+                fetch_auto_track(ep, [r".*-orig"])
+            except YouTubeRefused as exc:
+                log.error("%s: YouTube keeps answering 429 (%s); stopping YouTube downloads for this run", vid, exc)
+                failed.append(f"{vid}: YouTube 429, rerun later")
+                return
+            except Exception as exc:
+                log.error("%s: caption lookup failed: %s", vid, str(exc).strip()[:300])
+                failed.append(f"{vid}: caption lookup failed")
+                continue
             track = orig_track_file(vid)
-            if track is None:
-                contacted = True
-                try:
-                    fetch_auto_track(ep, [r".*-orig"])
-                except YouTubeRefused as exc:
-                    log.error("%s: YouTube keeps answering 429 (%s); stopping YouTube downloads for this run", vid, exc)
-                    failed.append(f"{vid}: YouTube 429, rerun later")
-                    return
-                except Exception as exc:
-                    log.error("%s: caption lookup failed: %s", vid, str(exc).strip()[:300])
-                    failed.append(f"{vid}: caption lookup failed")
-                    continue
-                track = orig_track_file(vid)
-            decide_from_track(state, ep, track)
-            states[vid] = state
-            save_state(state)
-            log.info("%s: %s, %s, coverage %s, %s segments", vid, state["track"] or "no track", state["language"],
-                     state["coverage"], len(state["segments"] or []))
-        if state["translation"] == "pending" and not translations_refused:
-            en_track = CAPTIONS_DIR / f"{vid}.en.json3"
-            if not en_track.exists():
-                if contacted or need_orig:
-                    time.sleep(random.uniform(*TRANSLATION_PAUSE_SECONDS))
-                contacted = True
-                try:
-                    info = fetch_auto_track(ep, ["en"])
-                    if "en" not in (info.get("automatic_captions") or {}):
-                        state["translation"] = "unavailable"
-                except YouTubeRefused as exc:
-                    log.error("%s: YouTube refused the English translation (%s); skipping translations "
-                              "for the rest of this run", vid, exc)
-                    translations_refused = True
-                except Exception as exc:
-                    log.error("%s: translation download failed: %s", vid, str(exc).strip()[:300])
-            if en_track.exists():
-                state["translation_segments"] = phrase_segments(en_track)
-                state["translation"] = "ok"
-                log.info("%s: English translation, %s lines", vid, len(state["translation_segments"]))
-            save_state(state)
+        decide_from_track(state, ep, track)
+        states[vid] = state
+        save_state(state)
+        log.info("%s: %s, %s, coverage %s, %s segments", vid, state["track"] or "no track", state["language"],
+                 state["coverage"], len(state["segments"] or []))
 
 
 # ----- audio fallback -----
@@ -617,7 +599,7 @@ def finish_audio_state(state: dict, segments: list[dict], cost: dict) -> None:
     state["segments"] = [{"seq": i, "start": round(s["start"], 2), "end": round(s["end"], 2),
                           "text_original": s["text"], "text_roman": s["text"]} for i, s in enumerate(segments)]
     state["audio_cost"] = cost
-    state["translation"] = "n/a"
+    state["translation"] = "pending" if state["language"] == "hi" else "n/a"
     save_state(state)
     log.info("%s: %s segments from %s", state["video_id"], len(segments), state["source"])
 
@@ -790,6 +772,76 @@ def romanize_step(states: dict[str, dict]) -> float:
     return sum(romanize_lib.chunk_cost(p) for p in all_paths) - spent_before
 
 
+# ----- translation -----
+
+def translation_chunks(state: dict) -> dict[str, list[dict]]:
+    vid, size = state["video_id"], TRANSLATION_CHUNK_LINES[state["source"]]
+    lines = [{"id": f"{vid}-L{s['seq']:05d}", "text": s["text_original"]} for s in state["segments"]]
+    return {f"{vid}-t{n:03d}": lines[i:i + size] for n, i in enumerate(range(0, len(lines), size))}
+
+
+def translation_chunk_path(chunk_id: str) -> Path:
+    return TRANSLATION_CHUNK_DIR / f"{chunk_id}.json"
+
+
+def translate_step(states: dict[str, dict], failed: list[str]) -> dict:
+    """Step 4b: English translation of every line of the Hindi episodes. Returns counts for the summary."""
+    todo = [s for s in states.values() if s["language"] == "hi" and s["segments"] and s["translation"] != "ok"]
+    report = {"episodes": 0, "lines": 0, "failed_lines": []}
+    if not todo:
+        return report
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        sys.exit("ANTHROPIC_API_KEY must be set in .env for translation")
+    TRANSLATION_CHUNK_DIR.mkdir(parents=True, exist_ok=True)
+    chunks = {s["video_id"]: translation_chunks(s) for s in todo}
+    client = anthropic.Anthropic(max_retries=MAX_RETRIES + 2)
+    for round_no in range(1, ROMAN_ROUNDS + 1):
+        requests, expected = {}, {}
+        for state in todo:
+            # YouTube captions are Devanagari; Sarvam's fallback text is already Roman Hinglish.
+            system = romanize_lib.translation_prompt(roman=state["source"] == "sarvam")
+            guest = romanize_lib.guess_guest(state["title"])
+            for chunk_id, lines in chunks[state["video_id"]].items():
+                if not romanize_lib.chunk_done(translation_chunk_path(chunk_id)):
+                    requests[chunk_id] = romanize_lib.build_request(chunk_id, lines, state["title"], guest, system=system,
+                                                                    effort=romanize_lib.TRANSLATION_EFFORT)
+                    expected[chunk_id] = [l["id"] for l in lines]
+        if not requests:
+            break
+        log.info("Translation round %s: %s chunks for %s episodes", round_no, len(requests), len(todo))
+        romanize_lib.run_batch(client, requests, expected, TRANSLATION_JOB_PATH, TRANSLATION_CHUNK_DIR)
+
+    for state in todo:
+        vid, ids = state["video_id"], list(chunks[state["video_id"]])
+        incomplete = [c for c in ids if not romanize_lib.chunk_done(translation_chunk_path(c))]
+        if incomplete:
+            for c in incomplete:
+                done = romanize_lib.chunk_lines(translation_chunk_path(c)) if translation_chunk_path(c).exists() else {}
+                report["failed_lines"] += [l["id"] for l in chunks[vid][c] if l["id"] not in done]
+            log.error("%s: translation chunks %s still incomplete; rerun to resend them", vid, ", ".join(incomplete))
+            failed.append(f"{vid}: translation incomplete ({', '.join(incomplete)})")
+            continue
+        converted = {}
+        for c in ids:
+            converted |= romanize_lib.chunk_lines(translation_chunk_path(c))
+        lines = []
+        for seg in state["segments"]:
+            text = converted[f"{vid}-L{seg['seq']:05d}"].strip()
+            if not text:
+                report["failed_lines"].append(f"{vid}-L{seg['seq']:05d} (empty)")
+                continue
+            lines.append({"seq": seg["seq"], "start": seg["start"], "end": seg["end"], "text": text})
+        state["translation_segments"] = lines
+        state["translation"] = "ok"
+        state["db_translation"] = False
+        state["translation_cost_usd"] = round(sum(romanize_lib.chunk_cost(translation_chunk_path(c)) for c in ids), 6)
+        save_state(state)
+        report["episodes"] += 1
+        report["lines"] += len(lines)
+        log.info("%s: translated %s lines", vid, len(lines))
+    return report
+
+
 # ----- database -----
 
 def db_call(what: str, fn):
@@ -844,7 +896,9 @@ def db_step(states: dict[str, dict]) -> None:
 # ----- summary -----
 
 def costs(states: list[dict]) -> dict[str, float]:
-    totals = {"Haiku (USD)": sum(s["roman_cost_usd"] for s in states), "Groq (USD)": 0.0, "Sarvam (INR)": 0.0}
+    totals = {"Haiku romanization (USD)": sum(s["roman_cost_usd"] for s in states),
+              "Haiku translation (USD)": sum(s.get("translation_cost_usd", 0.0) for s in states),
+              "Groq (USD)": 0.0, "Sarvam (INR)": 0.0}
     for s in states:
         if s["audio_cost"]:
             label = "Groq (USD)" if s["source"] == "groq" else "Sarvam (INR)"
@@ -853,7 +907,7 @@ def costs(states: list[dict]) -> dict[str, float]:
 
 
 def print_transcribe_summary(which: str, episodes: list[dict], states: dict[str, dict], before: dict[str, float],
-                             failed: list[str]) -> None:
+                             failed: list[str], translated: dict) -> None:
     done = [states[ep["video_id"]] for ep in episodes if ep["video_id"] in states]
 
     def tally(key: str) -> str:
@@ -882,10 +936,14 @@ def print_transcribe_summary(which: str, episodes: list[dict], states: dict[str,
             print(f"    {s['video_id']}: seq {', '.join(map(str, s['flagged_seqs']))}")
     translations = {}
     for s in done:
-        if s["language"] == "hi" and s["source"] == "youtube_auto":
+        if s["language"] == "hi":
             translations[s["translation"]] = translations.get(s["translation"], 0) + 1
-    print(f"English translations (Hindi caption episodes): "
+    print(f"English translations (Hindi episodes, all runs): "
           + (", ".join(f"{k} {v}" for k, v in sorted(translations.items())) or "none"))
+    print(f"Translated this run:   {translated['lines']:,} lines in {translated['episodes']} episodes")
+    print(f"Lines that failed translation: {len(translated['failed_lines'])}")
+    for line_id in translated["failed_lines"]:
+        print(f"    {line_id}")
     after = costs(done)
     print("Cost, these episodes (all runs):  " + ", ".join(f"{k} {v:.4f}" for k, v in after.items()))
     print("Cost, this run:                   " + ", ".join(f"{k} {after[k] - before.get(k, 0.0):.4f}" for k in after))
@@ -912,8 +970,9 @@ def cmd_transcribe(which: str) -> None:
     youtube_step(episodes, states, failed)
     audio_step(episodes, states, failed)
     romanize_step(states)
+    translated = translate_step(states, failed)
     db_step(states)
-    print_transcribe_summary(which, episodes, states, before, failed)
+    print_transcribe_summary(which, episodes, states, before, failed, translated)
 
 
 def main() -> None:
