@@ -20,9 +20,8 @@ episode's segments (and, for Hindi episodes, translation_segments):
 
 A row gets verified = true only when every check passes; otherwise check_notes
 lists the reasons ("check: ..."). Notes that are not check results (the question
-type of Raj's questions) are kept. clips has no check_notes column and guests has
-neither verified nor check_notes (see schema.sql), so their reasons are printed only;
-clips still get verified. Safe to rerun: each run recomputes every row
+type of Raj's questions) are kept. The same goes for clips and guests (their
+verified and check_notes columns were added later; see schema.sql). Safe to rerun: each run recomputes every row
 and only rows whose values change are written.
 
 Usage:
@@ -262,6 +261,9 @@ def run(run_id: str) -> None:
     guests = fetch(db, "guests", "*", run_id=run_id)
     if not (insights or clips or guests):
         sys.exit(f"No rows with run_id {run_id}")
+    if (clips and "check_notes" not in clips[0]) or (guests and not {"verified", "check_notes"} <= set(guests[0])):
+        sys.exit("guests.verified, guests.check_notes or clips.check_notes is missing: run the alter table "
+                 "statements from pipeline/schema.sql in the Supabase SQL Editor first")
     merged = merged_results(run_id)
     vids = sorted({r["video_id"] for r in [*insights, *clips, *guests]})
     log.info("run %s: %s insights, %s clips, %s guests in %s episodes; %s result files found", run_id,
@@ -283,9 +285,7 @@ def run(run_id: str) -> None:
         r["translated"] += translated and not failures
         for reason, detail in failures:
             r["reasons"][reason].append((row, detail))
-        values = {"verified": not failures}
-        if "check_notes" in row:  # clips have no check_notes column: their reasons are only reported
-            values["check_notes"] = notes_for(row["check_notes"], failures)
+        values = {"verified": not failures, "check_notes": notes_for(row["check_notes"], failures)}
         if translated:
             values["translated"] = True
         if any(row.get(k) != v for k, v in values.items()):
@@ -297,14 +297,9 @@ def run(run_id: str) -> None:
     for row in clips:
         record("clips", "clip", row, check_clip(row, episodes[row["video_id"]], merged.get(row["video_id"])))
     for row in guests:
-        failures = check_guest(row, episodes[row["video_id"]], merged.get(row["video_id"]))
-        # guests has no verified or check_notes column: report only.
-        report["guest"]["total"] += 1
-        report["guest"]["passed"] += not failures
-        for reason, detail in failures:
-            report["guest"]["reasons"][reason].append((row, detail))
+        record("guests", "guest", row, check_guest(row, episodes[row["video_id"]], merged.get(row["video_id"])))
 
-    for table in ("insights", "clips"):
+    for table in ("insights", "clips", "guests"):
         if changes[table]:
             write_updates(db, table, changes[table])
 
@@ -329,8 +324,7 @@ def run(run_id: str) -> None:
                 text = row.get("text") or row.get("opening_line") or row.get("name") or ""
                 print(f"      {row['video_id']} #{row['id']}: {text[:100]!r}" + (f"  ({detail})" if detail else ""))
     print()
-    print(f"Rows changed in this run: insights {len(changes['insights'])}, clips {len(changes['clips'])} "
-          f"(guests have no verified column; reported only)")
+    print("Rows changed in this run: " + ", ".join(f"{t} {len(c)}" for t, c in changes.items()))
 
 
 def main() -> None:

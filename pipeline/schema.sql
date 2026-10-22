@@ -96,8 +96,13 @@ create table if not exists public.guests (
     youtube_channel_url  text,
     video_id             text references public.episodes (video_id) on delete cascade,
     model                text,
-    run_id               text
+    run_id               text,
+    verified             boolean not null default false,
+    check_notes          text
 );
+-- Added after the first version of this table; a no-op on a table created from the statement above.
+alter table public.guests add column if not exists verified boolean not null default false;
+alter table public.guests add column if not exists check_notes text;
 create index if not exists guests_video_idx on public.guests (video_id);
 comment on table public.guests is
     'Guests per episode as extracted by the model. Contact data is limited to verified LinkedIn and YouTube channel links; never phone numbers or emails.';
@@ -144,8 +149,11 @@ create table if not exists public.clips (
     score         double precision,
     verified      boolean not null default false,
     model         text,
-    run_id        text
+    run_id        text,
+    check_notes   text
 );
+-- Added after the first version of this table; a no-op on a table created from the statement above.
+alter table public.clips add column if not exists check_notes text;
 create index if not exists clips_video_idx on public.clips (video_id);
 comment on table public.clips is
     'Candidate short clips (time ranges) picked by the model, with a score; only verified clips are shown.';

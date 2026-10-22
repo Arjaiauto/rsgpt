@@ -7,5 +7,6 @@ anthropic
 voyageai
 supabase
 rapidfuzz
+streamlit
 tqdm
 yt-dlp
