@@ -48,6 +48,18 @@ Two steps:
             English-track episodes averaging under 100 words per minute are listed
             as suspect (Hindi speech may have been heard as English); they are not
             reprocessed.
+            Full run (--set all): episodes already marked transcribed in Supabase
+            are skipped (unless their own state says a translation is still to be
+            written). The rest go through steps 1-5 in groups of GROUP_SIZE (the
+            test-set size), so finished episodes reach the database group by group.
+            After each episode's captions and after each finished episode, a line
+            goes to data/progress.log: episodes done / remaining, source, lines
+            romanized and rejected this run, this run's cost (USD and INR at 88) and
+            the estimated time left. Cost guard: before each step the run checks
+            what it has spent plus COST_MARGIN x the step's estimate, and stops
+            cleanly with a message once that would pass --max-inr (default INR 2,500).
+            --dry-run changes nothing and prints the episodes left, Hindi vs English
+            by caption_language, the estimated Haiku cost and the estimated hours.
 
 Safe to rerun: episodes already in subs_index.csv are skipped, as are tracks
 already downloaded. Network errors are retried; episodes that still fail are
@@ -63,6 +75,7 @@ Usage:
     .venv\\Scripts\\python.exe pipeline\\05_captions.py download
     .venv\\Scripts\\python.exe pipeline\\05_captions.py download-auto
     .venv\\Scripts\\python.exe pipeline\\05_captions.py transcribe --set test_set|all [--redo-translations]
+                                      [--dry-run] [--max-inr 2500]
 """
 
 import argparse
@@ -390,6 +403,17 @@ FALLBACK = {"en": "groq", "hi": "sarvam"}
 GROQ_MODEL = "whisper-large-v3"
 SARVAM_PARAMS = {"model": "saaras:v4", "mode": "translit", "language_code": "unknown", "with_timestamps": True}
 
+PROGRESS_LOG = DATA_DIR / "progress.log"
+GROUP_SIZE = 25  # episodes taken through every step together: the size proven on the test set
+INR_PER_USD = 88
+MAX_RUN_INR = 2500  # cost guard: this run stops once its cost would pass this
+COST_MARGIN = 1.5  # a step is started only if spent + COST_MARGIN x its estimate stays under the cap
+BATCH_MINUTES = (2, 4)  # one Haiku batch at test-set size
+BATCHES_PER_GROUP = 4  # romanization, translation, its retries, the length-check redo
+FALLBACK_MINUTES = (3, 6)  # audio download plus Groq or Sarvam, per fallback episode
+SECONDS_PER_EPISODE = 35 + BATCHES_PER_GROUP * 3 * 60 / GROUP_SIZE  # ETA before the first episode is finished
+DEFAULT_LINE_USD = {"roman": 2e-5, "translation": 3e-5}  # used only if no Hindi episode is done yet
+
 
 class YouTubeRefused(RuntimeError):
     """YouTube kept answering 429 after every back-off."""
@@ -538,8 +562,8 @@ def decide_from_track(state: dict, episode: dict, track: Path | None) -> None:
                 state["language"])
 
 
-def youtube_step(episodes: list[dict], states: dict[str, dict], failed: list[str]) -> None:
-    """Steps 1-3: original track, language and segments."""
+def youtube_step(episodes: list[dict], states: dict[str, dict], failed: list[str], on_episode=None) -> bool:
+    """Steps 1-3: original track, language and segments. Returns True if YouTube kept refusing (stop asking)."""
     contacted = False
     for ep in episodes:
         vid = ep["video_id"]
@@ -556,7 +580,7 @@ def youtube_step(episodes: list[dict], states: dict[str, dict], failed: list[str
             except YouTubeRefused as exc:
                 log.error("%s: YouTube keeps answering 429 (%s); stopping YouTube downloads for this run", vid, exc)
                 failed.append(f"{vid}: YouTube 429, rerun later")
-                return
+                return True
             except Exception as exc:
                 log.error("%s: caption lookup failed: %s", vid, str(exc).strip()[:300])
                 failed.append(f"{vid}: caption lookup failed")
@@ -567,6 +591,9 @@ def youtube_step(episodes: list[dict], states: dict[str, dict], failed: list[str
         save_state(state)
         log.info("%s: %s, %s, coverage %s, %s segments", vid, state["track"] or "no track", state["language"],
                  state["coverage"], len(state["segments"] or []))
+        if on_episode:
+            on_episode(state, "captions")
+    return False
 
 
 # ----- audio fallback -----
@@ -886,11 +913,17 @@ def supabase_client():
     return create_client(url, key)
 
 
-def db_step(states: dict[str, dict]) -> None:
+def finished(state: dict) -> bool:
+    """Segments written and, for a Hindi episode, its translation too."""
+    return bool(state["db_segments"]) and (state["language"] != "hi" or bool(state["db_translation"]))
+
+
+def db_step(states: dict[str, dict], on_episode=None) -> None:
     """Step 5: segments and translation lines into Supabase, then episodes.status = 'transcribed'."""
     db = supabase_client()
     for state in states.values():
         vid = state["video_id"]
+        was_finished = finished(state)
         ready = state["segments"] and (state["romanized"] or state["language"] != "hi"
                                        or state["source"] != "youtube_auto")
         if ready and not state["db_segments"]:
@@ -910,6 +943,8 @@ def db_step(states: dict[str, dict]) -> None:
             state["db_translation"] = True
             save_state(state)
             log.info("%s: %s translation lines written", vid, len(rows))
+        if on_episode and finished(state) and not was_finished:
+            on_episode(state, "done")
 
 
 # ----- summary -----
@@ -980,25 +1015,246 @@ def print_transcribe_summary(which: str, episodes: list[dict], states: dict[str,
             print(f"    {f}")
 
 
-def cmd_transcribe(which: str, redo_translations_first: bool = False) -> None:
+# ----- full-run support: skipping, progress, cost guard, dry run -----
+
+class CostCapReached(RuntimeError):
+    """This run's cost would pass the cap."""
+
+
+def episode_status() -> dict[str, dict]:
+    """episodes.status and caption_language per video_id (read only)."""
+    db, rows, start = supabase_client(), [], 0
+    while True:
+        page = db_call("episodes select", lambda: db.table("episodes").select(
+            "video_id,status,caption_language").order("video_id").range(start, start + 999).execute()).data
+        rows += page
+        if len(page) < 1000:
+            return {r["video_id"]: r for r in rows}
+        start += 1000
+
+
+def already_done(episode: dict, status: dict[str, dict], state: dict | None) -> bool:
+    """Marked transcribed in the database, unless its own state says a translation is still to be written."""
+    if (status.get(episode["video_id"]) or {}).get("status") != "transcribed":
+        return False
+    return state is None or finished(state)
+
+
+def haiku_line_rates(states: list[dict]) -> dict[str, float]:
+    """USD per Hindi caption line for romanization and translation, from episodes already done."""
+    rom = [s for s in states if s["language"] == "hi" and s["source"] == "youtube_auto" and s["romanized"]]
+    tra = [s for s in states if s["language"] == "hi" and s.get("translation") == "ok"]
+    rom_lines, tra_lines = sum(len(s["segments"]) for s in rom), sum(len(s["segments"]) for s in tra)
+    return {"roman": sum(s["roman_cost_usd"] for s in rom) / rom_lines if rom_lines else DEFAULT_LINE_USD["roman"],
+            "translation": (sum(s.get("translation_cost_usd") or 0.0 for s in tra) / tra_lines
+                            if tra_lines else DEFAULT_LINE_USD["translation"])}
+
+
+def run_cost(states: dict[str, dict], before: dict[str, float]) -> tuple[float, float]:
+    """This run's cost so far, as (USD, INR) with INR_PER_USD."""
+    after = costs(list(states.values()))
+    spent = {k: after[k] - before.get(k, 0.0) for k in after}
+    inr = sum(v * INR_PER_USD for k, v in spent.items() if "(USD)" in k) + spent["Sarvam (INR)"]
+    return inr / INR_PER_USD, inr
+
+
+class Progress:
+    """One line per episode event in PROGRESS_LOG, and the cost guard."""
+
+    def __init__(self, which: str, total: int, done_before: int, states: dict[str, dict], before: dict[str, float],
+                 max_inr: float):
+        self.which, self.total, self.done_before = which, total, done_before
+        self.states, self.before, self.max_inr = states, before, max_inr
+        self.finished_now, self.start = 0, time.time()
+        self.romanized_before = {vid for vid, s in states.items() if s["romanized"]}
+        PROGRESS_LOG.parent.mkdir(parents=True, exist_ok=True)
+
+    def write(self, text: str) -> None:
+        line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} | {text}"
+        with PROGRESS_LOG.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        log.info("progress: %s", text)
+
+    def status(self) -> str:
+        done = self.done_before + self.finished_now
+        left = self.total - done
+        romanized = [s for vid, s in self.states.items() if s["romanized"] and vid not in self.romanized_before]
+        usd, inr = run_cost(self.states, self.before)
+        per_episode = (time.time() - self.start) / self.finished_now if self.finished_now else SECONDS_PER_EPISODE
+        return (f"done {done}/{self.total}, remaining {left} | romanized {sum(len(s['segments']) for s in romanized):,} "
+                f"lines, rejected {sum(len(s['flagged_seqs']) for s in romanized)} | cost this run ${usd:.2f} = "
+                f"INR {inr:,.0f} | est. left {left * per_episode / 3600:.1f} h")
+
+    def episode(self, state: dict, event: str) -> None:
+        if event == "done":
+            self.finished_now += 1
+        self.write(f"{state['video_id']} {event}: {state['source']} {state['language']} | {self.status()}")
+
+    def check(self, step: str, estimate_usd: float = 0.0, estimate_inr: float = 0.0) -> None:
+        """Raise CostCapReached if spent so far, plus COST_MARGIN x the next step's estimate, passes the cap."""
+        _, spent = run_cost(self.states, self.before)
+        projected = spent + COST_MARGIN * (estimate_usd * INR_PER_USD + estimate_inr)
+        if spent > self.max_inr or projected > self.max_inr:
+            message = (f"COST GUARD: stopped before {step}. This run has spent INR {spent:,.0f}"
+                       + (f"; {step} is estimated at INR {estimate_usd * INR_PER_USD + estimate_inr:,.0f} "
+                          f"(x{COST_MARGIN} margin)" if projected > spent else "")
+                       + f", over the cap of INR {self.max_inr:,.0f}. Finished episodes are saved; rerun the same "
+                         f"command to continue (the cap counts per run), or pass --max-inr to raise it.")
+            self.write(message + " | " + self.status())
+            raise CostCapReached(message)
+
+
+def audio_estimate(states: list[dict]) -> tuple[float, float]:
+    """(USD, INR) for the fallback episodes still to transcribe from audio."""
+    todo = [s for s in states if s["source"] in ("groq", "sarvam") and s["segments"] is None]
+    if not todo:
+        return 0.0, 0.0
+    services = load_module("04_bakeoff.py").SERVICES
+    hours = {src: sum(s["duration_seconds"] for s in todo if s["source"] == src) / 3600 for src in ("groq", "sarvam")}
+    return (hours["groq"] * services["groq_large"]["price_per_hour"],
+            hours["sarvam"] * services["sarvam_translit"]["price_per_hour"])
+
+
+def merge_reports(total: dict | None, part: dict) -> dict:
+    if total is None:
+        return part
+    return {k: total[k] + part[k] for k in total}
+
+
+def dry_run(which: str, max_inr: float) -> None:
+    """Prints what a run would do. Reads the episode list, local state files and episodes in Supabase; writes nothing."""
+    episodes = read_episodes(which)
+    status = episode_status()
+    known = {ep["video_id"]: s for ep in episodes if (s := load_state(ep["video_id"]))}
+    left = [ep for ep in episodes if not already_done(ep, status, known.get(ep["video_id"]))]
+    by_lang: dict[str, list[dict]] = {"hi": [], "en": [], "unknown": []}
+    for ep in left:
+        lang = (status.get(ep["video_id"]) or {}).get("caption_language")
+        by_lang[lang if lang in ("hi", "en") else "unknown"].append(ep)
+    hours = {k: sum(float(ep["duration_seconds"]) for ep in v) / 3600 for k, v in by_lang.items()}
+
+    # Rates and the language check from the episodes already done.
+    done = [s for s in known.values() if finished(s)]
+    hindi = [s for s in done if s["language"] == "hi" and s["source"] == "youtube_auto"]
+    hindi_hours = sum(s["duration_seconds"] for s in hindi) / 3600
+    roman_per_hour = sum(s["roman_cost_usd"] for s in hindi) / hindi_hours if hindi_hours else 0.0
+    trans_per_hour = sum(s.get("translation_cost_usd") or 0.0 for s in hindi) / hindi_hours if hindi_hours else 0.0
+    csv_tag = {ep["video_id"]: csv_language(ep) or "unknown" for ep in episodes}
+    hi_share = {}
+    for tag in by_lang:
+        tagged = [s for s in done if csv_tag[s["video_id"]] == tag]
+        hi_share[tag] = (sum(s["language"] == "hi" for s in tagged) / len(tagged)) if tagged else None
+    fallback_share = sum(s["source"] in ("groq", "sarvam") for s in done) / len(done) if done else 0.0
+    services = load_module("04_bakeoff.py").SERVICES
+    sarvam_inr_h = services["sarvam_translit"]["price_per_hour"]
+
+    def haiku(hi_hours: float) -> float:
+        return hi_hours * (roman_per_hour + trans_per_hour)
+
+    as_tagged = hours["hi"]
+    calibrated = sum(hours[t] * (hi_share[t] if hi_share[t] is not None else (1.0 if t == "hi" else 0.5))
+                     for t in by_lang)
+    fallback_n = len(left) * fallback_share
+    fallback_inr = fallback_share * sum(hours.values()) * sarvam_inr_h  # priced as Sarvam, the dearer one
+    groups = -(-len(left) // GROUP_SIZE)
+    yt = [len(left) * s / 3600 for s in EPISODE_PAUSE_SECONDS]
+    batch = [groups * BATCHES_PER_GROUP * m / 60 for m in BATCH_MINUTES]
+    audio = [fallback_n * m / 60 for m in FALLBACK_MINUTES]
+
+    print(f"DRY RUN, set {which}: nothing is downloaded, sent or written.")
+    print(f"Episodes in set:        {len(episodes)}")
+    print(f"Already transcribed:    {len(episodes) - len(left)} (skipped)")
+    print(f"Left to do:             {len(left)}, {sum(hours.values()):.1f} hours of video")
+    print(f"By caption_language:    Hindi {len(by_lang['hi'])} ({hours['hi']:.1f} h), English {len(by_lang['en'])} "
+          f"({hours['en']:.1f} h), not set {len(by_lang['unknown'])} ({hours['unknown']:.1f} h)")
+    print("  caption_language is YouTube's metadata until an episode is transcribed. On the done episodes it was:")
+    for tag in by_lang:
+        tagged = [s for s in done if csv_tag[s["video_id"]] == tag]
+        if tagged:
+            print(f"    tagged {tag}: {len(tagged)} episodes, {sum(s['language'] == 'hi' for s in tagged)} actually Hindi")
+    print(f"Haiku rates (done episodes): romanization ${roman_per_hour:.4f}, translation ${trans_per_hour:.4f} "
+          f"per Hindi hour")
+    for label, hi_h in (("if caption_language is right", as_tagged),
+                        ("corrected by the done episodes (not set: half Hindi)", calibrated)):
+        usd = haiku(hi_h)
+        print(f"Estimated Haiku cost, {label}: {hi_h:.0f} Hindi hours -> ${usd:.2f} = INR {usd * INR_PER_USD:,.0f}")
+    print(f"Audio fallback: about {fallback_n:.0f} episodes ({fallback_share:.0%} of the done ones), "
+          f"up to INR {fallback_inr:,.0f}")
+    worst = haiku(calibrated) * INR_PER_USD + fallback_inr
+    print(f"Estimated total this run: up to INR {worst:,.0f} (${worst / INR_PER_USD:.2f}); cost guard at "
+          f"INR {max_inr:,.0f}")
+    if worst > max_inr:
+        print(f"  The estimate is above the guard: expect the run to stop partway; rerun to continue, "
+              f"or pass --max-inr.")
+    print(f"Estimated time: YouTube {yt[0]:.1f}-{yt[1]:.1f} h ({len(left)} episodes at "
+          f"{EPISODE_PAUSE_SECONDS[0]}-{EPISODE_PAUSE_SECONDS[1]} s), batch waiting {batch[0]:.1f}-{batch[1]:.1f} h "
+          f"({groups} groups of {GROUP_SIZE} x {BATCHES_PER_GROUP} batches at {BATCH_MINUTES[0]}-{BATCH_MINUTES[1]} "
+          f"min), audio fallback {audio[0]:.1f}-{audio[1]:.1f} h")
+    print(f"  Total: about {yt[0] + batch[0] + audio[0]:.0f}-{yt[1] + batch[1] + audio[1]:.0f} h, more if YouTube "
+          f"answers 429 and the run has to be restarted later.")
+
+
+def cmd_transcribe(which: str, redo_translations_first: bool = False, dry: bool = False,
+                   max_inr: float = MAX_RUN_INR) -> None:
     load_dotenv(ROOT / ".env")
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    if dry:
+        dry_run(which, max_inr)
+        return
     CAPTIONS_DIR.mkdir(parents=True, exist_ok=True)
     TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
     episodes = read_episodes(which)
-    states = {ep["video_id"]: s for ep in episodes if (s := load_state(ep["video_id"]))}
+    known = {ep["video_id"]: s for ep in episodes if (s := load_state(ep["video_id"]))}
+    rates = haiku_line_rates([s for s in known.values() if finished(s)])
+    if redo_translations_first:
+        todo_eps = episodes
+    else:
+        status = episode_status()
+        todo_eps = [ep for ep in episodes if not already_done(ep, status, known.get(ep["video_id"]))]
+    states = {ep["video_id"]: known[ep["video_id"]] for ep in todo_eps if ep["video_id"] in known}
     before = costs(list(states.values()))
     failed: list[str] = []
-    log.info("%s episodes in set %s, %s already started", len(episodes), which, len(states))
+    log.info("%s episodes in set %s, %s already transcribed (skipped), %s to do, %s already started",
+             len(episodes), which, len(episodes) - len(todo_eps), len(todo_eps), len(states))
+    progress = Progress(which, len(episodes), len(episodes) - len(todo_eps), states, before, max_inr)
+    progress.write(f"run started: set {which}, {len(todo_eps)} episodes to do, cost guard INR {max_inr:,.0f} | "
+                   + progress.status())
 
     if redo_translations_first:
         redo_translations(states)
-    youtube_step(episodes, states, failed)
-    audio_step(episodes, states, failed)
-    romanize_step(states)
-    translated = translate_step(states, failed)
-    db_step(states)
-    print_transcribe_summary(which, episodes, states, before, failed, translated)
+    translated, stopped = None, None
+    try:
+        for n in range(0, len(todo_eps), GROUP_SIZE):
+            group = todo_eps[n:n + GROUP_SIZE]
+            progress.check(f"group {n // GROUP_SIZE + 1}")
+            log.info("Group %s of %s: %s episodes", n // GROUP_SIZE + 1, -(-len(todo_eps) // GROUP_SIZE), len(group))
+            refused = youtube_step(group, states, failed, progress.episode)
+            group_states = {ep["video_id"]: states[ep["video_id"]] for ep in group if ep["video_id"] in states}
+            usd, inr = audio_estimate(list(group_states.values()))
+            progress.check("the audio fallback", usd, inr)
+            audio_step(group, states, failed)
+            lines = sum(len(s["segments"]) for s in group_states.values() if s["language"] == "hi"
+                        and s["source"] == "youtube_auto" and s["segments"] and not s["romanized"])
+            progress.check("romanization", lines * rates["roman"])
+            romanize_step(group_states)
+            lines = sum(len(s["segments"]) for s in group_states.values() if s["language"] == "hi"
+                        and s["segments"] and s["translation"] != "ok")
+            progress.check("translation", lines * rates["translation"])
+            translated = merge_reports(translated, translate_step(group_states, failed))
+            db_step(group_states, progress.episode)
+            if refused:
+                stopped = "YouTube kept answering 429; rerun later to continue"
+                progress.write(f"stopped: {stopped} | {progress.status()}")
+                break
+        else:
+            progress.write("run finished | " + progress.status())
+    except CostCapReached as exc:
+        stopped = str(exc)
+    translated = translated or {"episodes": 0, "lines": 0, "flagged": 0, "fixed": 0, "still_flagged": [],
+                                "failed_lines": []}
+    print_transcribe_summary(which, todo_eps, states, before, failed, translated)
+    if stopped:
+        sys.exit(f"\n{stopped}")
 
 
 def main() -> None:
@@ -1013,6 +1269,10 @@ def main() -> None:
     p_tr.add_argument("--redo-translations", action="store_true",
                       help="delete the set's translation_segments rows and translate again (once; rerun without "
                            "it to resume)")
+    p_tr.add_argument("--dry-run", action="store_true",
+                      help="change nothing; print episodes left, Hindi vs English, estimated Haiku cost and hours")
+    p_tr.add_argument("--max-inr", type=float, default=MAX_RUN_INR,
+                      help=f"cost guard: stop once this run's cost would pass this many INR (default {MAX_RUN_INR})")
     args = parser.parse_args()
 
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -1026,7 +1286,7 @@ def main() -> None:
     elif args.command == "download-auto":
         cmd_download_auto()
     else:
-        cmd_transcribe(args.set, args.redo_translations)
+        cmd_transcribe(args.set, args.redo_translations, args.dry_run, args.max_inr)
 
 
 if __name__ == "__main__":
