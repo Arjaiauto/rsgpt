@@ -14,10 +14,11 @@ Two modes, chosen in the sidebar:
 - Fast review: the Gate 1 sample after the AI pre-check (08_ai_precheck.py). Set 1
   holds every item Sonnet marked not_supported or unsure; set 2 a fixed random 100
   of the items it marked supported (both saved in data/review/fast_review_<run>.json).
-  Ten items a page, each with Sonnet's verdict and reason, every one set to Correct
-  (or its saved verdict): change the ones that are off and "Save page" writes the
-  page to reviews. The report shows your accuracy on both sets and how often you
-  agreed with Sonnet.
+  Set 1 shows the riskiest types first (FAST_RISK_ORDER). Ten items a page, each
+  with Sonnet's verdict and reason right above the cited lines. Nothing is
+  preselected: every item needs Correct, Wrong or Unsure (or "Sonnet is right",
+  which marks it Wrong) before "Save page" writes the page to reviews. The report
+  shows your accuracy on both sets and how often you agreed with Sonnet.
 
 For each item you see its type and text ("(translated)" when it rests on the
 English translation), the cited transcript lines with their speaker and Roman
@@ -26,7 +27,7 @@ Unsure (keys 1, 2, 3) save a row in the reviews table, with the note, and move t
 the next item that has no verdict yet. Accuracy is correct / (correct + wrong),
 using each item's latest verdict.
 
-Only the latest few episodes' data is held at a time. Guest profiles have no cited IDs in
+Only the episodes of the current item or page are held in memory. Guest profiles have no cited IDs in
 the database, so theirs come from the run's result file in data/extractions/.
 
 Usage:
@@ -57,6 +58,7 @@ TYPE_LABELS = {"guest": "Guest profile", "quote": "Quote", "disagreement": "Disa
 SPEAKER_LETTERS = {"raj": "R", "guest": "G", "unknown": "U"}
 VERDICTS = [("Correct", "correct", "1"), ("Wrong", "wrong", "2"), ("Unsure", "unsure", "3")]
 FAST_PAGE = 10
+FAST_RISK_ORDER = ["disagreement", "guest", "clip", "raj_opinion", "opportunity", "takeaway", "raj_question", "quote"]
 SONNET_LABELS = {"supported": "supported", "not_supported": "not supported", "unsure": "unsure"}
 
 load_dotenv(ROOT / ".env")
@@ -123,9 +125,9 @@ def guest_segment_ids(run_id: str, vid: str) -> list[int]:
     return []
 
 
-@st.cache_data(max_entries=3, show_spinner="Loading episode...")
+@st.cache_data(max_entries=FAST_PAGE, show_spinner="Loading episode...")
 def load_episode(run_id: str, vid: str) -> dict:
-    """One episode's segments and verified rows; only the latest few episodes stay cached."""
+    """One episode's segments and verified rows; at most one Fast review page's worth of episodes stays cached."""
     segments = fetch("segments", "id,seq,start_s,end_s,speaker,text_roman", order="seq", video_id=vid)
     items = []
     for g in fetch("guests", "*", run_id=run_id, video_id=vid, verified=True):
@@ -216,9 +218,6 @@ def show_item(run_id: str, vid: str, key: tuple[str, int], prefix: str = "", lin
     if item["translated"]:
         head += " (translated)"
     st.markdown(f"#### {prefix}{escape(head)}")
-    if sonnet:
-        text = f"**Sonnet: {SONNET_LABELS[sonnet['verdict']]}** · {escape(sonnet['reason'])}"
-        {"supported": st.success, "not_supported": st.error}.get(sonnet["verdict"], st.warning)(text)
     st.markdown(escape(item["text"]).replace("\n", "  \n"))
     cited = sorted((episode["segments"][i] for i in item["segment_ids"] if i in episode["segments"]),
                    key=lambda s: s["seq"])
@@ -228,6 +227,10 @@ def show_item(run_id: str, vid: str, key: tuple[str, int], prefix: str = "", lin
             st.link_button(f"Open on YouTube at {clock(start)}", youtube(vid, start))
         else:
             st.markdown(f"[Open on YouTube at {clock(start)}]({youtube(vid, start)})")
+    if sonnet:
+        # Right above the lines, so the reason can be checked against them.
+        text = f"**Sonnet: {SONNET_LABELS[sonnet['verdict']]}**  \n**{escape(sonnet['reason'])}**"
+        {"supported": st.success, "not_supported": st.error}.get(sonnet["verdict"], st.warning)(text)
     st.markdown("**Cited transcript lines**")
     if cited:
         shown = []
@@ -392,6 +395,11 @@ def fast_mode(runs: list[str]) -> None:
     if not keys:
         st.info("Nothing in this set.")
         return
+    if view.startswith("1"):
+        # Riskiest types first, each in sample order.
+        rank = {t: n for n, t in enumerate(FAST_RISK_ORDER)}
+        types = {(s["table"], s["id"]): s["type"] for s in sample}
+        keys = sorted(keys, key=lambda k: (rank.get(types[k], len(rank)), order[k]))
     pages = [keys[n:n + FAST_PAGE] for n in range(0, len(keys), FAST_PAGE)]
     page_key = f"fastpage::{run_id}::{view[0]}"
     if page_key not in st.session_state:
@@ -403,37 +411,50 @@ def fast_mode(runs: list[str]) -> None:
 
     options = [label for label, _, _ in VERDICTS]
     values = {label: verdict for label, verdict, _ in VERDICTS}
-    with st.form(f"form::{run_id}::{view[0]}::{page_no}"):
-        st.markdown(f"### Set {view[0]}, page {page_no + 1} of {len(pages)}")
-        st.caption("Every item starts as Correct (or its saved verdict). Change only the ones that are off, "
-                   "then Save page.")
-        shown = []
-        for n, key in enumerate(page):
-            st.divider()
-            st.caption(f"{video[key]} · {names.get(video[key], '')}")
-            item = show_item(run_id, video[key], key, f"{page_no * FAST_PAGE + n + 1}. ", link_button=False,
-                             sonnet=sonnet.get(key))
-            if item is None:
-                continue
-            cols = st.columns([2, 3])
-            choice = cols[0].radio("My verdict", options, horizontal=True, key=f"fv::{key}",
-                                   index=[values[o] for o in options].index(verdicts.get(key, "correct")))
-            note = cols[1].text_input("Note (optional)", key=f"fn::{key}")
-            shown.append((key, choice, note))
-        if st.form_submit_button(f"Save page ({len(shown)} items)", type="primary"):
-            # Items already saved with the same verdict and no new note are not written again.
-            rows = [{"item_table": key[0], "item_id": key[1], "verdict": values[choice],
-                     "note": note.strip() or None} for key, choice, note in shown
-                    if verdicts.get(key) != values[choice] or note.strip()]
-            if rows:
-                db().table("reviews").insert(rows).execute()
-            for key, choice, _ in shown:
-                verdicts[key] = values[choice]
-            later = [n for n in range(page_no + 1, len(pages)) if any(k not in verdicts for k in pages[n])]
-            st.session_state.pop(page_key)
-            st.session_state[page_key] = later[0] if later else page_no
-            st.session_state["fast_saved"] = f"Saved page {page_no + 1}: {len(rows)} verdicts written."
-            st.rerun()
+    labels_of = {verdict: label for label, verdict, _ in VERDICTS}
+    st.markdown(f"### Set {view[0]}, page {page_no + 1} of {len(pages)}")
+    st.caption("Nothing is preselected: choose Correct, Wrong or Unsure for every item (an item you saved before "
+               "shows your saved verdict). Save page works once all items on the page have one.")
+    shown = []
+    for n, key in enumerate(page):
+        st.divider()
+        st.caption(f"{video[key]} · {names.get(video[key], '')}")
+        item = show_item(run_id, video[key], key, f"{page_no * FAST_PAGE + n + 1}. ", link_button=False,
+                         sonnet=sonnet.get(key))
+        if item is None:
+            continue
+        radio_key = f"fv::{key}"
+        if radio_key not in st.session_state and key in verdicts:
+            st.session_state[radio_key] = labels_of[verdicts[key]]
+        cols = st.columns([2, 1, 3])
+        # Blank unless chosen (or saved before); no index when Session State already holds the value.
+        blank = {} if radio_key in st.session_state else {"index": None}
+        choice = cols[0].radio("My verdict", options, horizontal=True, key=radio_key, **blank)
+        if sonnet.get(key, {}).get("verdict") != "supported":
+            cols[1].button("Sonnet is right", key=f"sr::{key}", help="Agree with Sonnet's reason: marks this item Wrong",
+                           on_click=st.session_state.__setitem__, args=(radio_key, labels_of["wrong"]))
+        note = cols[2].text_input("Note (optional)", key=f"fn::{key}")
+        shown.append((key, choice, note))
+
+    st.divider()
+    missing = [n for n, (_, choice, _) in enumerate(shown) if choice is None]
+    if missing:
+        st.caption(f"{len(shown) - len(missing)} of {len(shown)} items have a verdict; "
+                   f"choose one for every item to save the page.")
+    if st.button(f"Save page ({len(shown)} items)", type="primary", disabled=bool(missing)):
+        # Items already saved with the same verdict and no new note are not written again.
+        rows = [{"item_table": key[0], "item_id": key[1], "verdict": values[choice],
+                 "note": note.strip() or None} for key, choice, note in shown
+                if verdicts.get(key) != values[choice] or note.strip()]
+        if rows:
+            db().table("reviews").insert(rows).execute()
+        for key, choice, _ in shown:
+            verdicts[key] = values[choice]
+        later = [n for n in range(page_no + 1, len(pages)) if any(k not in verdicts for k in pages[n])]
+        st.session_state.pop(page_key)
+        st.session_state[page_key] = later[0] if later else page_no
+        st.session_state["fast_saved"] = f"Saved page {page_no + 1}: {len(rows)} verdicts written."
+        st.rerun()
     if "fast_saved" in st.session_state:
         st.toast(st.session_state.pop("fast_saved"))
 
