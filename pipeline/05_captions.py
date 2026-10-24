@@ -898,8 +898,12 @@ def roman_sub_chunks(chunk_id: str, lines: list[dict]) -> dict[str, list[dict]]:
             for n, i in enumerate(range(0, len(lines), ROMAN_SUB_CHUNK_LINES))}
 
 
-def send_roman_rounds(client: anthropic.Anthropic, wanted: dict[str, tuple[list[dict], dict]]) -> None:
-    """Send chunks (chunk ID -> (lines, state)) not yet complete, up to ROMAN_ROUNDS tries each this run."""
+def send_roman_rounds(client: anthropic.Anthropic, wanted: dict[str, tuple[list[dict], dict]],
+                      before_round=None) -> None:
+    """Send chunks (chunk ID -> (lines, state)) not yet complete, up to ROMAN_ROUNDS tries each this run.
+
+    before_round(requests), if given, is called before each batch and may raise to stop (a cost guard).
+    """
     tries: dict[str, int] = {}  # this run's tries per chunk; a rate-limit refusal is not a try
     for round_no in range(1, ROMAN_MAX_ROUNDS + 1):
         requests, expected = {}, {}
@@ -910,6 +914,8 @@ def send_roman_rounds(client: anthropic.Anthropic, wanted: dict[str, tuple[list[
                 expected[chunk_id] = [l["id"] for l in lines]
         if not requests:
             break
+        if before_round:
+            before_round(requests)
         log.info("Romanization round %s: %s chunks for %s episodes", round_no, len(requests),
                  len({wanted[c][1]["video_id"] for c in requests}))
         limited = romanize_lib.run_batch(client, requests, expected, ROMAN_JOB_PATH, ROMAN_CHUNK_DIR,
@@ -918,6 +924,29 @@ def send_roman_rounds(client: anthropic.Anthropic, wanted: dict[str, tuple[list[
             if chunk_id not in limited:
                 tries[chunk_id] = tries.get(chunk_id, 0) + 1
         romanize_lib.wait_after_rate_limit(limited)
+
+
+def roman_line(vid: str, seg: dict, text: str) -> tuple[str, bool]:
+    """The text_roman for one line from its Haiku answer ("" if none), and whether it is flagged.
+
+    A flagged line keeps its original Devanagari: no answer, characters of another script, or a
+    word count more than romanize_lib.WORD_TOLERANCE away from the original's.
+    """
+    text = text.strip()
+    if text and romanize_lib.non_latin(text):  # also catches answers saved before the check existed
+        log.warning("%s seq %s has non-Latin characters %s, keeping original: %s | %s", vid, seg["seq"],
+                    "".join(romanize_lib.non_latin(text)), seg["text_original"], text)
+        return seg["text_original"], True
+    if not text:
+        log.warning("%s seq %s not romanized after sub-chunks, keeping original: %s", vid, seg["seq"],
+                    seg["text_original"])
+        return seg["text_original"], True
+    if romanize_lib.is_flagged(seg["text_original"], text):
+        log.warning("%s seq %s flagged (%s -> %s words), keeping original: %s | %s", vid, seg["seq"],
+                    romanize_lib.word_count(seg["text_original"]), romanize_lib.word_count(text),
+                    seg["text_original"], text)
+        return seg["text_original"], True
+    return text, False
 
 
 def romanize_step(states: dict[str, dict]) -> float:
@@ -962,25 +991,9 @@ def romanize_step(states: dict[str, dict]) -> float:
             converted |= romanize_lib.usable_lines(roman_chunk_path(c))
         flagged = []
         for seg in state["segments"]:
-            text = converted.get(f"{vid}-L{seg['seq']:05d}", "").strip()
-            if text and romanize_lib.non_latin(text):  # an answer saved before the check existed
+            seg["text_roman"], is_flagged = roman_line(vid, seg, converted.get(f"{vid}-L{seg['seq']:05d}", ""))
+            if is_flagged:
                 flagged.append(seg["seq"])
-                log.warning("%s seq %s has non-Latin characters %s, keeping original: %s | %s", vid, seg["seq"],
-                            "".join(romanize_lib.non_latin(text)), seg["text_original"], text)
-                seg["text_roman"] = seg["text_original"]
-            elif not text:
-                flagged.append(seg["seq"])
-                log.warning("%s seq %s not romanized after sub-chunks, keeping original: %s", vid, seg["seq"],
-                            seg["text_original"])
-                seg["text_roman"] = seg["text_original"]
-            elif romanize_lib.is_flagged(seg["text_original"], text):
-                flagged.append(seg["seq"])
-                log.warning("%s seq %s flagged (%s -> %s words), keeping original: %s | %s", vid, seg["seq"],
-                            romanize_lib.word_count(seg["text_original"]), romanize_lib.word_count(text),
-                            seg["text_original"], text)
-                seg["text_roman"] = seg["text_original"]
-            else:
-                seg["text_roman"] = text
         state["flagged_seqs"] = flagged
         state["roman_cost_usd"] = round(sum(romanize_lib.chunk_cost(roman_chunk_path(c))
                                             for c in [*ids, *(sub for c in ids for sub in subs[c])]), 6)
