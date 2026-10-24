@@ -3,9 +3,10 @@
 --
 -- Run in the Supabase SQL Editor. Safe to run again (create or replace).
 --
--- 1. Semantic side: the 100 chunks nearest to query_embedding by cosine distance, through
---    the HNSW index chunks_embedding_idx (vector_cosine_ops). hnsw.ef_search is raised to
---    100 for this function, because an HNSW scan returns at most ef_search rows (default 40).
+-- 1. Semantic side: the 40 chunks nearest to query_embedding by cosine distance, through
+--    the HNSW index chunks_embedding_idx (vector_cosine_ops). 40 because an HNSW scan
+--    returns at most hnsw.ef_search rows (default 40), and hosted Supabase does not allow
+--    setting it on a function, so asking for more would silently return fewer.
 -- 2. Keyword side: the 100 best chunks by ts_rank on text_search (the 'simple' config).
 --    The question is split into words, filler words are dropped (English and Hinglish
 --    function words, and raj / guest / episode, which every chunk has in its speaker
@@ -32,7 +33,6 @@ returns table (
 language sql
 stable
 set search_path = public, extensions
-set hnsw.ef_search = 100
 as $$
 with semantic as (
     select n.id, row_number() over (order by n.distance, n.id) as rank
@@ -41,7 +41,7 @@ with semantic as (
         from public.chunks c
         where c.embedding is not null
         order by c.embedding <=> query_embedding
-        limit 100
+        limit 40
     ) n
 ),
 words as (
