@@ -31,8 +31,21 @@ and server errors are retried.
 Cost guard: before each request, this run's cost so far plus the request's is compared
 with --max-usd; past it, the run writes the finished episodes and stops.
 
+Writing: rows go in INSERT_ROWS at a time. A batch cancelled by the statement timeout
+(57014) is retried split in half, down to single rows, before the run fails.
+Before writing, every real run checks the rows already in the database against the
+saved files: an episode whose rows are not exactly its saved chunks (count, times,
+text, an embedding on each), or that has rows but is not marked written (a write cut
+off part way), has its rows deleted and is written again. --clean-only does just that.
+
+--bulk, for loading many episodes: updating the HNSW index on every insert is what
+makes inserts time out. The run prints the SQL to drop the index and waits for Enter
+while you run it in the Supabase SQL Editor; once every episode is written it prints
+the SQL to build the index again (same definition as schema.sql).
+
 Usage:
-    .venv\\Scripts\\python.exe pipeline\\09_build_chunks.py [--dry-run] [--max-usd 5]
+    .venv\\Scripts\\python.exe pipeline\\09_build_chunks.py [--dry-run] [--max-usd 5] [--bulk]
+    .venv\\Scripts\\python.exe pipeline\\09_build_chunks.py --clean-only
 """
 
 import argparse
@@ -50,6 +63,7 @@ from pathlib import Path
 import voyageai
 import voyageai.error
 from dotenv import load_dotenv
+from postgrest.exceptions import APIError
 from postgrest.types import ReturnMethod
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -75,7 +89,16 @@ BATCH_MAX_TOKENS = 100_000  # API limit 320,000 for voyage-4; local counts can d
 VOYAGE_RETRIES = 6
 
 DB_PAGE = 1000
-DB_INSERT_ROWS = 100  # a row carries a 512-float vector, so keep insert requests small
+INSERT_ROWS = 50  # a row carries a 512-float vector and updates two indexes, so keep inserts small
+STATEMENT_TIMEOUT = "57014"
+HNSW_INDEX = "chunks_embedding_idx"  # as named in schema.sql
+INDEX_QUERY_SQL = ("select indexname, indexdef from pg_indexes\n"
+                   "where schemaname = 'public' and tablename = 'chunks';")
+DROP_INDEX_SQL = f"drop index if exists public.{HNSW_INDEX};"
+CREATE_INDEX_SQL = ("set maintenance_work_mem = '256MB';\n"
+                    "set statement_timeout = '30min';\n"
+                    f"create index if not exists {HNSW_INDEX} on public.chunks\n"
+                    "    using hnsw (embedding extensions.vector_cosine_ops);")
 LOAD_THREADS = 8
 # Database size estimate per chunk row: a vector(512) is 4 bytes x 512 + 8, stored uncompressed;
 # the HNSW index holds a copy of each vector plus its graph links; plus row and b-tree overhead.
@@ -292,17 +315,84 @@ def usd(tokens: int) -> float:
 
 # ---------- writing ----------
 
+def insert_rows(db, rows: list[dict]) -> None:
+    """Insert rows; a batch cancelled by the statement timeout is retried in halves, down to single rows.
+    A cancelled statement is rolled back, so nothing of it is left behind."""
+    try:
+        cap.db_call("chunks insert", lambda: db.table("chunks").insert(rows, returning=ReturnMethod.minimal).execute())
+    except APIError as exc:
+        if exc.code != STATEMENT_TIMEOUT or len(rows) == 1:
+            raise
+        half = len(rows) // 2
+        log.warning("%s: statement timeout inserting %s rows, retrying as %s + %s", rows[0]["video_id"], len(rows),
+                    half, len(rows) - half)
+        insert_rows(db, rows[:half])
+        insert_rows(db, rows[half:])
+
+
 def write_rows(db, record: dict) -> None:
     rows = [{"video_id": record["video_id"], "start_s": c["start_s"], "end_s": c["end_s"], "text": c["text"],
              "published_at": record["published_at"], "embedding": c["embedding"]} for c in record["chunks"]]
     vid = record["video_id"]
     cap.db_call("chunks delete", lambda: db.table("chunks").delete().eq("video_id", vid).execute())
-    for i in range(0, len(rows), DB_INSERT_ROWS):
-        part = rows[i:i + DB_INSERT_ROWS]
-        cap.db_call("chunks insert",
-                    lambda: db.table("chunks").insert(part, returning=ReturnMethod.minimal).execute())
+    for i in range(0, len(rows), INSERT_ROWS):
+        insert_rows(db, rows[i:i + INSERT_ROWS])
     record["db_written"] = True
     save(record)
+
+
+def row_key(start_s: float, end_s: float, text: str) -> tuple:
+    return round(start_s, 3), round(end_s, 3), text
+
+
+def clean_partial(db, vids: list[str]) -> tuple[int, int]:
+    """Delete the rows of every episode whose rows are not exactly its saved, written chunks, and mark it
+    not written so it is written again. Returns (episodes cleaned, rows deleted)."""
+    rows = fetch_all(db, "chunks", "id,video_id,start_s,end_s,text")
+    no_embedding = {r["id"] for r in fetch_all(db, "chunks", "id", lambda q: q.is_("embedding", "null"))}
+    in_db: dict[str, list] = {}
+    for r in rows:
+        in_db.setdefault(r["video_id"], []).append(r)
+    cleaned = deleted = 0
+    for vid in sorted(in_db):
+        saved = load_saved(vid) if vid in vids else None
+        have = sorted(row_key(r["start_s"], r["end_s"], r["text"]) for r in in_db[vid])
+        want = sorted(row_key(c["start_s"], c["end_s"], c["text"]) for c in saved["chunks"]) if saved else None
+        if saved and saved["db_written"] and have == want and not any(r["id"] in no_embedding for r in in_db[vid]):
+            continue
+        why = ("not a transcribed episode with a saved file" if not saved else "not marked written" if
+               not saved["db_written"] else f"{len(have)} rows for {len(want)} saved chunks" if len(have) != len(want)
+               else "rows without an embedding" if any(r["id"] in no_embedding for r in in_db[vid])
+               else "times or text differ from the saved chunks")
+        log.info("%s: %s, deleting its %s rows", vid, why, len(in_db[vid]))
+        cap.db_call("chunks delete", lambda: db.table("chunks").delete().eq("video_id", vid).execute())
+        if saved:
+            saved["db_written"] = False
+            save(saved)
+        cleaned += 1
+        deleted += len(in_db[vid])
+    for vid in vids:  # marked written but no rows at all
+        saved = load_saved(vid)
+        if saved and saved["db_written"] and vid not in in_db:
+            log.info("%s: marked written but has no rows; it will be written again", vid)
+            saved["db_written"] = False
+            save(saved)
+            cleaned += 1
+    log.info("Check of rows already written: %s rows in %s episodes; cleaned %s episodes, deleted %s rows",
+             len(rows), len(in_db), cleaned, deleted)
+    return cleaned, deleted
+
+
+def wait_for_drop() -> None:
+    print("\n--bulk: before inserting, drop the HNSW index in the Supabase SQL Editor.")
+    print("Check its name and definition first:\n\n" + INDEX_QUERY_SQL + "\n\nThen drop it:\n\n" + DROP_INDEX_SQL)
+    print("\nIf the index has another name, drop that one instead. Press Enter once it is dropped.")
+    input()
+
+
+def print_create_index() -> None:
+    print("\nEvery episode is written. Build the HNSW index again in the Supabase SQL Editor:\n\n"
+          + CREATE_INDEX_SQL + "\n\nThen check it with:\n\n" + INDEX_QUERY_SQL + "\n")
 
 
 # ---------- run ----------
@@ -333,14 +423,20 @@ def db_size_bytes(chunks: list[dict]) -> tuple[float, float]:
     return fixed + text_bytes * TEXT_FACTORS[0], fixed + text_bytes * TEXT_FACTORS[1]
 
 
-def run(max_usd: float, dry_run: bool) -> None:
+def run(max_usd: float, dry_run: bool, bulk: bool = False, clean_only: bool = False) -> None:
     db = cap.supabase_client()
     episodes = transcribed_episodes(db)
+    if not dry_run:
+        clean_partial(db, [ep["video_id"] for ep in episodes])
+        if clean_only:
+            return
     saved = {ep["video_id"]: load_saved(ep["video_id"]) for ep in episodes}
     todo = [ep for ep in episodes if not (saved[ep["video_id"]] or {}).get("db_written")]
     log.info("%s transcribed episodes, %s with chunks written, %s to do", len(episodes), len(episodes) - len(todo),
              len(todo))
     if not todo:
+        if bulk:
+            print_create_index()
         return
     guests = verified_guests(db)
     lines_of = load_all(todo)
@@ -362,6 +458,8 @@ def run(max_usd: float, dry_run: bool) -> None:
     CHUNKS_DIR.mkdir(parents=True, exist_ok=True)
     for r in records.values():
         save(r)
+    if bulk:
+        wait_for_drop()
     vo = voyage_client()
     spent_tokens, written, started = 0, 0, time.monotonic()
 
@@ -404,10 +502,14 @@ def run(max_usd: float, dry_run: bool) -> None:
         write_finished()
         log.error("Cost guard: %s. Stopped; %s episodes written. Rerun with a higher --max-usd to continue.",
                   exc, written)
+        if bulk:
+            log.error("The HNSW index is still dropped: finish the run with --bulk, then build it again.")
         return
     total_rows = sum(len(r["chunks"]) for r in records.values() if r["db_written"])
     log.info("Done: %s episodes, %s chunk rows written; this run %s tokens, $%.4f at list price", written,
              total_rows, f"{spent_tokens:,}", usd(spent_tokens))
+    if bulk and all(r["db_written"] for r in records.values()):
+        print_create_index()
 
 
 def print_dry_run(episodes, todo, records, guests, pending, max_usd) -> None:
@@ -441,6 +543,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--max-usd", type=float, default=MAX_USD,
                         help=f"stop before this run could spend more (default {MAX_USD})")
+    parser.add_argument("--bulk", action="store_true",
+                        help="bulk load: wait while you drop the HNSW index, print the SQL to build it at the end")
+    parser.add_argument("--clean-only", action="store_true",
+                        help="only delete the rows of episodes whose rows do not match their saved chunks")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the chunk count, tokens, estimated cost and database size; send and write nothing")
     args = parser.parse_args()
@@ -455,7 +561,7 @@ def main() -> None:
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
     log.info("Console output is also written to %s", log_path)
     load_dotenv(ROOT / ".env")
-    run(args.max_usd, args.dry_run)
+    run(args.max_usd, args.dry_run, args.bulk, args.clean_only)
 
 
 if __name__ == "__main__":
