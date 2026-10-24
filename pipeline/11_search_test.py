@@ -2,7 +2,7 @@
 
 For each question: embed it with Voyage voyage-4 (512 dimensions, input_type query, the
 same Atlas endpoint as 09_build_chunks.py), call public.hybrid_search (pipeline/sql/
-hybrid_search.sql) through .rpc, and print the top TOP_N chunks with the episode title,
+search_v2.sql) through .rpc, and print the top TOP_N chunks with the episode title,
 date, start time, a YouTube link at that second, the RRF score and the first
 PREVIEW_CHARS characters of the chunk's transcript (after its header line, which only
 repeats the title, date and guest shown above it). No Claude calls.
