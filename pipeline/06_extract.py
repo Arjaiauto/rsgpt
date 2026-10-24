@@ -51,8 +51,27 @@ the batch IDs are saved as they are made, so a rerun only sends what is missing 
 only writes what has not been written. Results refused for a rate limit are not
 counted as attempts and are sent again after a pause (romanize_lib.run_batch).
 
+Full run (Ticket 15), around the extraction logic above, which is unchanged:
+- Only episodes with status transcribed are taken; an episode whose merged result is
+  written is skipped.
+- Episodes go in groups of GROUP_SIZE: speakers, extraction and database writes for
+  one group finish before the next starts, so a stop never loses finished episodes.
+- Cost guard: before each batch, this run's spend so far plus an estimate of the batch
+  is compared with --max-usd; past it, the run writes what is finished and stops.
+- stop_reason is saved for every attempt. A part whose answer is a refusal, cut off
+  (max_tokens) or invalid JSON is sent once more (HARD_ATTEMPTS), and every such
+  request is listed at the end.
+- Console output goes to data/logs/extract_<timestamp>.log, and a line per group to
+  data/progress_extract.log (episodes done, cost so far, estimated time left).
+- When the run finishes, 07_check.py runs on it, and pass rates per item type are
+  printed for the new episodes next to the test set's (saved before the run's
+  checks in <model>/<VERSION>/testset_pass_rates.json), flagging any type more than
+  PASS_RATE_DROP points lower.
+- --dry-run prints the episodes to do and the estimated tokens, cost and time.
+
 Usage:
     .venv\\Scripts\\python.exe pipeline\\06_extract.py --model haiku|sonnet --set test_set|all [--speakers-only]
+                                     [--max-usd 25] [--dry-run]
 """
 
 import argparse
@@ -126,6 +145,24 @@ DB_PAGE = 1000
 DB_BATCH = 500
 SPEAKER_UPDATE_IDS = 400
 MAX_RETRIES = 5
+
+# Full run (Ticket 15)
+GROUP_SIZE = 50  # episodes per group; each group is written to the database before the next starts
+MAX_RUN_USD = 25.0
+LOGS_DIR = DATA_DIR / "logs"
+PROGRESS_LOG = DATA_DIR / "progress_extract.log"
+HARD_ERRORS = {"refusal": "stop_reason refusal", "max_tokens": "stop_reason max_tokens", "invalid JSON": "bad JSON"}
+HARD_ATTEMPTS = 2  # a part answered with a refusal, a cut-off or invalid JSON is sent once more
+PASS_RATE_DROP = 10  # points; a type whose pass rate on the new episodes is this much under the test set's is flagged
+# Estimates for the cost guard and --dry-run, measured on the v5 test set (25 episodes):
+# extraction 662,077 output tokens for 42 part answers, speakers 947,305 for 430 chunk answers.
+EST_CHARS_PER_TOKEN = 3.0  # Roman-script lines and JSON run nearer 4; 3 keeps the estimate on the high side
+EST_EXTRACTION_OUTPUT_TOKENS = 16000  # per part answer
+EST_SPEAKER_OUTPUT_TOKENS = 2500  # per chunk answer
+EST_HIGH = 1.3
+BATCH_MINUTES = (3, 10)  # one Batch API round; the test set's rounds took 2.5-4 minutes
+SPEAKER_ROUNDS, EXTRACTION_ROUNDS = 3, 2  # rounds a group usually needs
+GROUP_OVERHEAD_MINUTES = (2, 6)  # loading 50 episodes' lines, counting tokens, writing rows
 
 CATEGORIES = ["growing_sectors", "business_ideas", "market_gaps", "underrated_skills", "career_paths",
               "investment_themes", "hiring_signals", "policy_shifts", "geographic_opportunities",
@@ -341,6 +378,7 @@ def save_record(path: Path, record: dict, old: dict | None) -> None:
     if old:
         record["earlier_usage"] = [*old.get("earlier_usage", []), old["usage"]]
         record["earlier_errors"] = [*old.get("earlier_errors", []), old.get("error", "")]
+        record["earlier_stop_reasons"] = [*old.get("earlier_stop_reasons", []), old.get("stop_reason")]
     write_json(path, record)
     if record["complete"]:
         log.info("%s: ok (%s in / %s out tokens)%s", record["custom_id"], record["usage"]["input_tokens"],
@@ -478,8 +516,11 @@ def save_speakers(path: Path, custom_id: str, info: dict, result) -> None:
     save_record(path, record, old)
 
 
-def speaker_step(client, db, episodes: list[dict], lines_of: dict) -> dict[str, dict]:
-    """Speaker letters for each episode, {video_id: {segment id: raj|guest|unknown}}, also written to segments."""
+def speaker_step(client, db, episodes: list[dict], lines_of: dict, guard=None) -> dict[str, dict]:
+    """Speaker letters for each episode, {video_id: {segment id: raj|guest|unknown}}, also written to segments.
+
+    guard(requests), if given, is called before each batch and may raise to stop (the cost guard).
+    """
     chunk_dir, job_path = SPEAKER_DIR / "chunks", SPEAKER_DIR / "batch_job.json"
     chunk_dir.mkdir(parents=True, exist_ok=True)
     todo = [ep for ep in episodes if ep["video_id"] in lines_of and not speaker_path(ep["video_id"]).exists()]
@@ -498,6 +539,8 @@ def speaker_step(client, db, episodes: list[dict], lines_of: dict) -> dict[str, 
                 info[cid] = {"sizes": sizes, "wanted": wanted}
         if not requests:
             break
+        if guard:
+            guard(requests)
         log.info("Speaker round %s: %s chunks, %s groups", round_no, len(requests),
                  sum(len(i["wanted"]) for i in info.values()))
         romanize_lib.wait_after_rate_limit(romanize_lib.run_batch(client, requests, info, job_path, chunk_dir,
@@ -879,38 +922,137 @@ def write_speakers(db, vid: str, speakers: dict[str, str]) -> None:
                     .eq("video_id", vid).in_("id", chunk).execute())
 
 
-# ---------- run ----------
+# ---------- full run: groups, cost guard, progress ----------
 
-def run(key: str, which: str, speakers_only: bool = False) -> None:
+class CostCapReached(Exception):
+    pass
+
+
+def request_files(key: str, vid: str) -> list[Path]:
+    """Every saved request answer of one episode: speaker chunks and extraction parts."""
+    return [*(SPEAKER_DIR / "chunks").glob(f"{vid}-c*.json"), *part_dir(key).glob(f"{vid}-p*.json")]
+
+
+def files_usd(key: str, vids: list[str]) -> float:
+    return sum(cost(SPEAKER_MODEL, add_usage((SPEAKER_DIR / "chunks").glob(f"{v}-c*.json")))
+               + cost(key, add_usage(part_dir(key).glob(f"{v}-p*.json"))) for v in vids)
+
+
+def estimate_usd(model_key: str, requests: dict, output_tokens: int) -> float:
+    """Cost of a batch before it is sent: input from the request's length, output a measured average."""
+    chars = sum(len(r["params"]["system"]) + len(r["params"]["messages"][0]["content"]) for r in requests.values())
+    return cost(model_key, {"input_tokens": chars / EST_CHARS_PER_TOKEN, "output_tokens": output_tokens * len(requests)})
+
+
+class RunCost:
+    """What this run has spent (usage saved in the request files of the episodes it works on), with a cap."""
+
+    def __init__(self, key: str, max_usd: float):
+        self.key, self.max_usd, self.done_usd, self.vids, self.base = key, max_usd, 0.0, [], 0.0
+
+    def start_group(self, vids: list[str]) -> None:
+        self.vids, self.base = vids, files_usd(self.key, vids)
+
+    def end_group(self) -> None:
+        self.done_usd += files_usd(self.key, self.vids) - self.base
+        self.vids, self.base = [], 0.0
+
+    def spent(self) -> float:
+        return self.done_usd + (files_usd(self.key, self.vids) - self.base if self.vids else 0.0)
+
+    def check(self, model_key: str, requests: dict, output_tokens: int) -> None:
+        so_far, next_batch = self.spent(), estimate_usd(model_key, requests, output_tokens)
+        log.info("Cost this run $%.2f; next batch of %s requests about $%.2f (cap $%.2f)", so_far, len(requests),
+                 next_batch, self.max_usd)
+        if so_far + next_batch > self.max_usd:
+            raise CostCapReached(f"this run has spent ${so_far:.2f}; the next batch (about ${next_batch:.2f}) "
+                                 f"could take it past ${self.max_usd:.2f}")
+
+
+class Progress:
+    """One line per event in PROGRESS_LOG: episodes done, cost so far, estimated time left."""
+
+    def __init__(self, key: str, episodes: list[dict], run_cost: RunCost, groups: int):
+        self.key, self.episodes, self.run_cost, self.groups = key, episodes, run_cost, groups
+        self.started, self.groups_done = time.monotonic(), 0
+
+    def write(self, event: str) -> None:
+        done = sum(episode_done(self.key, ep["video_id"]) for ep in self.episodes)
+        left = self.groups - self.groups_done
+        if self.groups_done:
+            hours = (time.monotonic() - self.started) / self.groups_done * left / 3600
+        else:
+            hours = left * group_minutes()[1] / 60
+        line = (f"{time.strftime('%Y-%m-%d %H:%M:%S')} {event} | done {done}/{len(self.episodes)} episodes, "
+                f"remaining {len(self.episodes) - done} | cost this run ${self.run_cost.spent():.2f} "
+                f"(cap ${self.run_cost.max_usd:.2f}) | est. left {hours:.1f} h")
+        PROGRESS_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with PROGRESS_LOG.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        log.info("progress: %s", line)
+
+
+def group_minutes() -> tuple[float, float]:
+    """Minutes per group of GROUP_SIZE episodes: its Batch API rounds plus loading lines and counting tokens."""
+    rounds = SPEAKER_ROUNDS + EXTRACTION_ROUNDS
+    return rounds * BATCH_MINUTES[0] + GROUP_OVERHEAD_MINUTES[0], rounds * BATCH_MINUTES[1] + GROUP_OVERHEAD_MINUTES[1]
+
+
+def episode_done(key: str, vid: str) -> bool:
+    return merged_path(key, vid).exists() and read_json(merged_path(key, vid))["db_written"]
+
+
+def transcribed(db, episodes: list[dict]) -> list[dict]:
+    """The episodes whose transcript is in the database (status transcribed), with their caption language."""
+    rows, start = [], 0
+    while True:
+        page = db_call("episodes select", lambda: db.table("episodes").select("video_id,status,caption_language")
+                       .order("video_id").range(start, start + DB_PAGE - 1).execute()).data
+        rows += page
+        if len(page) < DB_PAGE:
+            break
+        start += DB_PAGE
+    meta = {r["video_id"]: r for r in rows}
+    left_out = [ep["video_id"] for ep in episodes if meta.get(ep["video_id"], {}).get("status") != "transcribed"]
+    if left_out:
+        log.info("%s episodes are not transcribed, left out: %s", len(left_out), ", ".join(left_out))
+    return [ep | {"language": meta[ep["video_id"]]["caption_language"]} for ep in episodes
+            if ep["video_id"] not in left_out]
+
+
+def hard_failures(path: Path) -> list[str]:
+    """The refusal, cut-off (max_tokens) and invalid-JSON answers among a request's attempts."""
+    if not path.exists():
+        return []
+    record = read_json(path)
+    return [kind for error in [*record.get("earlier_errors", []), record.get("error", "")]
+            for kind, prefix in HARD_ERRORS.items() if error.startswith(prefix)]
+
+
+def run_group(client, db, key: str, run_id: str, group: list[dict], speakers_only: bool, run_cost: RunCost) -> None:
+    """Speakers, extraction and database writes for one group of episodes.
+
+    The cost guard is checked before each batch. When it stops the run, the group's episodes
+    that are already complete are still merged and written before the stop is passed on.
+    """
     model = MODELS[key]
-    client = anthropic.Anthropic(max_retries=MAX_RETRIES)
-    db = captions.supabase_client()
-    part_dir(key).mkdir(parents=True, exist_ok=True)
-    run_id = run_id_for(key)
     job_path = model_dir(key) / "batch_job.json"
-    episodes = read_episodes(which)
-    log.info("%s episodes in set %s, model %s, run %s", len(episodes), which, model, run_id)
-
     lines_of, skipped = {}, []
-    for ep in episodes:
-        vid = ep["video_id"]
-        needs_db = merged_path(key, vid).exists() and not read_json(merged_path(key, vid)).get("db_written")
-        if merged_path(key, vid).exists() and speaker_path(vid).exists() and not needs_db:
-            continue
+    for ep in group:
         lines = episode_lines(db, ep)
         if lines:
-            lines_of[vid] = lines
+            lines_of[ep["video_id"]] = lines
         else:
-            skipped.append(vid)
+            skipped.append(ep["video_id"])
     if skipped:
-        log.info("%s episodes have no transcript in the database yet, skipped", len(skipped))
+        log.info("%s episodes have no transcript in the database yet, skipped: %s", len(skipped), ", ".join(skipped))
 
-    speakers = speaker_step(client, db, episodes, lines_of)
+    speakers = speaker_step(client, db, group, lines_of,
+                            guard=lambda reqs: run_cost.check(SPEAKER_MODEL, reqs, EST_SPEAKER_OUTPUT_TOKENS))
     if speakers_only:
-        print_speaker_summary(episodes)
         return
     todo, plans = [], {}
-    for ep in episodes:
+    for ep in group:
         vid = ep["video_id"]
         if vid in lines_of and vid in speakers and not merged_path(key, vid).exists():
             plans[vid] = make_plan(client, key, ep, lines_of[vid], speakers[vid])
@@ -919,24 +1061,30 @@ def run(key: str, which: str, speakers_only: bool = False) -> None:
     def part_ids(ep):
         return [f"{ep['video_id']}-p{i + 1}" for i in range(len(plans[ep["video_id"]]["parts"]))]
 
-    for round_no in range(1, MAX_ROUNDS + 1):
-        requests, info = {}, {}
-        for ep in todo:
-            vid, plan = ep["video_id"], plans[ep["video_id"]]
-            for i, cid in enumerate(part_ids(ep)):
-                path = part_dir(key) / f"{cid}.json"
-                if romanize_lib.chunk_done(path) or romanize_lib.attempts(path) >= MAX_ATTEMPTS:
-                    continue
-                lo, hi = plan["parts"][i]["span"]
-                part_lines = lines_of[vid][lo:hi]
-                requests[cid] = build_request(cid, model, user_prompt(ep, part_lines, speakers[vid], i + 1,
-                                                                       len(plan["parts"])))
-                info[cid] = {"raj_turns": raj_turns(part_lines, speakers[vid])}
-        if not requests:
-            break
-        log.info("Extraction round %s: %s requests", round_no, len(requests))
-        romanize_lib.wait_after_rate_limit(romanize_lib.run_batch(client, requests, info, job_path, part_dir(key),
-                                                                  save=save_part))
+    stop = None
+    try:
+        for round_no in range(1, MAX_ROUNDS + 1):
+            requests, info = {}, {}
+            for ep in todo:
+                vid, plan = ep["video_id"], plans[ep["video_id"]]
+                for i, cid in enumerate(part_ids(ep)):
+                    path = part_dir(key) / f"{cid}.json"
+                    if (romanize_lib.chunk_done(path) or romanize_lib.attempts(path) >= MAX_ATTEMPTS
+                            or len(hard_failures(path)) >= HARD_ATTEMPTS):
+                        continue
+                    lo, hi = plan["parts"][i]["span"]
+                    part_lines = lines_of[vid][lo:hi]
+                    requests[cid] = build_request(cid, model, user_prompt(ep, part_lines, speakers[vid], i + 1,
+                                                                           len(plan["parts"])))
+                    info[cid] = {"raj_turns": raj_turns(part_lines, speakers[vid])}
+            if not requests:
+                break
+            run_cost.check(key, requests, EST_EXTRACTION_OUTPUT_TOKENS)
+            log.info("Extraction round %s: %s requests", round_no, len(requests))
+            romanize_lib.wait_after_rate_limit(romanize_lib.run_batch(client, requests, info, job_path,
+                                                                      part_dir(key), save=save_part))
+    except CostCapReached as exc:
+        stop = exc
 
     for ep in todo:
         vid = ep["video_id"]
@@ -952,7 +1100,7 @@ def run(key: str, which: str, speakers_only: bool = False) -> None:
         write_json(merged_path(key, vid), result)
 
     # Write to the database whatever is merged and not yet written (also from earlier runs).
-    for ep in episodes:
+    for ep in group:
         vid, path = ep["video_id"], merged_path(key, ep["video_id"])
         if not path.exists():
             continue
@@ -964,8 +1112,211 @@ def run(key: str, which: str, speakers_only: bool = False) -> None:
         result["db_written"] = True
         write_json(path, result)
         log.info("%s: wrote %s", vid, result["db_rows"])
+    if stop:
+        raise stop
 
-    print_summary(key, episodes, run_id)
+
+def run(key: str, which: str, speakers_only: bool = False, max_usd: float = MAX_RUN_USD,
+        dry_run: bool = False) -> None:
+    db = captions.supabase_client()
+    episodes = transcribed(db, read_episodes(which))
+    todo = [ep for ep in episodes if not episode_done(key, ep["video_id"])]
+    if dry_run:
+        print_dry_run(key, episodes, todo, max_usd)
+        return
+    run_id = run_id_for(key)
+    part_dir(key).mkdir(parents=True, exist_ok=True)
+    log.info("%s transcribed episodes in set %s, %s to do, model %s, run %s, groups of %s, cost cap $%.2f",
+             len(episodes), which, len(todo), MODELS[key], run_id, GROUP_SIZE, max_usd)
+    if not speakers_only:
+        save_baseline(db, key, run_id)
+    client = anthropic.Anthropic(max_retries=MAX_RETRIES)
+    groups = [todo[i:i + GROUP_SIZE] for i in range(0, len(todo), GROUP_SIZE)]
+    run_cost = RunCost(key, max_usd)
+    progress = Progress(key, episodes, run_cost, len(groups))
+    progress.write(f"run started: {len(todo)} episodes to do in {len(groups)} groups")
+    stopped = None
+    for n, group in enumerate(groups, 1):
+        log.info("=== Group %s of %s: %s episodes ===", n, len(groups), len(group))
+        run_cost.start_group([ep["video_id"] for ep in group])
+        try:
+            run_group(client, db, key, run_id, group, speakers_only, run_cost)
+        except CostCapReached as exc:
+            stopped = str(exc)
+        finally:
+            run_cost.end_group()
+        progress.groups_done += 1
+        progress.write(f"group {n}/{len(groups)} " + ("stopped by the cost guard" if stopped else "finished"))
+        if stopped:
+            break
+
+    if speakers_only:
+        print_speaker_summary(episodes)
+    else:
+        print_summary(key, episodes, run_id)
+    print_failures(key, episodes)
+    print(f"\nCost this run: ${run_cost.spent():.2f} (cap ${max_usd:.2f})")
+    if stopped:
+        print(f"Stopped by the cost guard: {stopped}. Finished episodes are written; rerun "
+              f"(with a higher --max-usd if needed) to continue.")
+        progress.write("run stopped by the cost guard")
+        return
+    progress.write("run finished")
+    if speakers_only:
+        return
+    left = [ep["video_id"] for ep in episodes if not episode_done(key, ep["video_id"])]
+    if left:
+        print(f"\n{len(left)} episodes are not finished ({', '.join(left[:10])}{' ...' if len(left) > 10 else ''}); "
+              "the checks run on what is written.")
+    check_and_compare(db, key, run_id)
+
+
+def print_failures(key: str, episodes: list[dict]) -> None:
+    """Every request whose answer was a refusal, cut off (max_tokens) or invalid JSON, and how it ended."""
+    print("\n=== Refusals, cut-offs and invalid JSON (stop_reason is saved for every request) ===")
+    found = 0
+    for ep in episodes:
+        for path in sorted(request_files(key, ep["video_id"])):
+            kinds = hard_failures(path)
+            if not kinds:
+                continue
+            found += 1
+            if romanize_lib.chunk_done(path):
+                status = "complete after the retry"
+            elif len(kinds) >= HARD_ATTEMPTS:
+                status = "failed again after one retry; left out"
+            else:
+                status = "not retried yet; a rerun retries it"
+            print(f"    {ep['video_id']} {path.stem}: {', '.join(kinds)}; {status}")
+    if not found:
+        print("    none")
+
+
+def print_dry_run(key: str, episodes: list[dict], todo: list[dict], max_usd: float) -> None:
+    """Episodes to do, and tokens, cost and time estimated from the episodes already done (per minute of audio)."""
+    minutes = {ep["video_id"]: float(ep["duration_seconds"] or 0) / 60 for ep in episodes}
+    rates: dict[str, dict] = {}
+    for ep in episodes:
+        vid = ep["video_id"]
+        if not episode_done(key, vid) or not speaker_path(vid).exists():
+            continue
+        merged, spk = read_json(merged_path(key, vid)), read_json(speaker_path(vid))
+        for lang in (ep["language"], "all"):
+            r = rates.setdefault(lang, {"minutes": 0.0, "episodes": 0, "ex_in": 0, "ex_out": 0, "sp_in": 0, "sp_out": 0})
+            r["minutes"] += minutes[vid]
+            r["episodes"] += 1
+            r["ex_in"] += merged["usage"]["input_tokens"]
+            r["ex_out"] += merged["usage"]["output_tokens"]
+            r["sp_in"] += spk["usage"]["input_tokens"]
+            r["sp_out"] += spk["usage"]["output_tokens"]
+    by_lang = {}
+    for ep in todo:
+        r = rates.get(ep["language"]) or rates["all"]
+        t = by_lang.setdefault(ep["language"], {"episodes": 0, "minutes": 0.0, "ex_in": 0.0, "ex_out": 0.0,
+                                                "sp_in": 0.0, "sp_out": 0.0})
+        t["episodes"] += 1
+        t["minutes"] += minutes[ep["video_id"]]
+        for k in ("ex_in", "ex_out", "sp_in", "sp_out"):
+            t[k] += r[k] / r["minutes"] * minutes[ep["video_id"]]
+    groups = math.ceil(len(todo) / GROUP_SIZE)
+    run_file = model_dir(key) / "run_id.txt"
+    run_id = run_file.read_text(encoding="utf-8").strip() if run_file.exists() else "(new)"
+    print(f"DRY RUN, {MODELS[key]}, prompt {VERSION}, run {run_id}: nothing is sent or written.")
+    print(f"Transcribed episodes in set: {len(episodes)}")
+    print(f"Already extracted with {VERSION}: {len(episodes) - len(todo)}")
+    print(f"To do:                       {len(todo)} in {groups} groups of up to {GROUP_SIZE}")
+    started = [ep["video_id"] for ep in todo if plan_path(key, ep["video_id"]).exists()
+               or speaker_path(ep["video_id"]).exists()]
+    if started:
+        print(f"    already started (speakers or plan saved): {len(started)}")
+    print(f"\nRates measured on the {rates.get('all', {}).get('episodes', 0)} episodes already done "
+          f"(tokens per minute of audio, all attempts):")
+    for lang, r in sorted(rates.items()):
+        print(f"    {lang:<4} {r['episodes']:>3} episodes, {r['minutes']:6.0f} min: speakers "
+              f"{r['sp_in'] / r['minutes']:,.0f} in / {r['sp_out'] / r['minutes']:,.0f} out, extraction "
+              f"{r['ex_in'] / r['minutes']:,.0f} in / {r['ex_out'] / r['minutes']:,.0f} out")
+    print(f"\n  {'language':<9} {'episodes':>8} {'hours':>6} {'speakers in':>12} {'out':>11} "
+          f"{'extract in':>12} {'out':>11} {'USD':>7}")
+    total = {"ex_in": 0.0, "ex_out": 0.0, "sp_in": 0.0, "sp_out": 0.0}
+    for lang, t in sorted(by_lang.items()):
+        usd = (cost(SPEAKER_MODEL, {"input_tokens": t["sp_in"], "output_tokens": t["sp_out"]})
+               + cost(key, {"input_tokens": t["ex_in"], "output_tokens": t["ex_out"]}))
+        for k in total:
+            total[k] += t[k]
+        print(f"  {lang:<9} {t['episodes']:>8} {t['minutes'] / 60:>6.0f} {t['sp_in']:>12,.0f} {t['sp_out']:>11,.0f} "
+              f"{t['ex_in']:>12,.0f} {t['ex_out']:>11,.0f} {usd:>7.2f}")
+    usd = (cost(SPEAKER_MODEL, {"input_tokens": total["sp_in"], "output_tokens": total["sp_out"]})
+           + cost(key, {"input_tokens": total["ex_in"], "output_tokens": total["ex_out"]}))
+    print(f"  {'total':<9} {len(todo):>8} {sum(t['minutes'] for t in by_lang.values()) / 60:>6.0f} "
+          f"{total['sp_in']:>12,.0f} {total['sp_out']:>11,.0f} {total['ex_in']:>12,.0f} {total['ex_out']:>11,.0f} "
+          f"{usd:>7.2f}")
+    print(f"\nEstimated cost: ${usd:.2f} likely, ${usd * EST_HIGH:.2f} high (+{EST_HIGH - 1:.0%} for more retries); "
+          f"cost guard ${max_usd:.2f}")
+    lo, hi = group_minutes()
+    print(f"Estimated time: {groups} groups x {lo:.0f}-{hi:.0f} min = {groups * lo / 60:.1f}-{groups * hi / 60:.1f} h "
+          f"({SPEAKER_ROUNDS} speaker and {EXTRACTION_ROUNDS} extraction Batch API rounds a group at "
+          f"{BATCH_MINUTES[0]}-{BATCH_MINUTES[1]} min each, plus {GROUP_OVERHEAD_MINUTES[0]}-"
+          f"{GROUP_OVERHEAD_MINUTES[1]} min loading lines and counting tokens)")
+    print("Afterwards: 07_check.py on the run, and pass rates per type compared with the test set.")
+
+
+# ---------- checks after the run ----------
+
+TYPES = ["takeaway", "opportunity", "quote", "disagreement", "raj_question", "raj_opinion", "clip", "guest"]
+
+
+def pass_rates(db, run_id: str) -> dict[str, dict[str, list[int]]]:
+    """{"test": {type: [passed, total]}, "new": {...}}: verified rows of the run, test-set episodes apart."""
+    test = {ep["video_id"] for ep in read_episodes("test_set")}
+    out = {"test": {}, "new": {}}
+    for table, columns in (("insights", "video_id,type,verified"), ("clips", "video_id,verified"),
+                           ("guests", "video_id,verified")):
+        start = 0
+        while True:
+            page = db_call(f"{table} select", lambda: db.table(table).select(columns).eq("run_id", run_id)
+                           .order("id").range(start, start + DB_PAGE - 1).execute()).data
+            for row in page:
+                kind = row.get("type") or table.rstrip("s")
+                counts = out["test" if row["video_id"] in test else "new"].setdefault(kind, [0, 0])
+                counts[0] += bool(row["verified"])
+                counts[1] += 1
+            if len(page) < DB_PAGE:
+                break
+            start += DB_PAGE
+    return out
+
+
+def save_baseline(db, key: str, run_id: str) -> None:
+    """The test set's pass rates as they stand before this run's checks, saved once."""
+    path = model_dir(key) / "testset_pass_rates.json"
+    if not path.exists():
+        write_json(path, {"run_id": run_id, "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                          "rates": pass_rates(db, run_id)["test"]})
+
+
+def check_and_compare(db, key: str, run_id: str) -> None:
+    """Run 07_check.py on the run, then print pass rates per type: test set (before and now) and new episodes."""
+    log.info("Running 07_check.py on %s", run_id)
+    spec = importlib.util.spec_from_file_location("check", Path(__file__).with_name("07_check.py"))
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    checker.run(run_id)
+    baseline = read_json(model_dir(key) / "testset_pass_rates.json")["rates"]
+    now = pass_rates(db, run_id)
+    pct = lambda c: 100 * c[0] / c[1] if c and c[1] else None
+    fmt = lambda c: f"{c[0]}/{c[1]} {pct(c):5.1f}%" if c and c[1] else "-"
+    print(f"\n=== Pass rates per type, run {run_id} (verified / rows) ===")
+    print(f"  {'type':<14} {'test set (Gate 1)':>19} {'test set now':>19} {'new episodes':>19} {'change':>8}")
+    flagged = []
+    for kind in TYPES:
+        base, test_now, new = baseline.get(kind), now["test"].get(kind), now["new"].get(kind)
+        change = pct(new) - pct(base) if pct(new) is not None and pct(base) is not None else None
+        flag = change is not None and change < -PASS_RATE_DROP
+        if flag:
+            flagged.append(kind)
+        print(f"  {kind:<14} {fmt(base):>19} {fmt(test_now):>19} {fmt(new):>19} "
+              f"{'' if change is None else f'{change:+.1f}':>8}{'  <-- drop over ' + str(PASS_RATE_DROP) + ' points' if flag else ''}")
+    print("Types that dropped by more than %s points: %s" % (PASS_RATE_DROP, ", ".join(flagged) or "none"))
 
 
 def print_summary(key: str, episodes: list[dict], run_id: str) -> None:
@@ -1037,15 +1388,24 @@ def main() -> None:
     parser.add_argument("--set", choices=["test_set", "all"], required=True)
     parser.add_argument("--speakers-only", action="store_true",
                         help="only label speakers and write them to segments; no extraction")
+    parser.add_argument("--max-usd", type=float, default=MAX_RUN_USD,
+                        help=f"stop before this run could spend more (default {MAX_RUN_USD})")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print the episodes to do and the estimated tokens, cost and time; send nothing")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = LOGS_DIR / f"extract_{time.strftime('%Y%m%d-%H%M%S')}.log"
+    log_file = log_path.open("a", encoding="utf-8")
+    sys.stdout, sys.stderr = captions.Tee(sys.stdout, log_file), captions.Tee(sys.stderr, log_file)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    log.info("Console output is also written to %s", log_path)
     load_dotenv(ROOT / ".env")
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not os.environ.get("ANTHROPIC_API_KEY") and not args.dry_run:
         sys.exit("ANTHROPIC_API_KEY must be set in .env")
-    run(args.model, args.set, args.speakers_only)
+    run(args.model, args.set, args.speakers_only, args.max_usd, args.dry_run)
 
 
 if __name__ == "__main__":
