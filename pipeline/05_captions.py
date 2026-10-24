@@ -420,11 +420,15 @@ BACKOFF_429_SECONDS = 180  # wait before retry n is n times this
 ROMAN_CHUNK_LINES = 60
 ROMAN_ROUNDS = 3  # tries per chunk per run; later rounds resend only chunks that failed
 ROMAN_MAX_ROUNDS = 12  # batches per run, counting rounds whose chunks were refused for a rate limit
+ROMAN_SUB_CHUNK_LINES = 10  # a chunk still incomplete after its tries is resent in sub-chunks this size
 DB_BATCH = 500
 
 FALLBACK = {"en": "groq", "hi": "sarvam"}
 GROQ_MODEL = "whisper-large-v3"
-SARVAM_PARAMS = {"model": "saaras:v4", "mode": "translit", "language_code": "unknown", "with_timestamps": True}
+# language_code is set per job from SARVAM_LANGUAGES, so Sarvam skips its automatic language identification
+# (its batch LID failed whole files with "Audio chunks and segments must be aligned for batch LID").
+SARVAM_PARAMS = {"model": "saaras:v4", "mode": "translit", "with_timestamps": True}
+SARVAM_LANGUAGES = {"hi": "hi-IN"}
 SARVAM_MAX_PIECES = 20  # audio pieces per Sarvam job
 SARVAM_POLL_SECONDS = 20
 SARVAM_TIMEOUT_SECONDS = 3 * 3600
@@ -728,11 +732,14 @@ def run_sarvam_job(files: list[str], pieces: dict[str, tuple[dict, dict]], bakeo
     """
     job = open_sarvam_job(files)
     if job is None:
-        created = bakeoff.sarvam_request("POST", bakeoff.SARVAM_BASE, key, json={"job_parameters": SARVAM_PARAMS})
+        languages = {SARVAM_LANGUAGES.get(pieces[name][0]["language"], "unknown") for name in files}
+        params = SARVAM_PARAMS | {"language_code": languages.pop() if len(languages) == 1 else "unknown"}
+        created = bakeoff.sarvam_request("POST", bakeoff.SARVAM_BASE, key, json={"job_parameters": params})
         job = {"job_id": created["job_id"], "files": files, "status": "created", "sarvam_state": None, "error": "",
-               "file_errors": {}, "created_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+               "file_errors": {}, "job_parameters": params, "created_at": time.strftime("%Y-%m-%d %H:%M:%S")}
         save_sarvam_job(job)
-        log.info("Sarvam job %s created for %s pieces", job["job_id"], len(files))
+        log.info("Sarvam job %s created for %s pieces, language_code %s", job["job_id"], len(files),
+                 params["language_code"])
     else:
         log.info("Resuming Sarvam job %s (%s, %s pieces)", job["job_id"], job["status"], len(files))
     try:
@@ -773,6 +780,10 @@ def run_sarvam_job(files: list[str], pieces: dict[str, tuple[dict, dict]], bakeo
                    for d in details if d.get("state") == "Success"}
         job["file_errors"] = {d["inputs"][0]["file_name"]: d.get("error_message") or d.get("state")
                               for d in details if d.get("state") != "Success" and d.get("inputs")}
+        for name, error in job["file_errors"].items():
+            log.error("Sarvam job %s, %s: %s", job["job_id"], name, error)
+        if not outputs:
+            raise RuntimeError(f"no file succeeded ({len(job['file_errors'])} failed); nothing to download")
         links = bakeoff.sarvam_request("POST", f"{bakeoff.SARVAM_BASE}/download-files", key,
                                        json={"job_id": job["job_id"], "files": list(outputs.values())})
         for name, out_name in outputs.items():
@@ -785,7 +796,7 @@ def run_sarvam_job(files: list[str], pieces: dict[str, tuple[dict, dict]], bakeo
         job["status"] = "collected"
         save_sarvam_job(job)
         if job["file_errors"]:
-            log.error("Sarvam job %s: %s files failed: %s", job["job_id"], len(job["file_errors"]), job["file_errors"])
+            log.error("Sarvam job %s: %s of %s files failed", job["job_id"], len(job["file_errors"]), len(files))
     except TimeoutError:
         raise
     except Exception as exc:
@@ -881,8 +892,40 @@ def roman_chunk_path(chunk_id: str) -> Path:
     return ROMAN_CHUNK_DIR / f"{chunk_id}.json"
 
 
+def roman_sub_chunks(chunk_id: str, lines: list[dict]) -> dict[str, list[dict]]:
+    return {f"{chunk_id}-s{n:02d}": lines[i:i + ROMAN_SUB_CHUNK_LINES]
+            for n, i in enumerate(range(0, len(lines), ROMAN_SUB_CHUNK_LINES))}
+
+
+def send_roman_rounds(client: anthropic.Anthropic, wanted: dict[str, tuple[list[dict], dict]]) -> None:
+    """Send chunks (chunk ID -> (lines, state)) not yet complete, up to ROMAN_ROUNDS tries each this run."""
+    tries: dict[str, int] = {}  # this run's tries per chunk; a rate-limit refusal is not a try
+    for round_no in range(1, ROMAN_MAX_ROUNDS + 1):
+        requests, expected = {}, {}
+        for chunk_id, (lines, state) in wanted.items():
+            if not romanize_lib.chunk_done(roman_chunk_path(chunk_id)) and tries.get(chunk_id, 0) < ROMAN_ROUNDS:
+                requests[chunk_id] = romanize_lib.build_request(chunk_id, lines, state["title"],
+                                                                romanize_lib.guess_guest(state["title"]))
+                expected[chunk_id] = [l["id"] for l in lines]
+        if not requests:
+            break
+        log.info("Romanization round %s: %s chunks for %s episodes", round_no, len(requests),
+                 len({wanted[c][1]["video_id"] for c in requests}))
+        limited = romanize_lib.run_batch(client, requests, expected, ROMAN_JOB_PATH, ROMAN_CHUNK_DIR)
+        for chunk_id in requests:
+            if chunk_id not in limited:
+                tries[chunk_id] = tries.get(chunk_id, 0) + 1
+        romanize_lib.wait_after_rate_limit(limited)
+
+
 def romanize_step(states: dict[str, dict]) -> float:
-    """Step 4 for Hindi caption episodes. Returns what this run spent."""
+    """Step 4 for Hindi caption episodes. Returns what this run spent.
+
+    A chunk still incomplete after its tries is sent again in sub-chunks of ROMAN_SUB_CHUNK_LINES.
+    All its lines go, not only the missing ones: an incomplete answer cannot be trusted for the lines
+    it did return (Haiku has shifted lines by one or two IDs, or stopped after one garbled line).
+    A line with no complete sub-chunk answer after that keeps its Devanagari text and is flagged.
+    """
     todo = [s for s in states.values()
             if s["language"] == "hi" and s["source"] == "youtube_auto" and s["segments"] and not s["romanized"]]
     if not todo:
@@ -891,39 +934,38 @@ def romanize_step(states: dict[str, dict]) -> float:
         sys.exit("ANTHROPIC_API_KEY must be set in .env for romanization")
     ROMAN_CHUNK_DIR.mkdir(parents=True, exist_ok=True)
     chunks = {s["video_id"]: roman_chunks(s) for s in todo}
-    all_paths = [roman_chunk_path(c) for cs in chunks.values() for c in cs]
+    subs = {c: roman_sub_chunks(c, lines) for cs in chunks.values() for c, lines in cs.items()}
+    all_paths = [roman_chunk_path(c) for c in [*subs, *(s for ss in subs.values() for s in ss)]]
     spent_before = sum(romanize_lib.chunk_cost(p) for p in all_paths)
     client = anthropic.Anthropic(max_retries=MAX_RETRIES + 2)
-    tries: dict[str, int] = {}  # this run's tries per chunk; a rate-limit refusal is not a try
-    for round_no in range(1, ROMAN_MAX_ROUNDS + 1):
-        requests, expected = {}, {}
-        for state in todo:
-            guest = romanize_lib.guess_guest(state["title"])
-            for chunk_id, lines in chunks[state["video_id"]].items():
-                if not romanize_lib.chunk_done(roman_chunk_path(chunk_id)) and tries.get(chunk_id, 0) < ROMAN_ROUNDS:
-                    requests[chunk_id] = romanize_lib.build_request(chunk_id, lines, state["title"], guest)
-                    expected[chunk_id] = [l["id"] for l in lines]
-        if not requests:
-            break
-        log.info("Romanization round %s: %s chunks for %s episodes", round_no, len(requests), len(todo))
-        limited = romanize_lib.run_batch(client, requests, expected, ROMAN_JOB_PATH, ROMAN_CHUNK_DIR)
-        for chunk_id in requests:
-            if chunk_id not in limited:
-                tries[chunk_id] = tries.get(chunk_id, 0) + 1
-        romanize_lib.wait_after_rate_limit(limited)
+    send_roman_rounds(client, {c: (lines, s) for s in todo for c, lines in chunks[s["video_id"]].items()})
+
+    incomplete = [(c, s) for s in todo for c in chunks[s["video_id"]]
+                  if not romanize_lib.chunk_done(roman_chunk_path(c))]
+    if incomplete:
+        log.info("Romanization: %s chunks still incomplete, sent again in sub-chunks of %s lines: %s",
+                 len(incomplete), ROMAN_SUB_CHUNK_LINES, ", ".join(c for c, _ in incomplete))
+        send_roman_rounds(client, {sub: (lines, s) for c, s in incomplete for sub, lines in subs[c].items()})
 
     for state in todo:
         vid, ids = state["video_id"], list(chunks[state["video_id"]])
-        if not all(romanize_lib.chunk_done(roman_chunk_path(c)) for c in ids):
-            log.error("%s: some romanization chunks still incomplete; rerun to resend them", vid)
+        sub_ids = [sub for c in ids if not romanize_lib.chunk_done(roman_chunk_path(c)) for sub in subs[c]]
+        if any(not roman_chunk_path(sub).exists() for sub in sub_ids):
+            log.error("%s: some romanization sub-chunks were never answered (rate limits); rerun to resend them", vid)
             continue
         converted = {}
-        for c in ids:
-            converted |= romanize_lib.chunk_lines(roman_chunk_path(c))
+        for c in [*ids, *sub_ids]:
+            if romanize_lib.chunk_done(roman_chunk_path(c)):
+                converted |= romanize_lib.chunk_lines(roman_chunk_path(c))
         flagged = []
         for seg in state["segments"]:
-            text = converted[f"{vid}-L{seg['seq']:05d}"].strip()
-            if romanize_lib.is_flagged(seg["text_original"], text):
+            text = converted.get(f"{vid}-L{seg['seq']:05d}", "").strip()
+            if not text:
+                flagged.append(seg["seq"])
+                log.warning("%s seq %s not romanized after sub-chunks, keeping original: %s", vid, seg["seq"],
+                            seg["text_original"])
+                seg["text_roman"] = seg["text_original"]
+            elif romanize_lib.is_flagged(seg["text_original"], text):
                 flagged.append(seg["seq"])
                 log.warning("%s seq %s flagged (%s -> %s words), keeping original: %s | %s", vid, seg["seq"],
                             romanize_lib.word_count(seg["text_original"]), romanize_lib.word_count(text),
@@ -932,7 +974,8 @@ def romanize_step(states: dict[str, dict]) -> float:
             else:
                 seg["text_roman"] = text
         state["flagged_seqs"] = flagged
-        state["roman_cost_usd"] = round(sum(romanize_lib.chunk_cost(roman_chunk_path(c)) for c in ids), 6)
+        state["roman_cost_usd"] = round(sum(romanize_lib.chunk_cost(roman_chunk_path(c))
+                                            for c in [*ids, *(sub for c in ids for sub in subs[c])]), 6)
         state["romanized"] = True
         save_state(state)
         log.info("%s: romanized %s lines, %s flagged", vid, len(state["segments"]), len(flagged))
