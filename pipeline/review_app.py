@@ -19,6 +19,11 @@ Two modes, chosen in the sidebar:
   preselected: every item needs Correct, Wrong or Unsure (or "Sonnet is right",
   which marks it Wrong) before "Save page" writes the page to reviews. The report
   shows your accuracy on both sets and how often you agreed with Sonnet.
+- Gate 2 sample: 250 verified items of the extraction v5 run from 50 random episodes
+  outside the test set, 5 from each, English and Hindi episodes in their real
+  proportion and at least 20 of every type (gate2_lib.py). Drawn once with a fixed
+  seed and saved to data/gate2_sample.json. Progress is out of 250; accuracy is shown
+  overall, per type and per language.
 
 For each item you see its type and text ("(translated)" when it rests on the
 English translation), the cited transcript lines with their speaker and Roman
@@ -44,6 +49,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 import gate1_lib
+import gate2_lib
 
 ROOT = Path(__file__).resolve().parent.parent
 EXTRACT_DIR = ROOT / "data" / "extractions"
@@ -326,6 +332,41 @@ def sample_mode(runs: list[str]) -> None:
     review(keys, vids, run_id, verdicts, f"gate1::{run_id}", titles(tuple(sorted(set(vids)))))
 
 
+def gate2_mode() -> None:
+    sample = gate2_lib.gate2_sample(lambda table, columns, **eq: fetch(
+        table, columns, order="video_id" if table == "episodes" else "id", **eq))
+    run_id, items = sample["run_id"], sample["items"]
+    keys = [(s["table"], s["id"]) for s in items]
+    types = {(s["table"], s["id"]): s["type"] for s in items}
+    langs = {(s["table"], s["id"]): s["language"] for s in items}
+    verdicts = latest_verdicts(keys)
+    reviewed = sum(k in verdicts for k in keys)
+    st.sidebar.markdown(f"**Gate 2 sample** · `{run_id}`")
+    st.sidebar.progress(reviewed / len(keys), text=f"{reviewed} of {len(keys)} reviewed")
+    st.sidebar.metric("Accuracy, whole sample", accuracy(verdicts.values()))
+    rows = []
+    for kind in gate2_lib.TYPES:
+        kind_keys = [k for k in keys if types[k] == kind]
+        got = [verdicts[k] for k in kind_keys if k in verdicts]
+        rows.append({"Type": TYPE_LABELS[kind], "Done": f"{len(got)}/{len(kind_keys)}", "Accuracy": accuracy(got),
+                     "Unsure": got.count("unsure")})
+    for lang in sorted(set(langs.values())):
+        lang_keys = [k for k in keys if langs[k] == lang]
+        got = [verdicts[k] for k in lang_keys if k in verdicts]
+        rows.append({"Type": {"en": "English episodes", "hi": "Hindi episodes"}.get(lang, lang),
+                     "Done": f"{len(got)}/{len(lang_keys)}", "Accuracy": accuracy(got), "Unsure": got.count("unsure")})
+    # A Markdown table, not st.dataframe: that needs pyarrow, whose DLL Windows Application Control blocks here.
+    st.sidebar.markdown("\n".join(["| | Done | Accuracy | Unsure |", "|---|---|---|---|"]
+                                  + [f"| {r['Type']} | {r['Done']} | {r['Accuracy']} | {r['Unsure']} |"
+                                     for r in rows]))
+    if sample["short_of_minimum"]:
+        st.sidebar.warning("Fewer than the minimum of some types in the drawn episodes: "
+                           + ", ".join(f"{TYPE_LABELS[t]} short by {n}" for t, n in sample["short_of_minimum"].items()))
+    st.sidebar.caption(f"Sample saved in {gate2_lib.SAMPLE_PATH.relative_to(ROOT)}")
+    vids = [s["video_id"] for s in items]
+    review(keys, vids, run_id, verdicts, f"gate2::{run_id}", titles(tuple(sorted(set(vids)))))
+
+
 def fast_files(run_id: str) -> tuple[dict, dict] | None:
     pre, fast = REVIEW_DIR / f"ai_precheck_{run_id}.json", REVIEW_DIR / f"fast_review_{run_id}.json"
     if not (pre.exists() and fast.exists()):
@@ -462,7 +503,11 @@ def fast_mode(runs: list[str]) -> None:
 def main() -> None:
     st.set_page_config(page_title="RSGPT review", layout="wide")
     st.caption(DISCLAIMER)
-    mode = st.sidebar.radio("Mode", ["Gate 1 sample", "Fast review", "Per episode"], horizontal=True)
+    mode = st.sidebar.radio("Mode", ["Gate 2 sample", "Gate 1 sample", "Fast review", "Per episode"],
+                            horizontal=True)
+    if mode == "Gate 2 sample":
+        gate2_mode()
+        return
     runs = run_ids()
     if mode == "Gate 1 sample":
         sample_mode(runs)

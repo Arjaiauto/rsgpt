@@ -22,8 +22,14 @@ The sections after them (checker pass rates, costs, readiness, full-run estimate
 are kept from the existing report as they are, renumbered. Only reads the
 database; rerunning it rewrites the report from the current reviews.
 
+With --sample, writes data/gate2_report.md instead, from the Gate 2 sample
+(data/gate2_sample.json, gate2_lib.py) and the reviews table: accuracy per item type
+and per episode language, the 10 most common notes on Wrong items (notes compared
+ignoring case, spacing and end punctuation), and the Wrong items with their notes.
+
 Usage:
     .venv\\Scripts\\python.exe pipeline\\09_gate1_report.py --run-id extract-haiku-v5-20261023-011718
+    .venv\\Scripts\\python.exe pipeline\\09_gate1_report.py --sample
 """
 
 import argparse
@@ -39,10 +45,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 import gate1_lib
+import gate2_lib
 
 ROOT = Path(__file__).resolve().parent.parent
 REVIEW_DIR = gate1_lib.REVIEW_DIR
 REPORT = ROOT / "data" / "gate1_report.md"
+GATE2_REPORT = ROOT / "data" / "gate2_report.md"
+LANGUAGE_LABELS = {"en": "English", "hi": "Hindi"}
+TOP_NOTES = 10
 KEEP_FROM = "Checker pass rates"  # the first kept section of the existing report
 TYPE_LABELS = {"guest": "Guest profile", "quote": "Quote", "disagreement": "Disagreement",
                "raj_opinion": "Raj opinion", "raj_question": "Raj question", "opportunity": "Opportunity",
@@ -241,12 +251,99 @@ def build(run_id: str, sample, pre, fast, reviews, texts, total_rows: int) -> st
     return "\n".join(out)
 
 
+def note_key(note: str) -> str:
+    return re.sub(r"\s+", " ", note).strip().rstrip(".!?;:,").strip().lower()
+
+
+def build_gate2(sample: dict, reviews: dict, texts: dict) -> str:
+    items = sample["items"]
+    keys = [(s["table"], s["id"]) for s in items]
+    kind = {(s["table"], s["id"]): s["type"] for s in items}
+    lang = {(s["table"], s["id"]): s["language"] for s in items}
+    video = {(s["table"], s["id"]): s["video_id"] for s in items}
+    verdict = {k: r["verdict"] for k, r in reviews.items()}
+    done = [verdict[k] for k in keys if k in verdict]
+
+    def row(label: str, group: list) -> str:
+        got = [verdict[k] for k in group if k in verdict]
+        return (f"| {label} | {len(group)} | {len(got)} | {got.count('correct')} | {got.count('wrong')} | "
+                f"{got.count('unsure')} | {acc_cell(got)} |")
+
+    head = ["| | Items | Reviewed | Correct | Wrong | Unsure | Accuracy |", "|---|---|---|---|---|---|---|"]
+    languages = ", ".join(f"{n} {LANGUAGE_LABELS.get(l, l)}" for l, n in sorted(sample["episodes_by_language"].items()))
+    out = ["# Gate 2 report: extraction v5 on episodes outside the test set", "",
+           "*RSGPT. Unofficial project, not affiliated with Figuring Out.*",
+           f"Written {datetime.now(IST):%Y-%m-%d %H:%M} IST by `pipeline/09_gate1_report.py --sample` from the "
+           "reviews table.", "",
+           f"Sample: `data/gate2_sample.json`, run `{sample['run_id']}`, seed {sample['seed']}: {len(items)} verified "
+           f"items, {sample['per_episode']} from each of {sample['episodes']} random episodes outside the test set "
+           f"({languages}), at least {sample['min_per_type']} of every type.", "",
+           f"Reviewed: {len(done)} of {len(items)}. Accuracy is correct / (correct + wrong), using each item's latest "
+           "verdict; Unsure is left out.", "",
+           "## 1. Accuracy per item type", "", *head]
+    out += [row(TYPE_LABELS[t], [k for k in keys if kind[k] == t]) for t in gate2_lib.TYPES]
+    out += [row("**All**", keys), "", "## 2. Accuracy per episode language", "", *head]
+    out += [row(LANGUAGE_LABELS.get(l, l), [k for k in keys if lang[k] == l]) for l in sorted(set(lang.values()))]
+    out += [row("**All**", keys), ""]
+
+    wrong = [k for k in keys if verdict.get(k) == "wrong"]
+    notes: Counter = Counter()
+    first: dict[str, str] = {}
+    for k in wrong:
+        key = note_key(reviews[k]["note"] or "")
+        if key:
+            notes[key] += 1
+            first.setdefault(key, one_line(reviews[k]["note"]))
+    out += [f"## 3. The {TOP_NOTES} most common notes on Wrong items", "",
+            f"{len(wrong)} items are marked Wrong, {sum(notes.values())} of them with a note. "
+            "Notes are compared ignoring case, spacing and end punctuation.", ""]
+    if notes:
+        out += ["| # | Note | Wrong items |", "|---|---|---|"]
+        out += [f"| {n} | {first[key].replace('|', '/')} | {count} |"
+                for n, (key, count) in enumerate(notes.most_common(TOP_NOTES), 1)]
+    else:
+        out.append("No notes on Wrong items yet.")
+    out += ["", "## 4. Wrong items", ""]
+    if not wrong:
+        out.append("No item is marked Wrong.")
+    for t in gate2_lib.TYPES:
+        group = [k for k in wrong if kind[k] == t]
+        if group:
+            out += [f"### {TYPE_LABELS[t]} ({len(group)})", ""]
+            for k in group:
+                note = one_line(reviews[k]["note"]) if reviews[k]["note"] else "*no note*"
+                out += [f"- **{k[0]} {k[1]}** ({video[k]}, {LANGUAGE_LABELS.get(lang[k], lang[k])}): "
+                        f"{one_line(texts.get(k, ''))}", f"  - Note: {note}"]
+            out.append("")
+    return "\n".join(out) + "\n"
+
+
+def write_gate2() -> None:
+    sample = gate2_lib.load_sample()
+    if not sample:
+        sys.exit(f"missing {gate2_lib.SAMPLE_PATH}; open the Gate 2 sample in review_app.py first")
+    db = check.captions.supabase_client()
+    keys = [(s["table"], s["id"]) for s in sample["items"]]
+    reviews = latest_reviews(db, keys)
+    log.info("reviews: %d of %d Gate 2 items have a verdict", len(reviews), len(keys))
+    texts = item_texts(db, [k for k, r in reviews.items() if r["verdict"] == "wrong"])
+    tmp = GATE2_REPORT.with_suffix(".md.tmp")
+    tmp.write_text(build_gate2(sample, reviews, texts), encoding="utf-8")
+    tmp.replace(GATE2_REPORT)
+    log.info("wrote %s", GATE2_REPORT)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--run-id", required=True)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--run-id", help="write the Gate 1 report for this run")
+    group.add_argument("--sample", action="store_true", help="write data/gate2_report.md from the Gate 2 sample")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     load_dotenv(ROOT / ".env")
+    if args.sample:
+        write_gate2()
+        return
 
     sample = read_json(gate1_lib.sample_path(args.run_id))["items"]
     pre = read_json(REVIEW_DIR / f"ai_precheck_{args.run_id}.json")
