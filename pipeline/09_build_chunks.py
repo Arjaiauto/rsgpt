@@ -280,10 +280,10 @@ def count_tokens(texts: list[str]) -> list[int]:
     return [len(e.ids) for e in tok.encode_batch([DOCUMENT_PROMPT + t for t in texts])]
 
 
-def embed(vo: voyageai.Client, texts: list[str]):
+def embed(vo: voyageai.Client, texts: list[str], input_type: str = INPUT_TYPE):
     for attempt in range(1, VOYAGE_RETRIES + 1):
         try:
-            return vo.embed(texts, model=VOYAGE_MODEL, input_type=INPUT_TYPE, truncation=False,
+            return vo.embed(texts, model=VOYAGE_MODEL, input_type=input_type, truncation=False,
                             output_dimension=OUTPUT_DIMENSION)
         except (voyageai.error.RateLimitError, voyageai.error.ServiceUnavailableError, voyageai.error.ServerError,
                 voyageai.error.APIConnectionError, voyageai.error.Timeout, voyageai.error.TryAgain) as exc:
