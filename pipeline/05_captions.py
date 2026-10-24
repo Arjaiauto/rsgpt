@@ -95,6 +95,7 @@ Usage:
 
 import argparse
 import csv
+import functools
 import importlib.util
 import json
 import logging
@@ -911,7 +912,8 @@ def send_roman_rounds(client: anthropic.Anthropic, wanted: dict[str, tuple[list[
             break
         log.info("Romanization round %s: %s chunks for %s episodes", round_no, len(requests),
                  len({wanted[c][1]["video_id"] for c in requests}))
-        limited = romanize_lib.run_batch(client, requests, expected, ROMAN_JOB_PATH, ROMAN_CHUNK_DIR)
+        limited = romanize_lib.run_batch(client, requests, expected, ROMAN_JOB_PATH, ROMAN_CHUNK_DIR,
+                                         save=functools.partial(romanize_lib.save_chunk, reject_non_latin=True))
         for chunk_id in requests:
             if chunk_id not in limited:
                 tries[chunk_id] = tries.get(chunk_id, 0) + 1
@@ -925,6 +927,8 @@ def romanize_step(states: dict[str, dict]) -> float:
     All its lines go, not only the missing ones: an incomplete answer cannot be trusted for the lines
     it did return (Haiku has shifted lines by one or two IDs, or stopped after one garbled line).
     A line with no complete sub-chunk answer after that keeps its Devanagari text and is flagged.
+    A line containing characters of another script (romanize_lib.non_latin: stray Telugu, or
+    Devanagari echoed back) counts as a failed line: it is retried the same way, then kept and flagged.
     """
     todo = [s for s in states.values()
             if s["language"] == "hi" and s["source"] == "youtube_auto" and s["segments"] and not s["romanized"]]
@@ -955,12 +959,16 @@ def romanize_step(states: dict[str, dict]) -> float:
             continue
         converted = {}
         for c in [*ids, *sub_ids]:
-            if romanize_lib.chunk_done(roman_chunk_path(c)):
-                converted |= romanize_lib.chunk_lines(roman_chunk_path(c))
+            converted |= romanize_lib.usable_lines(roman_chunk_path(c))
         flagged = []
         for seg in state["segments"]:
             text = converted.get(f"{vid}-L{seg['seq']:05d}", "").strip()
-            if not text:
+            if text and romanize_lib.non_latin(text):  # an answer saved before the check existed
+                flagged.append(seg["seq"])
+                log.warning("%s seq %s has non-Latin characters %s, keeping original: %s | %s", vid, seg["seq"],
+                            "".join(romanize_lib.non_latin(text)), seg["text_original"], text)
+                seg["text_roman"] = seg["text_original"]
+            elif not text:
                 flagged.append(seg["seq"])
                 log.warning("%s seq %s not romanized after sub-chunks, keeping original: %s", vid, seg["seq"],
                             seg["text_original"])

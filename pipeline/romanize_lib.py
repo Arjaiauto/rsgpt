@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import time
+import unicodedata
 from pathlib import Path
 
 import anthropic
@@ -142,12 +143,44 @@ def is_flagged(source_text: str, text: str) -> bool:
     return abs(word_count(text) - src_words) > WORD_TOLERANCE * src_words
 
 
+def non_latin(text: str) -> dict[str, str]:
+    """Characters in a romanized line that belong to another script, as {character: script}.
+
+    Allowed: ASCII, Latin letters (accented too), combining accents, and any punctuation, symbol or
+    space that is not tied to a script. Letters, digits and marks of other scripts are not, nor is
+    Devanagari punctuation (the danda). The script is the first word of the character's Unicode name.
+    """
+    found = {}
+    for ch in unicodedata.normalize("NFC", text):
+        if ord(ch) < 0x80:
+            continue
+        name = unicodedata.name(ch, "UNKNOWN")
+        script = name.split()[0]
+        if script in ("LATIN", "COMBINING"):
+            continue
+        if unicodedata.category(ch)[0] in "LMN" or script == "DEVANAGARI":
+            found[ch] = script
+    return found
+
+
 def chunk_done(path: Path) -> bool:
     return path.exists() and json.loads(path.read_text(encoding="utf-8"))["complete"]
 
 
 def chunk_lines(path: Path) -> dict[str, str]:
     return json.loads(path.read_text(encoding="utf-8"))["lines"]
+
+
+def usable_lines(path: Path) -> dict[str, str]:
+    """The lines of a chunk answer that can be used: all of a complete one, and the accepted lines of
+    one that returned every line but had some rejected for non-Latin characters. Nothing from an
+    answer with lines missing, since its other lines may be shifted."""
+    if not path.exists():
+        return {}
+    record = json.loads(path.read_text(encoding="utf-8"))
+    if record["complete"] or (record.get("non_latin") and record.get("missing") == []):
+        return record["lines"]
+    return {}
 
 
 def chunk_cost(path: Path) -> float:
@@ -165,8 +198,12 @@ def rate_limited(result) -> bool:
     return getattr(error, "type", "") == "rate_limit_error" or "rate limit" in str(result.error).lower()
 
 
-def save_chunk(path: Path, chunk_id: str, expected_ids: list[str], result) -> None:
-    """Save one batch result. Usage is recorded even when the answer is unusable, since it was paid for."""
+def save_chunk(path: Path, chunk_id: str, expected_ids: list[str], result, reject_non_latin: bool = False) -> None:
+    """Save one batch result. Usage is recorded even when the answer is unusable, since it was paid for.
+
+    With reject_non_latin, a line containing characters of another script (non_latin) is left out of
+    "lines" and listed in "non_latin", so the chunk counts as incomplete and is sent again.
+    """
     record = {"chunk_id": chunk_id, "result_type": result.type, "complete": False,
               "usage": {"input_tokens": 0, "output_tokens": 0}, "lines": {}, "error": ""}
     if result.type == "succeeded":
@@ -180,9 +217,16 @@ def save_chunk(path: Path, chunk_id: str, expected_ids: list[str], result) -> No
             try:
                 lines = json.loads(text)["lines"]
                 record["lines"] = {l["id"]: l["text"] for l in lines if l["id"] in expected_ids}
-                missing = [i for i in expected_ids if i not in record["lines"]]
+                if reject_non_latin:
+                    record["non_latin"] = {i: text for i, text in record["lines"].items() if non_latin(text)}
+                    for i in record["non_latin"]:
+                        del record["lines"][i]
+                missing = [i for i in expected_ids if i not in record["lines"] and i not in record.get("non_latin", {})]
+                record["missing"] = missing
                 if missing:
                     record["error"] = f"{len(missing)} lines missing: {missing[:5]}"
+                elif record.get("non_latin"):
+                    record["error"] = f"{len(record['non_latin'])} lines with non-Latin characters: {list(record['non_latin'])[:5]}"
                 else:
                     record["complete"] = True
             except (json.JSONDecodeError, KeyError, TypeError) as exc:
