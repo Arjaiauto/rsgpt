@@ -45,6 +45,10 @@ Two steps:
             episode is transcribed from audio (03_download_audio.py) instead:
             Groq whisper-large-v3 for English, Sarvam saaras:v4 translit for Hindi
             (source groq / sarvam), using the bake-off code in 04_bakeoff.py.
+            An en-orig track that covers under 80% or has "foreign" markers (lines
+            YouTube could not follow, in practice Hindi) is treated as Hindi and goes
+            to Sarvam: Groq asked for English translates Hindi speech instead of
+            transcribing it. Tracks in other languages (ar, de...) go to Groq English.
             English-track episodes averaging under 100 words per minute are listed
             as suspect (Hindi speech may have been heard as English); they are not
             reprocessed.
@@ -59,7 +63,16 @@ Two steps:
             what it has spent plus COST_MARGIN x the step's estimate, and stops
             cleanly with a message once that would pass --max-inr (default INR 2,500).
             --dry-run changes nothing and prints the episodes left, Hindi vs English
-            by caption_language, the estimated Haiku cost and the estimated hours.
+            by caption_language, the estimated Haiku cost and the estimated hours;
+            episodes already started are listed one by one with the service each will use.
+            Episodes with status skipped are left out (reasons in data/skipped_episodes.json).
+            Sarvam audio goes out in jobs of at most SARVAM_MAX_PIECES pieces; each job's
+            ID, status and errors are kept in data/transcripts/sarvam_jobs/<job_id>.json.
+  reset-to-sarvam  Delete episodes' segments and translation_segments rows and redo them with
+            Sarvam (Hindi) plus the Haiku translation (e.g. Groq English that was translated Hindi).
+  skip      Mark episodes skipped, with a note.
+
+Every command copies its console output to data/logs/captions_<timestamp>.log.
 
 Safe to rerun: episodes already in subs_index.csv are skipped, as are tracks
 already downloaded. Network errors are retried; episodes that still fail are
@@ -76,6 +89,8 @@ Usage:
     .venv\\Scripts\\python.exe pipeline\\05_captions.py download-auto
     .venv\\Scripts\\python.exe pipeline\\05_captions.py transcribe --set test_set|all [--redo-translations]
                                       [--dry-run] [--max-inr 2500]
+    .venv\\Scripts\\python.exe pipeline\\05_captions.py reset-to-sarvam VIDEO_ID [VIDEO_ID ...] --reason "..."
+    .venv\\Scripts\\python.exe pipeline\\05_captions.py skip VIDEO_ID [VIDEO_ID ...] --note "..."
 """
 
 import argparse
@@ -85,6 +100,7 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 import time
 from pathlib import Path
@@ -386,10 +402,17 @@ ROMAN_CHUNK_DIR = TRANSCRIPTS_DIR / "roman_chunks"
 ROMAN_JOB_PATH = TRANSCRIPTS_DIR / "roman_job.json"
 TRANSLATION_UNIT_DIR = TRANSCRIPTS_DIR / "translation_units"
 TRANSLATION_JOB_PATH = TRANSCRIPTS_DIR / "translation_units_job.json"
-SARVAM_JOB_PATH = TRANSCRIPTS_DIR / "sarvam_job.json"
+SARVAM_JOBS_DIR = TRANSCRIPTS_DIR / "sarvam_jobs"  # one file per Sarvam job, named by its job ID
+LOGS_DIR = DATA_DIR / "logs"
+SKIPPED_PATH = DATA_DIR / "skipped_episodes.json"  # why an episode has status skipped
+STATE_BACKUP_DIR = TRANSCRIPTS_DIR / "replaced"
 AUDIO_RESULTS_DIR = TRANSCRIPTS_DIR / "audio"
 
 MIN_COVERAGE = 0.80
+# YouTube's English recognizer writes a caption line reading just "foreign" (sometimes "[Foreign]")
+# where it hears speech it cannot follow, in practice Hindi.
+FOREIGN_MARKER = re.compile(r"\[?foreign\]?", re.I)
+MIN_FOREIGN_MARKERS = 1  # an en-orig track with this many is treated as Hindi
 SUSPECT_WORDS_PER_MINUTE = 100
 EPISODE_PAUSE_SECONDS = (20, 40)
 YOUTUBE_RETRIES = 3
@@ -402,6 +425,10 @@ DB_BATCH = 500
 FALLBACK = {"en": "groq", "hi": "sarvam"}
 GROQ_MODEL = "whisper-large-v3"
 SARVAM_PARAMS = {"model": "saaras:v4", "mode": "translit", "language_code": "unknown", "with_timestamps": True}
+SARVAM_MAX_PIECES = 20  # audio pieces per Sarvam job
+SARVAM_POLL_SECONDS = 20
+SARVAM_TIMEOUT_SECONDS = 3 * 3600
+SARVAM_JOB_MINUTES = (10, 30)  # assumed wait per Sarvam job, for the dry run
 
 PROGRESS_LOG = DATA_DIR / "progress.log"
 GROUP_SIZE = 25  # episodes taken through every step together: the size proven on the test set
@@ -530,8 +557,19 @@ def new_state(episode: dict) -> dict:
             "audio_cost": None, "db_segments": False, "db_translation": False}
 
 
+def foreign_markers(path: Path) -> int:
+    """Caption lines that are only a "foreign" marker."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return sum(1 for event in data.get("events", [])
+               if FOREIGN_MARKER.fullmatch(" ".join("".join(s.get("utf8", "") for s in event.get("segs") or []).split())))
+
+
 def decide_from_track(state: dict, episode: dict, track: Path | None) -> None:
-    """Sets language, source and (for caption episodes) segments from the downloaded original track."""
+    """Sets language, source and (for caption episodes) segments from the downloaded original track.
+
+    An en-orig track covering under MIN_COVERAGE of the episode, or with "foreign" markers, is
+    treated as Hindi: Groq asked for English would translate the Hindi speech, so it goes to Sarvam.
+    """
     vid = state["video_id"]
     lang = track.name[len(vid) + 1:-len("-orig.json3")].split("-")[0] if track else None
     state["track"] = track.name if track else None
@@ -539,7 +577,9 @@ def decide_from_track(state: dict, episode: dict, track: Path | None) -> None:
         state["language"] = lang
         segments = phrase_segments(track)
         state["coverage"] = round(coverage(segments, state["duration_seconds"]), 3)
-        if state["coverage"] >= MIN_COVERAGE:
+        markers = foreign_markers(track) if lang == "en" else 0
+        state["foreign_markers"] = markers
+        if state["coverage"] >= MIN_COVERAGE and markers < MIN_FOREIGN_MARKERS:
             state["source"] = "youtube_auto"
             state["segments"] = [{"seq": i, "start": s["start"], "end": s["end"], "text_original": s["text"],
                                   "text_roman": s["text"] if lang == "en" else None}
@@ -552,11 +592,18 @@ def decide_from_track(state: dict, episode: dict, track: Path | None) -> None:
                 state["translation"] = "pending"
             return
         state["fallback_reason"] = f"captions cover {state['coverage']:.0%} of the episode"
+        if lang == "en":
+            state["language"] = "hi"
+            state["fallback_reason"] = (f"English track covers {state['coverage']:.0%} of the episode and has "
+                                        f"{markers} 'foreign' markers; treated as Hindi")
+    elif track:
+        # A track in another language (ar, de...) is YouTube mishearing; these episodes have been English.
+        state["language"] = "en"
+        state["fallback_reason"] = f"original track is {track.name}, not Hindi or English"
     else:
-        # No usable track: guess the language for the audio model from the episode metadata.
+        # No track: guess the language for the audio model from the episode metadata.
         state["language"] = csv_language(episode) or "en"
-        state["fallback_reason"] = (f"original track is {track.name}, not Hindi or English" if track
-                                    else "no automatic captions")
+        state["fallback_reason"] = "no automatic captions"
     state["source"] = FALLBACK[state["language"]]
     log.warning("%s: %s; falling back to %s (%s)", vid, state["fallback_reason"], state["source"],
                 state["language"])
@@ -635,50 +682,134 @@ def finish_audio_state(state: dict, segments: list[dict], cost: dict) -> None:
     log.info("%s: %s segments from %s", state["video_id"], len(segments), state["source"])
 
 
-def transcribe_sarvam_episodes(states: list[dict], bakeoff, key: str) -> None:
-    """One Sarvam batch job for every piece of every Hindi fallback episode."""
+def sarvam_job_files(pieces: dict[str, tuple[dict, dict]]) -> list[list[str]]:
+    """The pieces' file names in jobs of at most SARVAM_MAX_PIECES, keeping an episode's pieces together when it fits."""
+    by_episode: dict[str, list[str]] = {}
+    for name, (state, _) in pieces.items():
+        by_episode.setdefault(state["video_id"], []).append(name)
+    jobs, current = [], []
+    for names in by_episode.values():
+        if current and len(current) + len(names) > SARVAM_MAX_PIECES:
+            jobs.append(current)
+            current = []
+        for name in names:
+            if len(current) == SARVAM_MAX_PIECES:
+                jobs.append(current)
+                current = []
+            current.append(name)
+    return jobs + ([current] if current else [])
+
+
+def save_sarvam_job(job: dict) -> None:
+    """Each job has its own file, named by its job ID, so no job's record is overwritten by another's."""
+    SARVAM_JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    job["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    path = SARVAM_JOBS_DIR / f"{job['job_id']}.json"
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(job, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def open_sarvam_job(files: list[str]) -> dict | None:
+    """An unfinished job for exactly these files, to resume; failed and collected jobs are not reused."""
+    for path in sorted(SARVAM_JOBS_DIR.glob("*.json")) if SARVAM_JOBS_DIR.exists() else []:
+        job = json.loads(path.read_text(encoding="utf-8"))
+        if job["files"] == files and job["status"] not in ("failed", "collected"):
+            return job
+    return None
+
+
+def run_sarvam_job(files: list[str], pieces: dict[str, tuple[dict, dict]], bakeoff, key: str) -> None:
+    """Create (or resume), upload, start and wait for one Sarvam job, then download its results.
+
+    The job file records its status (created, uploaded, started, collected or failed), Sarvam's job
+    state and any error, including the errors of single files. A job still running after
+    SARVAM_TIMEOUT_SECONDS keeps status started, so a rerun waits for it again.
+    """
+    job = open_sarvam_job(files)
+    if job is None:
+        created = bakeoff.sarvam_request("POST", bakeoff.SARVAM_BASE, key, json={"job_parameters": SARVAM_PARAMS})
+        job = {"job_id": created["job_id"], "files": files, "status": "created", "sarvam_state": None, "error": "",
+               "file_errors": {}, "created_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        save_sarvam_job(job)
+        log.info("Sarvam job %s created for %s pieces", job["job_id"], len(files))
+    else:
+        log.info("Resuming Sarvam job %s (%s, %s pieces)", job["job_id"], job["status"], len(files))
+    try:
+        if job["status"] == "created":
+            resp = bakeoff.sarvam_request("POST", f"{bakeoff.SARVAM_BASE}/upload-files", key,
+                                          json={"job_id": job["job_id"], "files": files})
+            azure = resp.get("storage_container_type", "").startswith("Azure")
+            for name in files:
+                state, piece = pieces[name]
+                headers = {"Content-Type": "audio/mpeg"} | ({"x-ms-blob-type": "BlockBlob"} if azure else {})
+                data = (AUDIO_DIR / state["video_id"] / piece["file"]).read_bytes()
+                bakeoff.storage_request("PUT", resp["upload_urls"][name]["file_url"], data=data, headers=headers)
+            job["status"] = "uploaded"
+            save_sarvam_job(job)
+        if job["status"] == "uploaded":
+            bakeoff.sarvam_request("POST", f"{bakeoff.SARVAM_BASE}/{job['job_id']}/start", key)
+            job["status"] = "started"
+            save_sarvam_job(job)
+        deadline = time.monotonic() + SARVAM_TIMEOUT_SECONDS
+        while True:
+            status = bakeoff.sarvam_request("GET", f"{bakeoff.SARVAM_BASE}/{job['job_id']}/status", key)
+            if status["job_state"] != job["sarvam_state"]:
+                job["sarvam_state"] = status["job_state"]
+                save_sarvam_job(job)
+                log.info("Sarvam job %s: %s (%s/%s files done)", job["job_id"], status["job_state"],
+                         status.get("successful_files_count", 0), status.get("total_files", 0))
+            if status["job_state"] == "Completed":
+                break
+            if status["job_state"] == "Failed":
+                raise RuntimeError(f"Sarvam job failed: {status.get('error_message') or status}")
+            if time.monotonic() > deadline:
+                job["error"] = f"still {status['job_state']} after {SARVAM_TIMEOUT_SECONDS}s; rerun to keep waiting"
+                save_sarvam_job(job)
+                raise TimeoutError(job["error"])
+            time.sleep(SARVAM_POLL_SECONDS)
+        details = status.get("job_details") or []
+        outputs = {d["inputs"][0]["file_name"]: d["outputs"][0]["file_name"]
+                   for d in details if d.get("state") == "Success"}
+        job["file_errors"] = {d["inputs"][0]["file_name"]: d.get("error_message") or d.get("state")
+                              for d in details if d.get("state") != "Success" and d.get("inputs")}
+        links = bakeoff.sarvam_request("POST", f"{bakeoff.SARVAM_BASE}/download-files", key,
+                                       json={"job_id": job["job_id"], "files": list(outputs.values())})
+        for name, out_name in outputs.items():
+            state, piece = pieces[name]
+            out = AUDIO_RESULTS_DIR / state["video_id"] / f"{piece['file']}.sarvam.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            if not out.exists():
+                raw = bakeoff.storage_request("GET", links["download_urls"][out_name]["file_url"]).json()
+                out.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        job["status"] = "collected"
+        save_sarvam_job(job)
+        if job["file_errors"]:
+            log.error("Sarvam job %s: %s files failed: %s", job["job_id"], len(job["file_errors"]), job["file_errors"])
+    except TimeoutError:
+        raise
+    except Exception as exc:
+        job["status"], job["error"] = "failed", str(exc)[:2000]
+        save_sarvam_job(job)
+        raise
+
+
+def transcribe_sarvam_episodes(states: list[dict], bakeoff, key: str, failed: list[str]) -> None:
+    """Sarvam jobs of at most SARVAM_MAX_PIECES pieces for the Hindi fallback episodes' pieces without a result yet."""
     pieces = {}  # Sarvam file name -> (state, piece)
     for state in states:
         manifest = json.loads((AUDIO_DIR / state["video_id"] / "manifest.json").read_text(encoding="utf-8"))
         for piece in manifest["pieces"]:
-            pieces[f"{state['video_id']}__{piece['file']}"] = (state, piece)
-    job = json.loads(SARVAM_JOB_PATH.read_text(encoding="utf-8")) if SARVAM_JOB_PATH.exists() else None
-    if job and (job.get("collected") or not set(pieces) <= set(job["files"])):
-        job = None
-    if job is None:
-        created = bakeoff.sarvam_request("POST", bakeoff.SARVAM_BASE, key, json={"job_parameters": SARVAM_PARAMS})
-        job = {"job_id": created["job_id"], "files": sorted(pieces), "uploaded": False, "started": False}
-        SARVAM_JOB_PATH.write_text(json.dumps(job, indent=2), encoding="utf-8")
-        log.info("Sarvam job %s created for %s pieces", job["job_id"], len(pieces))
-    if not job["uploaded"]:
-        resp = bakeoff.sarvam_request("POST", f"{bakeoff.SARVAM_BASE}/upload-files", key,
-                                      json={"job_id": job["job_id"], "files": job["files"]})
-        azure = resp.get("storage_container_type", "").startswith("Azure")
-        for name in job["files"]:
-            state, piece = pieces[name]
-            headers = {"Content-Type": "audio/mpeg"} | ({"x-ms-blob-type": "BlockBlob"} if azure else {})
-            data = (AUDIO_DIR / state["video_id"] / piece["file"]).read_bytes()
-            bakeoff.storage_request("PUT", resp["upload_urls"][name]["file_url"], data=data, headers=headers)
-        job["uploaded"] = True
-        SARVAM_JOB_PATH.write_text(json.dumps(job, indent=2), encoding="utf-8")
-    if not job["started"]:
-        bakeoff.sarvam_request("POST", f"{bakeoff.SARVAM_BASE}/{job['job_id']}/start", key)
-        job["started"] = True
-        SARVAM_JOB_PATH.write_text(json.dumps(job, indent=2), encoding="utf-8")
-    status = bakeoff.wait_for_sarvam(key, job)
-    outputs = {d["inputs"][0]["file_name"]: d["outputs"][0]["file_name"]
-               for d in status.get("job_details") or [] if d.get("state") == "Success"}
-    links = bakeoff.sarvam_request("POST", f"{bakeoff.SARVAM_BASE}/download-files", key,
-                                   json={"job_id": job["job_id"], "files": list(outputs.values())})
-    for name, out_name in outputs.items():
-        state, piece = pieces[name]
-        out = AUDIO_RESULTS_DIR / state["video_id"] / f"{piece['file']}.sarvam.json"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        if not out.exists():
-            raw = bakeoff.storage_request("GET", links["download_urls"][out_name]["file_url"]).json()
-            out.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
-    job["collected"] = True
-    SARVAM_JOB_PATH.write_text(json.dumps(job, indent=2), encoding="utf-8")
+            if not (AUDIO_RESULTS_DIR / state["video_id"] / f"{piece['file']}.sarvam.json").exists():
+                pieces[f"{state['video_id']}__{piece['file']}"] = (state, piece)
+    jobs = sarvam_job_files(pieces)
+    log.info("Sarvam: %s pieces of %s episodes in %s jobs", len(pieces), len(states), len(jobs))
+    for files in jobs:
+        try:
+            run_sarvam_job(files, pieces, bakeoff, key)
+        except Exception as exc:
+            log.error("Sarvam job for %s pieces (%s ...) failed: %s", len(files), files[0], exc)
+            failed.append(f"Sarvam job ({files[0]} ...): {str(exc)[:300]}")
 
     price = bakeoff.SERVICES["sarvam_translit"]["price_per_hour"]
     for state in states:
@@ -731,7 +862,7 @@ def audio_step(episodes: list[dict], states: dict[str, dict], failed: list[str])
         if not os.environ.get("SARVAM_API_KEY"):
             sys.exit("SARVAM_API_KEY must be set in .env for the Sarvam fallback")
         try:
-            transcribe_sarvam_episodes(sarvam_states, bakeoff, os.environ["SARVAM_API_KEY"])
+            transcribe_sarvam_episodes(sarvam_states, bakeoff, os.environ["SARVAM_API_KEY"], failed)
         except Exception as exc:
             log.error("Sarvam failed: %s", exc)
             failed.append(f"Sarvam: {exc}")
@@ -1033,6 +1164,11 @@ def episode_status() -> dict[str, dict]:
         start += 1000
 
 
+def not_skipped(episodes: list[dict], status: dict[str, dict]) -> list[dict]:
+    """Episodes without status skipped (see SKIPPED_PATH for why an episode was skipped)."""
+    return [ep for ep in episodes if (status.get(ep["video_id"]) or {}).get("status") != "skipped"]
+
+
 def already_done(episode: dict, status: dict[str, dict], state: dict | None) -> bool:
     """Marked transcribed in the database, unless its own state says a translation is still to be written."""
     if (status.get(episode["video_id"]) or {}).get("status") != "transcribed":
@@ -1045,9 +1181,29 @@ def haiku_line_rates(states: list[dict]) -> dict[str, float]:
     rom = [s for s in states if s["language"] == "hi" and s["source"] == "youtube_auto" and s["romanized"]]
     tra = [s for s in states if s["language"] == "hi" and s.get("translation") == "ok"]
     rom_lines, tra_lines = sum(len(s["segments"]) for s in rom), sum(len(s["segments"]) for s in tra)
+    # Sarvam lines are far longer than caption lines, so their translation is priced per hour.
+    sarvam = [s for s in tra if s["source"] == "sarvam"]
+    sarvam_hours = sum(s["duration_seconds"] for s in sarvam) / 3600
+    caption_hours = sum(s["duration_seconds"] for s in tra if s["source"] == "youtube_auto") / 3600
+    caption_per_hour = (sum(s.get("translation_cost_usd") or 0.0 for s in tra if s["source"] == "youtube_auto")
+                        / caption_hours if caption_hours else 0.03)
     return {"roman": sum(s["roman_cost_usd"] for s in rom) / rom_lines if rom_lines else DEFAULT_LINE_USD["roman"],
             "translation": (sum(s.get("translation_cost_usd") or 0.0 for s in tra) / tra_lines
-                            if tra_lines else DEFAULT_LINE_USD["translation"])}
+                            if tra_lines else DEFAULT_LINE_USD["translation"]),
+            "sarvam_translation_hour": (sum(s.get("translation_cost_usd") or 0.0 for s in sarvam) / sarvam_hours
+                                        if sarvam_hours else caption_per_hour)}
+
+
+def translation_estimate(states: list[dict], rates: dict[str, float]) -> float:
+    """USD for the translations still to do: per line for caption episodes, per hour for audio-fallback ones."""
+    usd = 0.0
+    for s in states:
+        if s["language"] == "hi" and s["translation"] != "ok":
+            if s["source"] == "youtube_auto":
+                usd += len(s["segments"] or []) * rates["translation"]
+            else:
+                usd += s["duration_seconds"] / 3600 * rates["sarvam_translation_hour"]
+    return usd
 
 
 def run_cost(states: dict[str, dict], before: dict[str, float]) -> tuple[float, float]:
@@ -1121,12 +1277,85 @@ def merge_reports(total: dict | None, part: dict) -> dict:
     return {k: total[k] + part[k] for k in total}
 
 
+def plan_episode(state: dict, rates: dict[str, float], services: dict) -> dict:
+    """What a run will do for an episode that already has a state, with its estimated cost."""
+    vid, hours = state["video_id"], state["duration_seconds"] / 3600
+    plan = {"steps": [], "usd": 0.0, "inr": 0.0, "sarvam_pieces": 0, "download": False}
+    if state["source"] in ("groq", "sarvam") and state["segments"] is None:
+        manifest = AUDIO_DIR / vid / "manifest.json"
+        if manifest.exists():
+            names = [p["file"] for p in json.loads(manifest.read_text(encoding="utf-8"))["pieces"]]
+        else:
+            plan["download"] = True
+            plan["steps"].append("audio download")
+            names = [str(n) for n in range(-(-int(state["duration_seconds"]) // 600))]
+        if state["source"] == "sarvam":
+            pending = [n for n in names if not (AUDIO_RESULTS_DIR / vid / f"{n}.sarvam.json").exists()]
+            plan["sarvam_pieces"] = len(pending)
+            plan["steps"].append(f"Sarvam hi ({len(pending)} pieces)")
+            plan["inr"] += hours * services["sarvam_translit"]["price_per_hour"]
+        else:
+            plan["steps"].append("Groq en")
+            plan["usd"] += hours * services["groq_large"]["price_per_hour"]
+    if state["language"] == "hi" and state["source"] == "youtube_auto" and state["segments"] and not state["romanized"]:
+        chunks = roman_chunks(state)
+        todo = [c for c in chunks if not romanize_lib.chunk_done(roman_chunk_path(c))]
+        plan["steps"].append(f"Haiku romanization ({len(todo)} of {len(chunks)} chunks)")
+        plan["usd"] += sum(len(chunks[c]) for c in todo) * rates["roman"]
+    if state["language"] == "hi" and state["translation"] != "ok":
+        plan["steps"].append("Haiku translation")
+        plan["usd"] += translation_estimate([{**state, "translation": "pending"}], rates)
+    if not finished(state):
+        plan["steps"].append("database write")
+    return plan
+
+
 def dry_run(which: str, max_inr: float) -> None:
     """Prints what a run would do. Reads the episode list, local state files and episodes in Supabase; writes nothing."""
-    episodes = read_episodes(which)
     status = episode_status()
+    all_episodes = read_episodes(which)
+    episodes = not_skipped(all_episodes, status)
     known = {ep["video_id"]: s for ep in episodes if (s := load_state(ep["video_id"]))}
-    left = [ep for ep in episodes if not already_done(ep, status, known.get(ep["video_id"]))]
+    left_all = [ep for ep in episodes if not already_done(ep, status, known.get(ep["video_id"]))]
+    services = load_module("04_bakeoff.py").SERVICES
+    rates = haiku_line_rates([s for s in known.values() if finished(s)])
+
+    print(f"DRY RUN, set {which}: nothing is downloaded, sent or written (except this run's log in {LOGS_DIR}).")
+    print(f"Episodes in set:        {len(all_episodes)}")
+    print(f"Skipped (status):       {len(all_episodes) - len(episodes)}"
+          + "".join(f"\n    {ep['video_id']}: {skipped_note(ep['video_id'])}" for ep in all_episodes
+                    if ep not in episodes))
+    print(f"Already transcribed:    {len(episodes) - len(left_all)}")
+    print(f"Left to do:             {len(left_all)}")
+
+    started = [ep for ep in left_all if ep["video_id"] in known]
+    if started:
+        plans = {ep["video_id"]: plan_episode(known[ep["video_id"]], rates, services) for ep in started}
+        print(f"\nEpisodes already started ({len(started)}), and what the run does for each:")
+        print(f"  {'video_id':12} {'min':>5}  {'language/source':16} {'est. USD':>8} {'est. INR':>8}  steps")
+        for ep in started:
+            s, pl = known[ep["video_id"]], plans[ep["video_id"]]
+            print(f"  {ep['video_id']:12} {s['duration_seconds'] / 60:5.1f}  {s['language'] + ' ' + s['source']:16} "
+                  f"{pl['usd']:8.3f} {pl['inr']:8.1f}  {', '.join(pl['steps'])}")
+        usd = sum(pl["usd"] for pl in plans.values())
+        inr = sum(pl["inr"] for pl in plans.values())
+        pieces = sum(pl["sarvam_pieces"] for pl in plans.values())
+        jobs = -(-pieces // SARVAM_MAX_PIECES)
+        downloads = sum(pl["download"] for pl in plans.values())
+        print(f"  Cost: Haiku and Groq ${usd:.2f} = INR {usd * INR_PER_USD:,.0f}; Sarvam INR {inr:,.0f}; "
+              f"total INR {usd * INR_PER_USD + inr:,.0f} (${usd + inr / INR_PER_USD:.2f}); cost guard INR {max_inr:,.0f}")
+        sarvam_t = [jobs * m / 60 for m in SARVAM_JOB_MINUTES]
+        dl_t = [downloads * m / 60 for m in FALLBACK_MINUTES]
+        groups = -(-len(left_all) // GROUP_SIZE)
+        batch_t = [groups * BATCHES_PER_GROUP * m / 60 for m in BATCH_MINUTES]
+        print(f"  Time: Sarvam {pieces} pieces in {jobs} jobs of at most {SARVAM_MAX_PIECES}, "
+              f"{sarvam_t[0]:.1f}-{sarvam_t[1]:.1f} h (assumed {SARVAM_JOB_MINUTES[0]}-{SARVAM_JOB_MINUTES[1]} min a job); "
+              f"audio downloads {downloads}, {dl_t[0]:.1f}-{dl_t[1]:.1f} h; Haiku batches {batch_t[0]:.1f}-{batch_t[1]:.1f} h; "
+              f"total about {sarvam_t[0] + dl_t[0] + batch_t[0]:.1f}-{sarvam_t[1] + dl_t[1] + batch_t[1]:.1f} h")
+    left = [ep for ep in left_all if ep["video_id"] not in known]
+    if not left:
+        return
+    print(f"\nEpisodes not started yet ({len(left)}): their captions decide the language and service.")
     by_lang: dict[str, list[dict]] = {"hi": [], "en": [], "unknown": []}
     for ep in left:
         lang = (status.get(ep["video_id"]) or {}).get("caption_language")
@@ -1145,7 +1374,6 @@ def dry_run(which: str, max_inr: float) -> None:
         tagged = [s for s in done if csv_tag[s["video_id"]] == tag]
         hi_share[tag] = (sum(s["language"] == "hi" for s in tagged) / len(tagged)) if tagged else None
     fallback_share = sum(s["source"] in ("groq", "sarvam") for s in done) / len(done) if done else 0.0
-    services = load_module("04_bakeoff.py").SERVICES
     sarvam_inr_h = services["sarvam_translit"]["price_per_hour"]
 
     def haiku(hi_hours: float) -> float:
@@ -1161,10 +1389,7 @@ def dry_run(which: str, max_inr: float) -> None:
     batch = [groups * BATCHES_PER_GROUP * m / 60 for m in BATCH_MINUTES]
     audio = [fallback_n * m / 60 for m in FALLBACK_MINUTES]
 
-    print(f"DRY RUN, set {which}: nothing is downloaded, sent or written.")
-    print(f"Episodes in set:        {len(episodes)}")
-    print(f"Already transcribed:    {len(episodes) - len(left)} (skipped)")
-    print(f"Left to do:             {len(left)}, {sum(hours.values()):.1f} hours of video")
+    print(f"Not started:            {len(left)}, {sum(hours.values()):.1f} hours of video")
     print(f"By caption_language:    Hindi {len(by_lang['hi'])} ({hours['hi']:.1f} h), English {len(by_lang['en'])} "
           f"({hours['en']:.1f} h), not set {len(by_lang['unknown'])} ({hours['unknown']:.1f} h)")
     print("  caption_language is YouTube's metadata until an episode is transcribed. On the done episodes it was:")
@@ -1194,6 +1419,79 @@ def dry_run(which: str, max_inr: float) -> None:
           f"answers 429 and the run has to be restarted later.")
 
 
+def read_skipped() -> dict[str, dict]:
+    return json.loads(SKIPPED_PATH.read_text(encoding="utf-8")) if SKIPPED_PATH.exists() else {}
+
+
+def skipped_note(vid: str) -> str:
+    return (read_skipped().get(vid) or {}).get("note", "no note")
+
+
+def backup_state(vid: str) -> Path:
+    STATE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    backup = STATE_BACKUP_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}-{vid}.json"
+    backup.write_text(state_path(vid).read_text(encoding="utf-8"), encoding="utf-8")
+    return backup
+
+
+def cmd_reset_to_sarvam(video_ids: list[str], reason: str) -> None:
+    """Redo episodes with Sarvam (Hindi) plus the normal Haiku translation.
+
+    Prints each episode's segments and translation_segments rows, deletes them, saves a copy of
+    its state file in STATE_BACKUP_DIR and resets the state to a pending Sarvam episode, and sets
+    episodes.caption_language = 'hi' and status = 'listed' so the next transcribe run picks it up.
+    """
+    load_dotenv(ROOT / ".env")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    db = supabase_client()
+    states = {}
+    for vid in video_ids:
+        state = load_state(vid)
+        if state is None:
+            sys.exit(f"{vid}: no state file; nothing to reset")
+        states[vid] = state
+
+    def count(table: str, vid: str) -> int:
+        return db_call(f"{table} count", lambda: db.table(table).select("id", count="exact").eq(
+            "video_id", vid).limit(1).execute()).count
+
+    print(f"{'video_id':12} {'source':12} {'language':8} {'segments':>8} {'translation_segments':>20}")
+    before = {vid: (count("segments", vid), count("translation_segments", vid)) for vid in video_ids}
+    for vid in video_ids:
+        print(f"{vid:12} {states[vid]['source']:12} {states[vid]['language']:8} {before[vid][0]:8,} {before[vid][1]:20,}")
+    for vid, state in states.items():
+        backup = backup_state(vid)
+        db_call("segments delete", lambda: db.table("segments").delete().eq("video_id", vid).execute())
+        db_call("translation delete",
+                lambda: db.table("translation_segments").delete().eq("video_id", vid).execute())
+        earlier = [c for c in [*state.get("earlier_audio_costs", []), state["audio_cost"]] if c]
+        state.update({"language": "hi", "source": "sarvam", "fallback_reason": reason, "suspect": False,
+                      "words_per_minute": None, "segments": None, "romanized": False, "flagged_seqs": [],
+                      "roman_cost_usd": 0.0, "translation": "n/a", "translation_segments": None,
+                      "translation_cost_usd": 0.0, "audio_cost": None, "earlier_audio_costs": earlier,
+                      "db_segments": False, "db_translation": False})
+        save_state(state)
+        db_call("episodes update", lambda: db.table("episodes").update(
+            {"caption_language": "hi", "status": "listed"}).eq("video_id", vid).execute())
+        after = (count("segments", vid), count("translation_segments", vid))
+        log.info("%s: deleted %s segments and %s translation rows (now %s and %s); state reset to sarvam hi, "
+                 "old state kept in %s", vid, before[vid][0], before[vid][1], after[0], after[1], backup.name)
+
+
+def cmd_skip(video_ids: list[str], note: str) -> None:
+    """Set episodes.status = 'skipped' (transcribe --set all then leaves them out) and record why in SKIPPED_PATH."""
+    load_dotenv(ROOT / ".env")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    db = supabase_client()
+    skipped = read_skipped()
+    for vid in video_ids:
+        db_call("episodes update", lambda: db.table("episodes").update({"status": "skipped"}).eq(
+            "video_id", vid).execute())
+        skipped[vid] = {"note": note, "date": time.strftime("%Y-%m-%d")}
+        log.info("%s: status skipped (%s)", vid, note)
+    SKIPPED_PATH.write_text(json.dumps(skipped, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def cmd_transcribe(which: str, redo_translations_first: bool = False, dry: bool = False,
                    max_inr: float = MAX_RUN_INR) -> None:
     load_dotenv(ROOT / ".env")
@@ -1203,13 +1501,13 @@ def cmd_transcribe(which: str, redo_translations_first: bool = False, dry: bool 
         return
     CAPTIONS_DIR.mkdir(parents=True, exist_ok=True)
     TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
-    episodes = read_episodes(which)
+    status = episode_status()
+    episodes = not_skipped(read_episodes(which), status)
     known = {ep["video_id"]: s for ep in episodes if (s := load_state(ep["video_id"]))}
     rates = haiku_line_rates([s for s in known.values() if finished(s)])
     if redo_translations_first:
         todo_eps = episodes
     else:
-        status = episode_status()
         todo_eps = [ep for ep in episodes if not already_done(ep, status, known.get(ep["video_id"]))]
     states = {ep["video_id"]: known[ep["video_id"]] for ep in todo_eps if ep["video_id"] in known}
     before = costs(list(states.values()))
@@ -1237,9 +1535,7 @@ def cmd_transcribe(which: str, redo_translations_first: bool = False, dry: bool 
                         and s["source"] == "youtube_auto" and s["segments"] and not s["romanized"])
             progress.check("romanization", lines * rates["roman"])
             romanize_step(group_states)
-            lines = sum(len(s["segments"]) for s in group_states.values() if s["language"] == "hi"
-                        and s["segments"] and s["translation"] != "ok")
-            progress.check("translation", lines * rates["translation"])
+            progress.check("translation", translation_estimate(list(group_states.values()), rates))
             translated = merge_reports(translated, translate_step(group_states, failed))
             db_step(group_states, progress.episode)
             if refused:
@@ -1255,6 +1551,35 @@ def cmd_transcribe(which: str, redo_translations_first: bool = False, dry: bool 
     print_transcribe_summary(which, todo_eps, states, before, failed, translated)
     if stopped:
         sys.exit(f"\n{stopped}")
+
+
+class Tee:
+    """Writes to the console and to the run's log file."""
+
+    def __init__(self, stream, log_file):
+        self.stream, self.log_file = stream, log_file
+
+    def write(self, text: str) -> int:
+        self.log_file.write(text)
+        self.log_file.flush()
+        return self.stream.write(text)
+
+    def flush(self) -> None:
+        self.stream.flush()
+        self.log_file.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
+def log_console() -> Path:
+    """Copies all console output (prints, log lines, tracebacks) to LOGS_DIR/captions_<timestamp>.log."""
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    path = LOGS_DIR / f"captions_{time.strftime('%Y%m%d-%H%M%S')}.log"
+    log_file = path.open("a", encoding="utf-8")
+    sys.stdout = Tee(sys.stdout, log_file)
+    sys.stderr = Tee(sys.stderr, log_file)
+    return path
 
 
 def main() -> None:
@@ -1273,11 +1598,19 @@ def main() -> None:
                       help="change nothing; print episodes left, Hindi vs English, estimated Haiku cost and hours")
     p_tr.add_argument("--max-inr", type=float, default=MAX_RUN_INR,
                       help=f"cost guard: stop once this run's cost would pass this many INR (default {MAX_RUN_INR})")
+    p_reset = sub.add_parser("reset-to-sarvam", help="delete episodes' rows and redo them with Sarvam (Hindi)")
+    p_reset.add_argument("video_ids", nargs="+")
+    p_reset.add_argument("--reason", required=True, help="why, kept in the state file as fallback_reason")
+    p_skip = sub.add_parser("skip", help="mark episodes skipped, so transcribe leaves them out")
+    p_skip.add_argument("video_ids", nargs="+")
+    p_skip.add_argument("--note", required=True, help="why, kept in data/skipped_episodes.json")
     args = parser.parse_args()
 
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # log lines carry Devanagari
+    log_path = log_console()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+    log.info("Console output is also written to %s", log_path)
 
     if args.command == "list":
         cmd_list(args.set)
@@ -1285,6 +1618,10 @@ def main() -> None:
         cmd_download()
     elif args.command == "download-auto":
         cmd_download_auto()
+    elif args.command == "reset-to-sarvam":
+        cmd_reset_to_sarvam(args.video_ids, args.reason)
+    elif args.command == "skip":
+        cmd_skip(args.video_ids, args.note)
     else:
         cmd_transcribe(args.set, args.redo_translations, args.dry_run, args.max_inr)
 
