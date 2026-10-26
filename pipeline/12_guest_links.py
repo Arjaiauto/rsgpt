@@ -492,6 +492,15 @@ def export(db) -> None:
               f"{len({g['video_id'] for g in rows})} episode(s)")
 
 
+def link_problem(url: str, pattern, label: str, search_url: str) -> str:
+    """Why a typed link cannot be imported, or "" when it can."""
+    if pattern.match(url):
+        return ""
+    if url == search_url or "google.com/search" in url or "youtube.com/results" in url:
+        return f"is a search link, not a {label} link"
+    return f"is not a {label} link"
+
+
 def import_links(db) -> None:
     keys = saved_keys()
     if not LINKS_CSV.exists():
@@ -499,39 +508,54 @@ def import_links(db) -> None:
     ids_of = defaultdict(list)
     for i, k in keys.items():
         ids_of[k].append(i)
+    aliases = saved_aliases()
     rows = list(read_links_csv().values())
-    counts = Counter()
+    counts, skipped = Counter(), []
+    links = (("linkedin_url", "linkedin_verified", LINKEDIN_PROFILE, "linkedin.com/in/", "linkedin_search_url"),
+             ("youtube_channel_url", "youtube_verified", YOUTUBE_CHANNEL, "youtube.com/@ or youtube.com/channel/",
+              "youtube_search_url"))
     for r in rows:
+        key = aliases.get(r["guest_key"], r["guest_key"])
         values = {}
-        if (r.get("wikipedia_verified") or "").strip().lower() == "yes":
-            url = (r.get("wikipedia_url") or "").strip()
-            if WIKIPEDIA_PAGE.match(url):
-                values |= {"wikipedia_url": url, "wikipedia_verified": True,
-                           "wikipedia_description": (r.get("wikipedia_description") or "").strip() or None}
-                counts["wikipedia_verified set"] += 1
-            else:
-                log.warning("%s: %r is not an en.wikipedia.org/wiki/ link, skipped", r["guest_key"], url)
-                counts["wikipedia_url skipped (not an en.wikipedia.org/wiki/ link)"] += 1
-        if (r.get("verified") or "").strip().lower() != "yes":
-            counts["links not marked yes"] += 1
-        for field, flag, pattern, label in (("linkedin_url", "linkedin_verified", LINKEDIN_PROFILE, "linkedin.com/in/"),
-                                            ("youtube_channel_url", "youtube_verified", YOUTUBE_CHANNEL,
-                                             "youtube.com/@ or youtube.com/channel/")):
-            url = (r[field] or "").strip()
-            if not url or (r.get("verified") or "").strip().lower() != "yes":
+        marked = (r.get("verified") or "").strip()
+        for field, flag, pattern, label, search_field in links:
+            url = (r.get(field) or "").strip()
+            if not url:
                 continue
-            if pattern.match(url):
-                values |= {field: url, flag: True}
-                counts[f"{flag} set"] += 1
+            problem = link_problem(url, pattern, label, (r.get(search_field) or "").strip())
+            if marked.lower() != "yes":
+                skipped.append((r, field, f"verified is {marked!r}, not 'yes'" + (f"; also the URL {problem}"
+                                                                                    if problem else "")))
+            elif problem:
+                skipped.append((r, field, f"the URL {problem}"))
             else:
-                log.warning("%s: %r is not a %s link, skipped", r["guest_key"], url, label)
-                counts[f"{field} skipped (not a {label} link)"] += 1
-        ids = ids_of.get(r["guest_key"], [])
-        if values and ids:
+                values |= {field: url, flag: True}
+                counts[flag] += 1
+        if marked.lower() == "yes" and not any((r.get(f) or "").strip() for f, *_ in links):
+            skipped.append((r, "verified", "marked 'yes' but no LinkedIn or YouTube URL"))
+        wiki_marked = (r.get("wikipedia_verified") or "").strip()
+        wiki_url = (r.get("wikipedia_url") or "").strip()
+        if wiki_url or wiki_marked:
+            if wiki_marked.lower() != "yes":
+                skipped.append((r, "wikipedia_url", f"wikipedia_verified is {wiki_marked!r}, not 'yes'"))
+            elif not WIKIPEDIA_PAGE.match(wiki_url):
+                skipped.append((r, "wikipedia_url", "empty" if not wiki_url else "is not an en.wikipedia.org/wiki/ link"))
+            else:
+                values |= {"wikipedia_url": wiki_url, "wikipedia_verified": True,
+                           "wikipedia_description": (r.get("wikipedia_description") or "").strip() or None}
+                counts["wikipedia_verified"] += 1
+        ids = ids_of.get(key, [])
+        if values and not ids:
+            skipped.append((r, "guest_key", "no guest rows with this key (run merge, then export again)"))
+        elif values:
             db_call("guests update", lambda: db.table("guests").update(values).in_("id", ids).execute())
-    print(f"\nImport from {LINKS_CSV.relative_to(ROOT)}:")
-    for k, n in sorted(counts.items()):
-        print(f"  {n:4}  {k}")
+            counts["guests updated"] += 1
+    print(f"\nImport from {LINKS_CSV.relative_to(ROOT)} ({len(rows)} rows):")
+    for label in ("linkedin_verified", "youtube_verified", "wikipedia_verified", "guests updated"):
+        print(f"  {counts[label]:4}  {label}")
+    print(f"\nSkipped ({len(skipped)}):")
+    for r, field, reason in skipped:
+        print(f"  {r['name'][:30]:30} {field:20} {reason}")
 
 
 def check_guests(db) -> None:
