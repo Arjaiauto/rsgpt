@@ -41,17 +41,33 @@ Commands:
             an en.wikipedia.org/wiki/ link. Written on every row of that guest_key.
   check     Runs 07_check.check_guest again on this run's guest rows only and writes verified and
             check_notes where they change (a "bio trimmed" note from recover is kept).
+  auto      Links matched automatically under strict rules, marked link_source = 'auto', for the
+            guests in data/guest_links.csv (the sheet's organisation edits are not used):
+            - Wikipedia: the sheet's suggestion where name_match is "full" (any match_type), except
+              AUTO_WIKI_EXCLUDE; plus exact page titles for AUTO_WIKI_TITLES, accepted only when the
+              page exists, is not a disambiguation page, and its short description has one of the
+              words listed for that guest's field.
+            - YouTube: search.list (type=channel, AUTO_YT_RESULTS results, 100 units) for the name,
+              then one channels.list for all candidates (1 unit per 50). A channel is accepted when
+              its title contains every word of the name (titles such as Dr or Col left out) and it
+              shows at least AUTO_YT_MIN_SUBSCRIBERS subscribers; the most subscribed one wins.
+              AUTO_YT_KEEP is kept as it is; AUTO_YT_EXCLUDE lists channels that pass these rules
+              but belong to someone else. Answers are cached in data/cache/youtube/.
+            - LinkedIn: no profile link; linkedin_search_url (a Google search for name +
+              organisation + LinkedIn) is set on every guest row of the run, for a "Search on
+              LinkedIn" button. linkedin_url stays empty and linkedin_verified false.
 
 Nothing here fetches LinkedIn, YouTube or Google pages: those URLs are searches for a person to
-open. The only site asked anything is the Wikipedia API.
+open. The only services asked anything are the Wikipedia API and the YouTube Data API.
 Contact data stays limited to verified LinkedIn and YouTube channel links (no phone or email).
 
 Usage:
-    .venv\\Scripts\\python.exe pipeline\\12_guest_links.py diagnose|recover|merge|export|import|check
+    .venv\\Scripts\\python.exe pipeline\\12_guest_links.py diagnose|recover|merge|export|import|check|auto
 """
 
 import argparse
 import csv
+import hashlib
 import importlib.util
 import json
 import logging
@@ -89,7 +105,29 @@ WIKI_USER_AGENT = ("RSGPT/0.1 (private, unofficial research project on the Figur
 WIKI_PAUSE_SECONDS = 1.0
 WIKI_CACHE = DATA_DIR / "wikipedia_cache.json"
 WIKI_RETRIES = 3
-DISAMBIGUATION = "Topics referred to by the same term"  # Wikipedia's short description of a disambiguation page
+DISAMBIGUATION = "Topics referred to by the same term"
+LINK_SOURCE_AUTO = "auto"
+AUTO_WIKI_EXCLUDE = {"sandeep-das--mars", "vivek-agrawal--"}  # same-name pages of other people
+# Exact page titles to look up, with the words one of which the page's short description must contain.
+AUTO_WIKI_TITLES = {
+    "ankur-warikoo--": ("Ankur Warikoo", {"entrepreneur", "author", "youtuber", "content", "creator", "influencer",
+                                          "investor"}),
+    "avadh-ojha--": ("Avadh Ojha", {"educator", "teacher", "politician", "lecturer"}),
+    "palki-sharma--firstpost": ("Palki Sharma", {"journalist", "anchor", "news", "presenter"}),
+    "joe-dispenza--": ("Joe Dispenza", {"author", "chiropractor", "lecturer", "speaker", "writer"}),
+}
+AUTO_YT_KEEP = {"khan-sir--": "https://www.youtube.com/@khanglobalstudies"}
+# Channels that pass the name and subscriber rules but, by their own description, belong to someone else
+# or only repost the guest's clips (checked 2026-10-27).
+AUTO_YT_EXCLUDE = {
+    "vijay-mallya--ubgroup": {"@thevijaylakshmimallya": "another person (Vijay Lakshmi Mallya)"},
+    "karan-johar--dharmaproductions": {"@peakkaranjohar": "a fan channel of clips"},
+    "palki-sharma--firstpost": {"@drpalki-sharma": "another person (an Ayurveda doctor)"},
+    "deepak-sharma--tiharjail": {"@deepaksharmaindia": "another person (a crime journalist; the guest is a jailor)"},
+}
+AUTO_YT_RESULTS = 5
+AUTO_YT_MIN_SUBSCRIBERS = 100_000
+YT_UNITS = {"search": 100, "channels": 1}  # Wikipedia's short description of a disambiguation page
 TITLES = {"dr", "prof", "professor", "mr", "mrs", "ms", "shri", "smt", "sri", "adv", "ca"}
 # Left out of a name before it is compared with a Wikipedia title (TITLES plus ranks).
 NAME_PREFIXES = TITLES | {"major", "maj", "col", "colonel", "lt", "gen", "general", "capt", "captain", "brig",
@@ -558,6 +596,165 @@ def import_links(db) -> None:
         print(f"  {r['name'][:30]:30} {field:20} {reason}")
 
 
+def channel_url(item: dict) -> str:
+    handle = (item.get("snippet", {}).get("customUrl") or "").strip()
+    if handle.startswith("@"):
+        return f"https://www.youtube.com/{handle}"
+    return f"https://www.youtube.com/channel/{item['id']}"
+
+
+def auto_links(db) -> None:
+    import os
+    fetch_episodes = load_module("fetch_episodes", "01_fetch_episodes.py")
+    if not os.environ.get("YOUTUBE_API_KEY"):
+        sys.exit("YOUTUBE_API_KEY must be set in .env")
+    keys, aliases = saved_keys(), saved_aliases()
+    ids_of = defaultdict(list)
+    for i, k in keys.items():
+        ids_of[k].append(i)
+    sheet = [r | {"guest_key": aliases.get(r["guest_key"], r["guest_key"])} for r in read_links_csv().values()]
+    current = {g["id"]: g for g in fetch(db, "guests", "id,name,organisation,link_source,wikipedia_url,"
+                                                        "wikipedia_description,wikipedia_verified,youtube_channel_url,"
+                                                        "youtube_verified", run_id=run_id())}
+    guests = current
+    wiki = Wikipedia()
+    yt = fetch_episodes.YouTube(os.environ["YOUTUBE_API_KEY"], refresh=False)
+    units = Counter()
+
+    def yt_get(endpoint: str, params: dict, cache_key: str) -> dict:
+        before = yt.units_used
+        data = yt.get(endpoint, params, cache_key) or {}
+        units[endpoint] += (yt.units_used - before) * YT_UNITS[endpoint]
+        return data
+
+    results = {}
+    # Wikipedia
+    for r in sheet:
+        key = r["guest_key"]
+        res = results.setdefault(key, {"name": r["name"]})
+        if key in AUTO_WIKI_TITLES:
+            title, words = AUTO_WIKI_TITLES[key]
+            pages = wiki.get({"action": "query", "prop": "description", "titles": title, "redirects": 1}).get(
+                "query", {}).get("pages", [])
+            page = pages[0] if pages else {}
+            description = page.get("description") or ""
+            if not page or page.get("missing"):
+                res["wiki"] = f"no: no page titled {title!r}"
+            elif title_match(page["title"], r["name"]) != "full":
+                res["wiki"] = f"no: {title!r} leads to the page {page['title']!r}"
+            elif description == DISAMBIGUATION:
+                res["wiki"] = "no: disambiguation page"
+            elif not words & set(plain(description)):
+                res["wiki"] = f"no: description {description!r} does not fit"
+            else:
+                res["wiki_url"] = "https://en.wikipedia.org/wiki/" + quote(page["title"].replace(" ", "_"))
+                res["wiki_description"] = description
+                res["wiki"] = "yes (exact title)"
+        elif not r.get("wikipedia_url_suggested"):
+            res["wiki"] = "no: no suggestion"
+        elif key in AUTO_WIKI_EXCLUDE:
+            res["wiki"] = "no: same-name page of another person"
+        elif r.get("name_match") != "full":
+            res["wiki"] = f"no: {r.get('name_match')} match only"
+        else:
+            title = r["wikipedia_url_suggested"].split("/wiki/", 1)[1]
+            from urllib.parse import unquote
+            res["wiki_url"] = r["wikipedia_url_suggested"]
+            res["wiki_description"] = wiki.description(unquote(title).replace("_", " "))
+            res["wiki"] = f"yes ({r.get('match_type')})"
+
+    # YouTube: one search per guest, then statistics for every candidate in as few calls as possible
+    candidates = {}
+    for r in sheet:
+        key, res = r["guest_key"], results[r["guest_key"]]
+        if key in AUTO_YT_KEEP:
+            res["yt_url"], res["yt"] = AUTO_YT_KEEP[key], "yes (kept)"
+            continue
+        found = yt_get("search", {"part": "snippet", "type": "channel", "q": r["name"],
+                                  "maxResults": AUTO_YT_RESULTS}, f"guest_channel_search_{key}")
+        matching = [i["id"]["channelId"] for i in found.get("items", [])
+                    if title_match(i["snippet"]["channelTitle"], r["name"]) == "full"]
+        candidates[key] = matching
+        if not matching:
+            res["yt"] = "no: no channel title with the full name"
+    ids = sorted({c for cs in candidates.values() for c in cs})
+    stats = {}
+    for n in range(0, len(ids), 50):
+        part = ids[n:n + 50]
+        data = yt_get("channels", {"part": "snippet,statistics", "id": ",".join(part), "maxResults": 50},
+                      "guest_channels_" + hashlib.sha256(",".join(part).encode()).hexdigest()[:16])
+        stats |= {i["id"]: i for i in data.get("items", [])}
+    for key, cs in candidates.items():
+        res = results[key]
+        if not cs:
+            continue
+        scored, excluded = [], []
+        for c in cs:
+            item = stats.get(c, {})
+            handle = (item.get("snippet", {}).get("customUrl") or "").lower()
+            if handle in AUTO_YT_EXCLUDE.get(key, {}):
+                excluded.append(f"{item['snippet']['title'].strip()!r} excluded: {AUTO_YT_EXCLUDE[key][handle]}")
+                continue
+            st = item.get("statistics", {})
+            subs = 0 if st.get("hiddenSubscriberCount") else int(st.get("subscriberCount") or 0)
+            scored.append((subs, c, item))
+        if not scored:
+            res["yt"] = "no: " + "; ".join(excluded)
+            continue
+        subs, c, item = max(scored, key=lambda x: x[0])
+        if subs >= AUTO_YT_MIN_SUBSCRIBERS:
+            res["yt_url"], res["yt"] = channel_url(item), f"yes ({item['snippet']['title']}, {subs:,} subscribers)"
+        else:
+            res["yt"] = (f"no: best match {item.get('snippet', {}).get('title', c)!r} has {subs:,} subscribers"
+                         + "".join(f"; {e}" for e in excluded))
+
+    # Write: auto links on each guest's rows, the LinkedIn search URL on every guest row of the run.
+    # A link set automatically by an earlier run that no longer passes is cleared; rows whose links
+    # were checked by hand (link_source other than auto) are left alone.
+    written = cleared = 0
+    for key, res in results.items():
+        rows = [current[i] for i in ids_of.get(key, []) if i in current]
+        if not rows or any(g["link_source"] not in (None, LINK_SOURCE_AUTO) for g in rows):
+            continue
+        values = {}
+        if res.get("wiki_url"):
+            values |= {"wikipedia_url": res["wiki_url"], "wikipedia_description": res["wiki_description"] or None,
+                       "wikipedia_verified": True}
+        elif any(g["wikipedia_url"] for g in rows):
+            values |= {"wikipedia_url": None, "wikipedia_description": None, "wikipedia_verified": False}
+            cleared += 1
+        if res.get("yt_url"):
+            values |= {"youtube_channel_url": res["yt_url"], "youtube_verified": True}
+        elif any(g["youtube_channel_url"] for g in rows):
+            values |= {"youtube_channel_url": None, "youtube_verified": False}
+            cleared += 1
+        values["link_source"] = LINK_SOURCE_AUTO if res.get("wiki_url") or res.get("yt_url") else None
+        if any(g.get(k) != v for g in rows for k, v in values.items()):
+            db_call("guests update", lambda: db.table("guests").update(values).in_("id", ids_of[key]).execute())
+            written += 1
+    by_key = defaultdict(list)
+    for i, g in guests.items():
+        by_key[keys.get(i, "")].append(g)
+    searches = 0
+    for key, rows in by_key.items():
+        name = Counter(g["name"] for g in rows).most_common(1)[0][0]
+        org = Counter(g["organisation"] or "" for g in rows).most_common(1)[0][0]
+        url = "https://www.google.com/search?q=" + quote_plus(f"{name} {org} LinkedIn".replace("  ", " ").strip())
+        ids = [g["id"] for g in rows]
+        db_call("guests update", lambda: db.table("guests").update({"linkedin_search_url": url}).in_("id", ids).execute())
+        searches += len(ids)
+
+    print(f"\n{'Guest':32} {'Wikipedia':44} YouTube")
+    for res in results.values():
+        print(f"{res['name'][:31]:32} {res['wiki'][:43]:44} {res['yt']}")
+    print(f"\nWikipedia accepted: {sum(1 for r in results.values() if r.get('wiki_url'))} of {len(results)}; "
+          f"YouTube accepted: {sum(1 for r in results.values() if r.get('yt_url'))} of {len(results)}; "
+          f"guests changed: {written}; auto links no longer passing, cleared: {cleared}")
+    print(f"linkedin_search_url set on {searches} guest rows; linkedin_url and linkedin_verified left as they are")
+    print(f"YouTube quota units this run: {sum(units.values())} (search {units['search']}, channels "
+          f"{units['channels']}); cached answers cost nothing")
+
+
 def check_guests(db) -> None:
     rid = run_id()
     guests = fetch(db, "guests", "*", run_id=rid)
@@ -586,7 +783,7 @@ def check_guests(db) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["diagnose", "recover", "merge", "export", "import", "check"])
+    parser.add_argument("command", choices=["diagnose", "recover", "merge", "export", "import", "check", "auto"])
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
@@ -594,7 +791,7 @@ def main() -> None:
     load_dotenv(ROOT / ".env")
     db = check.captions.supabase_client()
     {"diagnose": diagnose, "recover": recover, "merge": merge, "export": export, "import": import_links,
-     "check": check_guests}[args.command](db)
+     "check": check_guests, "auto": auto_links}[args.command](db)
 
 
 if __name__ == "__main__":

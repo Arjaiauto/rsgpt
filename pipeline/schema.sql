@@ -113,6 +113,10 @@ alter table public.guests add column if not exists youtube_verified boolean not 
 alter table public.guests add column if not exists wikipedia_url text;
 alter table public.guests add column if not exists wikipedia_description text;
 alter table public.guests add column if not exists wikipedia_verified boolean not null default false;
+-- 'manual' (checked by hand) or 'auto' (matched under strict rules by 12_guest_links.py auto).
+alter table public.guests add column if not exists link_source text;
+-- A Google search for name + organisation + LinkedIn, for a 'Search on LinkedIn' button (LinkedIn is never scraped).
+alter table public.guests add column if not exists linkedin_search_url text;
 comment on table public.guests is
     'Guests per episode as extracted by the model. Contact data is limited to verified LinkedIn and YouTube channel links; never phone numbers or emails.';
 
