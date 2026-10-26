@@ -104,6 +104,9 @@ create table if not exists public.guests (
 alter table public.guests add column if not exists verified boolean not null default false;
 alter table public.guests add column if not exists check_notes text;
 create index if not exists guests_video_idx on public.guests (video_id);
+-- The same person across episodes (normalised name + organisation), set by pipeline/12_guest_links.py merge.
+alter table public.guests add column if not exists guest_key text;
+create index if not exists guests_guest_key_idx on public.guests (guest_key);
 comment on table public.guests is
     'Guests per episode as extracted by the model. Contact data is limited to verified LinkedIn and YouTube channel links; never phone numbers or emails.';
 
