@@ -13,7 +13,9 @@ Commands:
             is written with the shorter bio and verified = true. The old bios are backed up to
             data/backups/guest_bio_recover_<timestamp>.csv first.
   merge     The same person across episodes: rows whose normalised name (no titles such as Dr)
-            and normalised organisation (no Pvt / Ltd etc., spaces ignored) are equal get one guest_key (no row is deleted). Keys are saved to
+            and normalised organisation (no Pvt / Ltd etc., spaces ignored) are equal get one guest_key.
+            A row with no organisation also joins a guest of the same full name (2+ words) when that
+            name has exactly one organisation; one-word names are never merged this way (no row is deleted). Keys are saved to
             data/guest_keys.json and written to guests.guest_key when that column exists.
   export    Merged guests with at least one verified row, ranked by the total views of their
             episodes; the top EXPORT_TOP go to data/guest_links.csv with search URLs to check by
@@ -23,8 +25,12 @@ Commands:
             The Wikipedia suggestion comes only from the official API (en.wikipedia.org/w/api.php):
             list=search for the name and organisation, then the top page's short description
             (prop=description), with a User-Agent naming the project and WIKI_PAUSE_SECONDS between
-            requests. It is left blank when the top result's title does not contain every word of
-            the guest's name (titles such as Dr or Major left out; a one-word name never matches).
+            requests. When the top title is not a full-name match, the name alone is searched too
+            and the better match is kept (match_type name-only, to check more carefully);
+            disambiguation pages are skipped. A title matches when, with titles
+            such as Dr, Col or Major left out of the name, it contains every word of the name
+            (name_match full) or the name's last word (name_match last name); a guest written as
+            a single word with no title ("Vaibhav") never matches. Otherwise the suggestion is blank.
             Answers are cached in data/wikipedia_cache.json, so a re-export asks again only for new
             guests.
   import    From data/guest_links.csv, for rows where verified is "yes": sets linkedin_url and
@@ -74,7 +80,8 @@ SAMPLE_SEED = 1
 NUMBER_REASON = "number not in the cited lines"
 CSV_FIELDS = ["guest_key", "name", "organisation", "episode_title", "google_search_url", "linkedin_search_url",
               "youtube_search_url", "linkedin_url", "youtube_channel_url", "verified",
-              "wikipedia_url_suggested", "wikipedia_description", "wikipedia_url", "wikipedia_verified"]
+              "wikipedia_url_suggested", "match_type", "name_match", "wikipedia_description", "wikipedia_url",
+              "wikipedia_verified"]
 TYPED_FIELDS = ["linkedin_url", "youtube_channel_url", "verified", "wikipedia_url", "wikipedia_verified"]
 WIKI_API = "https://en.wikipedia.org/w/api.php"
 WIKI_USER_AGENT = ("RSGPT/0.1 (private, unofficial research project on the Figuring Out podcast archive; "
@@ -82,10 +89,12 @@ WIKI_USER_AGENT = ("RSGPT/0.1 (private, unofficial research project on the Figur
 WIKI_PAUSE_SECONDS = 1.0
 WIKI_CACHE = DATA_DIR / "wikipedia_cache.json"
 WIKI_RETRIES = 3
+DISAMBIGUATION = "Topics referred to by the same term"  # Wikipedia's short description of a disambiguation page
 TITLES = {"dr", "prof", "professor", "mr", "mrs", "ms", "shri", "smt", "sri", "adv", "ca"}
 # Left out of a name before it is compared with a Wikipedia title (TITLES plus ranks).
 NAME_PREFIXES = TITLES | {"major", "maj", "col", "colonel", "lt", "gen", "general", "capt", "captain", "brig",
-                          "brigadier", "cdr", "commander", "sqn", "ldr", "wg", "air", "marshal", "admiral", "justice"}
+                          "brigadier", "cdr", "commander", "sqn", "ldr", "wg", "air", "marshal", "admiral", "justice",
+                          "sir"}
 ORG_SUFFIXES = {"pvt", "private", "ltd", "limited", "inc", "llp", "the", "co", "company", "corp", "corporation"}
 LINKEDIN_PROFILE = re.compile(r"^https?://([a-z]{2,3}\.)?(www\.)?linkedin\.com/in/[^/?#\s]+/?(\?.*)?$", re.I)
 YOUTUBE_CHANNEL = re.compile(r"^https?://(www\.|m\.)?youtube\.com/(@[^/?#\s]+|channel/[^/?#\s]+)/?(\?.*)?$", re.I)
@@ -259,13 +268,25 @@ def has_guest_key(db) -> bool:
 def merge(db) -> dict[int, str]:
     guests = fetch(db, "guests", "id,video_id,name,organisation,verified", run_id=run_id())
     keys = {g["id"]: key_of(g) for g in guests if norm_name(g["name"])}
+    orgs_of = defaultdict(set)
+    for k in set(keys.values()):
+        name_part, org_part = k.split("--")
+        if org_part:
+            orgs_of[name_part].add(k)
+    aliases, base = {}, dict(keys)
+    for i, k in base.items():
+        name_part, org_part = k.split("--")
+        if not org_part and len(name_part.split("-")) >= 2 and len(orgs_of[name_part]) == 1:
+            aliases[k] = keys[i] = next(iter(orgs_of[name_part]))
     groups = defaultdict(list)
     for g in guests:
         if g["id"] in keys:
             groups[keys[g["id"]]].append(g)
     multi = {k: v for k, v in groups.items() if len({g["video_id"] for g in v}) > 1}
-    KEYS_PATH.write_text(json.dumps({"run_id": run_id(), "keys": {str(i): k for i, k in keys.items()}}, indent=1),
-                         encoding="utf-8")
+    if KEYS_PATH.exists():  # keep earlier aliases, so typed values under an older key are still found
+        aliases = {**json.loads(KEYS_PATH.read_text(encoding="utf-8")).get("aliases", {}), **aliases}
+    KEYS_PATH.write_text(json.dumps({"run_id": run_id(), "keys": {str(i): k for i, k in keys.items()},
+                                     "aliases": aliases}, indent=1), encoding="utf-8")
     print(f"\nMerge of {len(guests)} guest rows: {len(groups)} guest_keys; {len(multi)} keys span more than one "
           f"episode ({sum(len(v) for v in multi.values())} rows)")
     for k, v in sorted(multi.items(), key=lambda kv: -len(kv[1]))[:15]:
@@ -274,6 +295,9 @@ def merge(db) -> dict[int, str]:
     for k in groups:
         by_name[k.split("--")[0]].add(k)
     split = {n: ks for n, ks in by_name.items() if len(ks) > 1}
+    print(f"  rows with no organisation joined to the one organisation of the same full name: "
+          f"{sum(1 for i in keys if keys[i] != base[i])} "
+          f"({', '.join(sorted({keys[i] for i in keys if keys[i] != base[i]}))})")
     print(f"  same normalised name but a different organisation (not merged): {len(split)} names")
     for n, ks in sorted(split.items())[:10]:
         print(f"    {n}: {', '.join(sorted(k.split('--')[1] or '(none)' for k in ks))}")
@@ -289,6 +313,11 @@ def merge(db) -> dict[int, str]:
         print("  guests.guest_key does not exist yet; run this in the Supabase SQL Editor, then merge again:\n\n"
               + GUEST_KEY_SQL + "\n")
     return keys
+
+
+def saved_aliases() -> dict[str, str]:
+    """Earlier guest_key -> the key it was merged into."""
+    return json.loads(KEYS_PATH.read_text(encoding="utf-8")).get("aliases", {}) if KEYS_PATH.exists() else {}
 
 
 def saved_keys() -> dict[int, str]:
@@ -334,26 +363,53 @@ class Wikipedia:
         tmp.replace(WIKI_CACHE)
         return self.cache[key]
 
-    def suggest(self, name: str, org: str) -> tuple[str, str]:
-        """(page URL, short description) of the top search result for name + organisation, or ("", "")
-        when its title does not contain the guest's name."""
-        found = self.get({"action": "query", "list": "search", "srsearch": f"{name} {org}".strip(), "srlimit": 1})
+    def top_title(self, query: str) -> str:
+        found = self.get({"action": "query", "list": "search", "srsearch": query, "srlimit": 1})
         hits = found.get("query", {}).get("search", [])
-        if not hits or not title_has_name(hits[0]["title"], name):
-            return "", ""
-        title = hits[0]["title"]
+        return hits[0]["title"] if hits else ""
+
+    def description(self, title: str) -> str:
         pages = self.get({"action": "query", "prop": "description", "titles": title}).get("query", {}).get("pages", [])
-        description = (pages[0].get("description") or "") if pages else ""
-        return "https://en.wikipedia.org/wiki/" + quote(title.replace(" ", "_")), description
+        return (pages[0].get("description") or "") if pages else ""
+
+    def suggest(self, name: str, org: str) -> dict:
+        """The best of the top search results for name + organisation and for the name alone:
+        wikipedia_url_suggested, match_type, name_match, wikipedia_description (all blank when neither
+        matches). A full-name match beats a last-name match, and name + organisation beats name only
+        within each; disambiguation pages are skipped. The name-only search is sent only when the
+        name + organisation result is not a full-name match."""
+        tries = [(f"{name} {org}", "name+org"), (name, "name-only")] if org.strip() else [(name, "name-only")]
+        found = []
+        for query, match_type in tries:
+            title = self.top_title(query.strip())
+            name_match = title_match(title, name) if title else ""
+            if name_match:
+                description = self.description(title)
+                if description != DISAMBIGUATION:
+                    found.append((name_match != "full", len(found), title, match_type, name_match, description))
+            if found and not found[0][0]:  # a full-name match from name + organisation: no need for more
+                break
+        if not found:
+            return {"wikipedia_url_suggested": "", "match_type": "", "name_match": "", "wikipedia_description": ""}
+        _, _, title, match_type, name_match, description = min(found)
+        return {"wikipedia_url_suggested": "https://en.wikipedia.org/wiki/" + quote(title.replace(" ", "_")),
+                "match_type": match_type, "name_match": name_match, "wikipedia_description": description}
 
 
-def title_has_name(title: str, name: str) -> bool:
-    """Every word of the name (titles and ranks left out) is a word of the page title, and the name
-    has at least two words."""
-    words = plain(name)
+def title_match(title: str, name: str) -> str:
+    """How the page title matches the guest's name, with titles and ranks (Dr, Col, Major, Prof, Sir ...)
+    left out of the name: "full" when every word of the name is a word of the title, "last name" when
+    only its last word is, "" otherwise. A name written as one word with no title never matches."""
+    written = plain(name)
+    words = list(written)
     while words and words[0] in NAME_PREFIXES:
         words = words[1:]
-    return len(words) >= 2 and set(words) <= set(plain(re.sub(r"\(.*?\)", " ", title)))
+    if not words or len(written) < 2:
+        return ""
+    title_words = set(plain(re.sub(r"\(.*?\)", " ", title)))
+    if set(words) <= title_words:
+        return "full"
+    return "last name" if words[-1] in title_words else ""
 
 
 def read_links_csv() -> dict[str, dict]:
@@ -386,14 +442,15 @@ def export(db) -> None:
 
     ranked = sorted(groups.items(), key=lambda kv: (-views(kv[1]), kv[0]))[:EXPORT_TOP]
     old = read_links_csv()
+    aliases = saved_aliases()
     wiki = Wikipedia()
     out = []
     for n, (key, rows) in enumerate(ranked, 1):
         name = Counter(g["name"] for g in rows).most_common(1)[0][0]
         org = Counter(g["organisation"] or "" for g in rows).most_common(1)[0][0]
         vids = sorted({g["video_id"] for g in rows}, key=lambda v: -(episodes[v]["view_count"] or 0))
-        prev = old.get(key, {})
-        suggested, description = wiki.suggest(name, org)
+        prev = old.get(key) or next((old[k] for k, new in aliases.items() if new == key and k in old), {})
+        suggestion = wiki.suggest(name, org)
         if n % 10 == 0:
             log.info("Wikipedia: %s of %s guests looked up (%s API requests this run)", n, len(ranked), wiki.requests)
 
@@ -406,8 +463,13 @@ def export(db) -> None:
             "google_search_url": "https://www.google.com/search?q=" + quote_plus(f"{name} {org}".strip()),
             "linkedin_search_url": "https://www.google.com/search?q=" + quote_plus(f"{name} {org} LinkedIn".strip()),
             "youtube_search_url": "https://www.youtube.com/results?search_query=" + quote_plus(name),
-            "wikipedia_url_suggested": suggested,
-            "wikipedia_description": prev.get("wikipedia_description") or from_db("wikipedia_description") or description,
+            **suggestion,
+            # An earlier description is kept (it may have been edited) while it still belongs to the same
+            # page: the suggestion is unchanged, or a wikipedia_url was typed.
+            "wikipedia_description": ((prev.get("wikipedia_description") if prev.get("wikipedia_url") or
+                                       prev.get("wikipedia_url_suggested") == suggestion["wikipedia_url_suggested"]
+                                       else "") or from_db("wikipedia_description")
+                                      or suggestion["wikipedia_description"]),
             **{f: prev.get(f) or (from_db(f) if f in ("linkedin_url", "youtube_channel_url", "wikipedia_url") else "")
                for f in TYPED_FIELDS},
         })
@@ -420,7 +482,10 @@ def export(db) -> None:
     kept = sum(1 for r in out if any(old.get(r["guest_key"], {}).get(f) for f in TYPED_FIELDS))
     print(f"\nExport: {len(groups)} merged guests with a verified row; top {len(out)} by total episode views "
           f"written to {LINKS_CSV.relative_to(ROOT)}; {kept} kept values typed in the earlier sheet")
-    print(f"  Wikipedia suggestion for {sum(1 for r in out if r['wikipedia_url_suggested'])} of {len(out)} "
+    print(f"  Wikipedia suggestion for {sum(1 for r in out if r['wikipedia_url_suggested'])} of {len(out)}: "
+          f"{sum(1 for r in out if r['match_type'] == 'name+org')} name+org, "
+          f"{sum(1 for r in out if r['match_type'] == 'name-only')} name-only; "
+          f"{sum(1 for r in out if r['name_match'] == 'last name')} on the last name only "
           f"({wiki.requests} API requests this run, the rest from {WIKI_CACHE.relative_to(ROOT)})")
     for n, (key, rows) in enumerate(ranked[:10], 1):
         print(f"  {n:2}. {views(rows):>12,} views  {out[n - 1]['name']} ({out[n - 1]['organisation']}), "
