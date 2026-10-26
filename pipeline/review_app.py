@@ -46,8 +46,8 @@ from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
-from supabase import create_client
 
+import db_lib
 import gate1_lib
 import gate2_lib
 
@@ -76,7 +76,7 @@ def db():
     if not url or not key:
         st.error("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in .env")
         st.stop()
-    return create_client(url, key)
+    return db_lib.client(url, key)
 
 
 def fetch(table: str, columns: str, order: str = "id", in_: tuple | None = None, **eq) -> list[dict]:
@@ -87,7 +87,8 @@ def fetch(table: str, columns: str, order: str = "id", in_: tuple | None = None,
             q = q.eq(k, v)
         if in_:
             q = q.in_(*in_)
-        page = q.order(order).range(start, start + PAGE - 1).execute().data
+        page = db_lib.call(f"{table} select", lambda: q.order(order).range(start, start + PAGE - 1).execute(),
+                           db()).data
         rows += page
         if len(page) < PAGE:
             return rows

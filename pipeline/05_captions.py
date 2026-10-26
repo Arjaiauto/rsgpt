@@ -107,11 +107,10 @@ import time
 from pathlib import Path
 
 import anthropic
-import httpx
 import yt_dlp
 from dotenv import load_dotenv
-from supabase import create_client
 
+import db_lib
 import romanize_lib
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1082,15 +1081,8 @@ def translate_step(states: dict[str, dict], failed: list[str]) -> dict:
 # ----- database -----
 
 def db_call(what: str, fn):
-    for attempt in range(1, MAX_RETRIES + 3):
-        try:
-            return fn()
-        except httpx.TransportError as exc:
-            if attempt == MAX_RETRIES + 2:
-                raise
-            log.warning("%s: network error (%s), retrying in %ss", what, exc, 5 * attempt)
-            time.sleep(5 * attempt)
-    raise AssertionError("unreachable")
+    """fn() with retries on network errors; a dropped connection gets a new client (db_lib.call)."""
+    return db_lib.call(what, fn)
 
 
 def replace_rows(db, table: str, vid: str, rows: list[dict]) -> None:
@@ -1105,7 +1097,7 @@ def supabase_client():
     url, key = os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_KEY")
     if not url or not key:
         sys.exit("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in .env")
-    return create_client(url, key)
+    return db_lib.client(url, key)
 
 
 def finished(state: dict) -> bool:
