@@ -16,6 +16,8 @@ episode's segments (and, for Hindi episodes, translation_segments):
      long quote cannot pass by containing a short line.
   4. Clips are CLIP_SECONDS long.
   5. No phone number or email address appears in any text field.
+     Guests: a LinkedIn or YouTube channel link only when it is marked checked
+     (linkedin_verified / youtube_verified, set by 12_guest_links.py import).
   6. Raj questions and Raj opinions cite at least one segment whose speaker is raj.
   7. Disagreements cite at least one segment labelled raj and one labelled guest
      (both sides of the exchange).
@@ -322,7 +324,8 @@ def check_guest(row: dict, ep: Episode, merged: dict | None) -> list:
         ep.check_numbers([row["name"], row["organisation"], row["role_at_episode"], row["bio"]], cited, failures)
     failures += [(r, "") for r in contact_details(row["name"], row["organisation"], row["role_at_episode"],
                                                   row["bio"], row["sector_tags"] or [])]
-    if row.get("linkedin_url") or row.get("youtube_channel_url"):
+    if (row.get("linkedin_url") and not row.get("linkedin_verified")) or \
+            (row.get("youtube_channel_url") and not row.get("youtube_verified")):
         failures.append(("has a contact link before it was verified", ""))
     return failures
 

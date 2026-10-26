@@ -18,14 +18,18 @@ Commands:
   export    Merged guests with at least one verified row, ranked by the total views of their
             episodes; the top EXPORT_TOP go to data/guest_links.csv with search URLs to check by
             hand. Values already filled in an existing CSV (links, verified) are kept.
-  import    From data/guest_links.csv, sets linkedin_url and linkedin_verified = true on the
-            guest's rows only where verified is "yes" and linkedin_url is a linkedin.com/in/ profile.
+  import    From data/guest_links.csv, for rows where verified is "yes": sets linkedin_url and
+            linkedin_verified = true when linkedin_url is a linkedin.com/in/ profile, and
+            youtube_channel_url and youtube_verified = true when it is a youtube.com/@ or
+            youtube.com/channel/ link, on every row of that guest_key.
+  check     Runs 07_check.check_guest again on this run's guest rows only and writes verified and
+            check_notes where they change (a "bio trimmed" note from recover is kept).
 
 Nothing here fetches LinkedIn or YouTube pages: the URLs are searches for a person to open.
 Contact data stays limited to verified LinkedIn and YouTube channel links (no phone or email).
 
 Usage:
-    .venv\\Scripts\\python.exe pipeline\\12_guest_links.py diagnose|recover|merge|export|import
+    .venv\\Scripts\\python.exe pipeline\\12_guest_links.py diagnose|recover|merge|export|import|check
 """
 
 import argparse
@@ -60,6 +64,7 @@ CSV_FIELDS = ["guest_key", "name", "organisation", "episode_title", "linkedin_se
 TITLES = {"dr", "prof", "professor", "mr", "mrs", "ms", "shri", "smt", "sri", "adv", "ca"}
 ORG_SUFFIXES = {"pvt", "private", "ltd", "limited", "inc", "llp", "the", "co", "company", "corp", "corporation"}
 LINKEDIN_PROFILE = re.compile(r"^https?://([a-z]{2,3}\.)?(www\.)?linkedin\.com/in/[^/?#\s]+/?(\?.*)?$", re.I)
+YOUTUBE_CHANNEL = re.compile(r"^https?://(www\.|m\.)?youtube\.com/(@[^/?#\s]+|channel/[^/?#\s]+)/?(\?.*)?$", re.I)
 GUEST_KEY_SQL = ("alter table public.guests add column if not exists guest_key text;\n"
                  "create index if not exists guests_guest_key_idx on public.guests (guest_key);")
 
@@ -325,33 +330,69 @@ def import_links(db) -> None:
         ids_of[k].append(i)
     with LINKS_CSV.open(newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
-    done = skipped = 0
+    counts = Counter()
     for r in rows:
-        url = (r["linkedin_url"] or "").strip()
         if r["verified"].strip().lower() != "yes":
+            counts["not marked yes"] += 1
             continue
-        if not LINKEDIN_PROFILE.match(url):
-            log.warning("%s: verified yes but %r is not a linkedin.com/in/ profile link, skipped", r["guest_key"], url)
-            skipped += 1
-            continue
+        values = {}
+        for field, flag, pattern, label in (("linkedin_url", "linkedin_verified", LINKEDIN_PROFILE, "linkedin.com/in/"),
+                                            ("youtube_channel_url", "youtube_verified", YOUTUBE_CHANNEL,
+                                             "youtube.com/@ or youtube.com/channel/")):
+            url = (r[field] or "").strip()
+            if not url:
+                continue
+            if pattern.match(url):
+                values |= {field: url, flag: True}
+                counts[f"{flag} set"] += 1
+            else:
+                log.warning("%s: %r is not a %s link, skipped", r["guest_key"], url, label)
+                counts[f"{field} skipped (not a {label} link)"] += 1
         ids = ids_of.get(r["guest_key"], [])
-        db_call("guests update", lambda: db.table("guests").update({"linkedin_url": url, "linkedin_verified": True})
-                .in_("id", ids).execute())
-        done += 1
-    print(f"\nImport: linkedin_verified set for {done} guests; {skipped} skipped (not a linkedin.com/in/ link); "
-          f"{sum(1 for r in rows if r['verified'].strip().lower() != 'yes')} not marked yes")
+        if values and ids:
+            db_call("guests update", lambda: db.table("guests").update(values).in_("id", ids).execute())
+    print(f"\nImport from {LINKS_CSV.relative_to(ROOT)}:")
+    for k, n in sorted(counts.items()):
+        print(f"  {n:4}  {k}")
+
+
+def check_guests(db) -> None:
+    rid = run_id()
+    guests = fetch(db, "guests", "*", run_id=rid)
+    merged = check.merged_results(rid)
+    meta = {e["video_id"]: e for e in fetch(db, "episodes", "video_id,duration_seconds,caption_language",
+                                            order="video_id")}
+    changes, reasons_seen = {}, Counter()
+    for vid in sorted({g["video_id"] for g in guests}):
+        ep = check.Episode(db, vid, meta[vid]["duration_seconds"], meta[vid]["caption_language"])
+        for g in (g for g in guests if g["video_id"] == vid):
+            failures = check.check_guest(g, ep, merged.get(vid))
+            reasons_seen.update(r for r, _ in failures)
+            kept = [n.strip() for n in (g["check_notes"] or "").split(";") if n.strip().startswith("bio trimmed:")]
+            notes = check.notes_for(None, failures)
+            values = {"verified": not failures, "check_notes": "; ".join(kept + ([notes] if notes else [])) or None}
+            if any(g.get(k) != v for k, v in values.items()):
+                changes[g["id"]] = values
+    if changes:
+        check.write_updates(db, "guests", changes)
+    passed = sum(1 for g in guests if changes.get(g["id"], g)["verified"])
+    print(f"\nGuest check of run {rid}: {len(guests)} rows, {passed} verified, {len(guests) - passed} failed; "
+          f"{len(changes)} rows changed")
+    for reason, n in reasons_seen.most_common():
+        print(f"  {n:4}  {reason}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["diagnose", "recover", "merge", "export", "import"])
+    parser.add_argument("command", choices=["diagnose", "recover", "merge", "export", "import", "check"])
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     load_dotenv(ROOT / ".env")
     db = check.captions.supabase_client()
-    {"diagnose": diagnose, "recover": recover, "merge": merge, "export": export, "import": import_links}[args.command](db)
+    {"diagnose": diagnose, "recover": recover, "merge": merge, "export": export, "import": import_links,
+     "check": check_guests}[args.command](db)
 
 
 if __name__ == "__main__":

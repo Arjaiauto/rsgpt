@@ -107,6 +107,8 @@ create index if not exists guests_video_idx on public.guests (video_id);
 -- The same person across episodes (normalised name + organisation), set by pipeline/12_guest_links.py merge.
 alter table public.guests add column if not exists guest_key text;
 create index if not exists guests_guest_key_idx on public.guests (guest_key);
+-- Set by pipeline/12_guest_links.py import when a YouTube channel link was checked by hand.
+alter table public.guests add column if not exists youtube_verified boolean not null default false;
 comment on table public.guests is
     'Guests per episode as extracted by the model. Contact data is limited to verified LinkedIn and YouTube channel links; never phone numbers or emails.';
 
