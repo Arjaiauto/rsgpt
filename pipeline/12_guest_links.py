@@ -17,15 +17,27 @@ Commands:
             data/guest_keys.json and written to guests.guest_key when that column exists.
   export    Merged guests with at least one verified row, ranked by the total views of their
             episodes; the top EXPORT_TOP go to data/guest_links.csv with search URLs to check by
-            hand. Values already filled in an existing CSV (links, verified) are kept.
+            hand (Google, LinkedIn through Google, YouTube) and a suggested Wikipedia page.
+            Values already typed in an existing CSV (linkedin_url, youtube_channel_url, verified,
+            wikipedia_url, wikipedia_verified) are kept.
+            The Wikipedia suggestion comes only from the official API (en.wikipedia.org/w/api.php):
+            list=search for the name and organisation, then the top page's short description
+            (prop=description), with a User-Agent naming the project and WIKI_PAUSE_SECONDS between
+            requests. It is left blank when the top result's title does not contain every word of
+            the guest's name (titles such as Dr or Major left out; a one-word name never matches).
+            Answers are cached in data/wikipedia_cache.json, so a re-export asks again only for new
+            guests.
   import    From data/guest_links.csv, for rows where verified is "yes": sets linkedin_url and
             linkedin_verified = true when linkedin_url is a linkedin.com/in/ profile, and
             youtube_channel_url and youtube_verified = true when it is a youtube.com/@ or
-            youtube.com/channel/ link, on every row of that guest_key.
+            youtube.com/channel/ link; for rows where wikipedia_verified is "yes": sets
+            wikipedia_url, wikipedia_description and wikipedia_verified = true when wikipedia_url is
+            an en.wikipedia.org/wiki/ link. Written on every row of that guest_key.
   check     Runs 07_check.check_guest again on this run's guest rows only and writes verified and
             check_notes where they change (a "bio trimmed" note from recover is kept).
 
-Nothing here fetches LinkedIn or YouTube pages: the URLs are searches for a person to open.
+Nothing here fetches LinkedIn, YouTube or Google pages: those URLs are searches for a person to
+open. The only site asked anything is the Wikipedia API.
 Contact data stays limited to verified LinkedIn and YouTube channel links (no phone or email).
 
 Usage:
@@ -44,8 +56,9 @@ import time
 import unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 
+import requests
 from dotenv import load_dotenv
 from postgrest.exceptions import APIError
 
@@ -59,12 +72,24 @@ EXPORT_TOP = 50
 SAMPLE_TITLES = 10
 SAMPLE_SEED = 1
 NUMBER_REASON = "number not in the cited lines"
-CSV_FIELDS = ["guest_key", "name", "organisation", "episode_title", "linkedin_search_url", "youtube_search_url",
-              "linkedin_url", "youtube_channel_url", "verified"]
+CSV_FIELDS = ["guest_key", "name", "organisation", "episode_title", "google_search_url", "linkedin_search_url",
+              "youtube_search_url", "linkedin_url", "youtube_channel_url", "verified",
+              "wikipedia_url_suggested", "wikipedia_description", "wikipedia_url", "wikipedia_verified"]
+TYPED_FIELDS = ["linkedin_url", "youtube_channel_url", "verified", "wikipedia_url", "wikipedia_verified"]
+WIKI_API = "https://en.wikipedia.org/w/api.php"
+WIKI_USER_AGENT = ("RSGPT/0.1 (private, unofficial research project on the Figuring Out podcast archive; "
+                   "https://github.com/Arjaiauto/rsgpt) python-requests")
+WIKI_PAUSE_SECONDS = 1.0
+WIKI_CACHE = DATA_DIR / "wikipedia_cache.json"
+WIKI_RETRIES = 3
 TITLES = {"dr", "prof", "professor", "mr", "mrs", "ms", "shri", "smt", "sri", "adv", "ca"}
+# Left out of a name before it is compared with a Wikipedia title (TITLES plus ranks).
+NAME_PREFIXES = TITLES | {"major", "maj", "col", "colonel", "lt", "gen", "general", "capt", "captain", "brig",
+                          "brigadier", "cdr", "commander", "sqn", "ldr", "wg", "air", "marshal", "admiral", "justice"}
 ORG_SUFFIXES = {"pvt", "private", "ltd", "limited", "inc", "llp", "the", "co", "company", "corp", "corporation"}
 LINKEDIN_PROFILE = re.compile(r"^https?://([a-z]{2,3}\.)?(www\.)?linkedin\.com/in/[^/?#\s]+/?(\?.*)?$", re.I)
 YOUTUBE_CHANNEL = re.compile(r"^https?://(www\.|m\.)?youtube\.com/(@[^/?#\s]+|channel/[^/?#\s]+)/?(\?.*)?$", re.I)
+WIKIPEDIA_PAGE = re.compile(r"^https?://en\.wikipedia\.org/wiki/[^\s?#]+$", re.I)
 GUEST_KEY_SQL = ("alter table public.guests add column if not exists guest_key text;\n"
                  "create index if not exists guests_guest_key_idx on public.guests (guest_key);")
 
@@ -274,10 +299,82 @@ def saved_keys() -> dict[int, str]:
 
 # ---------- export / import ----------
 
+class Wikipedia:
+    """The official Wikipedia API, one request at a time with a pause, answers cached on disk."""
+
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers["User-Agent"] = WIKI_USER_AGENT
+        self.cache = json.loads(WIKI_CACHE.read_text(encoding="utf-8")) if WIKI_CACHE.exists() else {}
+        self.last = 0.0
+        self.requests = 0
+
+    def get(self, params: dict) -> dict:
+        key = json.dumps(params, sort_keys=True)
+        if key in self.cache:
+            return self.cache[key]
+        for attempt in range(1, WIKI_RETRIES + 1):
+            time.sleep(max(0.0, self.last + WIKI_PAUSE_SECONDS - time.monotonic()))
+            self.last = time.monotonic()
+            self.requests += 1
+            try:
+                r = self.session.get(WIKI_API, params={**params, "format": "json", "formatversion": 2}, timeout=30)
+                if r.status_code in (429, 500, 502, 503, 504) and attempt < WIKI_RETRIES:
+                    time.sleep(10 * attempt)
+                    continue
+                r.raise_for_status()
+                break
+            except requests.ConnectionError:
+                if attempt == WIKI_RETRIES:
+                    raise
+                time.sleep(10 * attempt)
+        self.cache[key] = r.json()
+        tmp = WIKI_CACHE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(self.cache, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(WIKI_CACHE)
+        return self.cache[key]
+
+    def suggest(self, name: str, org: str) -> tuple[str, str]:
+        """(page URL, short description) of the top search result for name + organisation, or ("", "")
+        when its title does not contain the guest's name."""
+        found = self.get({"action": "query", "list": "search", "srsearch": f"{name} {org}".strip(), "srlimit": 1})
+        hits = found.get("query", {}).get("search", [])
+        if not hits or not title_has_name(hits[0]["title"], name):
+            return "", ""
+        title = hits[0]["title"]
+        pages = self.get({"action": "query", "prop": "description", "titles": title}).get("query", {}).get("pages", [])
+        description = (pages[0].get("description") or "") if pages else ""
+        return "https://en.wikipedia.org/wiki/" + quote(title.replace(" ", "_")), description
+
+
+def title_has_name(title: str, name: str) -> bool:
+    """Every word of the name (titles and ranks left out) is a word of the page title, and the name
+    has at least two words."""
+    words = plain(name)
+    while words and words[0] in NAME_PREFIXES:
+        words = words[1:]
+    return len(words) >= 2 and set(words) <= set(plain(re.sub(r"\(.*?\)", " ", title)))
+
+
+def read_links_csv() -> dict[str, dict]:
+    """The existing sheet by guest_key, read as UTF-8 (with or without BOM) or, if saved by Excel
+    in the Windows code page, as cp1252."""
+    if not LINKS_CSV.exists():
+        return {}
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            with LINKS_CSV.open(newline="", encoding=encoding) as f:
+                return {r["guest_key"]: r for r in csv.DictReader(f) if r.get("guest_key")}
+        except UnicodeDecodeError:
+            continue
+    sys.exit(f"cannot read {LINKS_CSV}: save it as CSV UTF-8")
+
+
 def export(db) -> None:
     keys = saved_keys()
     guests = [g for g in fetch(db, "guests", "id,video_id,name,organisation,verified,linkedin_url,"
-                                             "youtube_channel_url", run_id=run_id())
+                                             "youtube_channel_url,wikipedia_url,wikipedia_description",
+                               run_id=run_id())
               if g["verified"] and g["id"] in keys]
     episodes = {e["video_id"]: e for e in fetch(db, "episodes", "video_id,title,view_count", order="video_id")}
     groups = defaultdict(list)
@@ -288,25 +385,31 @@ def export(db) -> None:
         return sum(episodes[v]["view_count"] or 0 for v in {g["video_id"] for g in rows})
 
     ranked = sorted(groups.items(), key=lambda kv: (-views(kv[1]), kv[0]))[:EXPORT_TOP]
-    old = {}
-    if LINKS_CSV.exists():
-        with LINKS_CSV.open(newline="", encoding="utf-8") as f:
-            old = {r["guest_key"]: r for r in csv.DictReader(f)}
+    old = read_links_csv()
+    wiki = Wikipedia()
     out = []
-    for key, rows in ranked:
+    for n, (key, rows) in enumerate(ranked, 1):
         name = Counter(g["name"] for g in rows).most_common(1)[0][0]
         org = Counter(g["organisation"] or "" for g in rows).most_common(1)[0][0]
         vids = sorted({g["video_id"] for g in rows}, key=lambda v: -(episodes[v]["view_count"] or 0))
         prev = old.get(key, {})
+        suggested, description = wiki.suggest(name, org)
+        if n % 10 == 0:
+            log.info("Wikipedia: %s of %s guests looked up (%s API requests this run)", n, len(ranked), wiki.requests)
+
+        def from_db(field):
+            return next((g[field] for g in rows if g[field]), "")
+
         out.append({
             "guest_key": key, "name": name, "organisation": org,
             "episode_title": " | ".join(episodes[v]["title"] for v in vids),
+            "google_search_url": "https://www.google.com/search?q=" + quote_plus(f"{name} {org}".strip()),
             "linkedin_search_url": "https://www.google.com/search?q=" + quote_plus(f"{name} {org} LinkedIn".strip()),
             "youtube_search_url": "https://www.youtube.com/results?search_query=" + quote_plus(name),
-            "linkedin_url": prev.get("linkedin_url") or next((g["linkedin_url"] for g in rows if g["linkedin_url"]), ""),
-            "youtube_channel_url": prev.get("youtube_channel_url")
-                                   or next((g["youtube_channel_url"] for g in rows if g["youtube_channel_url"]), ""),
-            "verified": prev.get("verified", ""),
+            "wikipedia_url_suggested": suggested,
+            "wikipedia_description": prev.get("wikipedia_description") or from_db("wikipedia_description") or description,
+            **{f: prev.get(f) or (from_db(f) if f in ("linkedin_url", "youtube_channel_url", "wikipedia_url") else "")
+               for f in TYPED_FIELDS},
         })
     tmp = LINKS_CSV.with_suffix(".csv.tmp")
     with tmp.open("w", newline="", encoding="utf-8-sig") as f:  # BOM so Excel reads UTF-8
@@ -314,8 +417,11 @@ def export(db) -> None:
         w.writeheader()
         w.writerows(out)
     tmp.replace(LINKS_CSV)
+    kept = sum(1 for r in out if any(old.get(r["guest_key"], {}).get(f) for f in TYPED_FIELDS))
     print(f"\nExport: {len(groups)} merged guests with a verified row; top {len(out)} by total episode views "
-          f"written to {LINKS_CSV.relative_to(ROOT)} ({sum(1 for r in out if r['verified'])} keep an earlier verified value)")
+          f"written to {LINKS_CSV.relative_to(ROOT)}; {kept} kept values typed in the earlier sheet")
+    print(f"  Wikipedia suggestion for {sum(1 for r in out if r['wikipedia_url_suggested'])} of {len(out)} "
+          f"({wiki.requests} API requests this run, the rest from {WIKI_CACHE.relative_to(ROOT)})")
     for n, (key, rows) in enumerate(ranked[:10], 1):
         print(f"  {n:2}. {views(rows):>12,} views  {out[n - 1]['name']} ({out[n - 1]['organisation']}), "
               f"{len({g['video_id'] for g in rows})} episode(s)")
@@ -328,19 +434,26 @@ def import_links(db) -> None:
     ids_of = defaultdict(list)
     for i, k in keys.items():
         ids_of[k].append(i)
-    with LINKS_CSV.open(newline="", encoding="utf-8-sig") as f:
-        rows = list(csv.DictReader(f))
+    rows = list(read_links_csv().values())
     counts = Counter()
     for r in rows:
-        if r["verified"].strip().lower() != "yes":
-            counts["not marked yes"] += 1
-            continue
         values = {}
+        if (r.get("wikipedia_verified") or "").strip().lower() == "yes":
+            url = (r.get("wikipedia_url") or "").strip()
+            if WIKIPEDIA_PAGE.match(url):
+                values |= {"wikipedia_url": url, "wikipedia_verified": True,
+                           "wikipedia_description": (r.get("wikipedia_description") or "").strip() or None}
+                counts["wikipedia_verified set"] += 1
+            else:
+                log.warning("%s: %r is not an en.wikipedia.org/wiki/ link, skipped", r["guest_key"], url)
+                counts["wikipedia_url skipped (not an en.wikipedia.org/wiki/ link)"] += 1
+        if (r.get("verified") or "").strip().lower() != "yes":
+            counts["links not marked yes"] += 1
         for field, flag, pattern, label in (("linkedin_url", "linkedin_verified", LINKEDIN_PROFILE, "linkedin.com/in/"),
                                             ("youtube_channel_url", "youtube_verified", YOUTUBE_CHANNEL,
                                              "youtube.com/@ or youtube.com/channel/")):
             url = (r[field] or "").strip()
-            if not url:
+            if not url or (r.get("verified") or "").strip().lower() != "yes":
                 continue
             if pattern.match(url):
                 values |= {field: url, flag: True}
