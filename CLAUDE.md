@@ -10,6 +10,7 @@ Follow these rules in every session.
 6. **Resumable scripts.** Every script must be resumable: skip work already done, log progress, retry on network errors.
 7. **Windows.** This is Windows. Use PowerShell-friendly commands and `pathlib` for paths.
 8. Frontend: build site/ to match design/FRONTEND_DESIGN.md and the mockups in design/. If they disagree, FRONTEND_DESIGN.md wins. Mockup data is sample data; the site uses only verified Supabase rows.
+9. Numbers shown on the site always come from verified rows in the database, never from hard-coded figures in the spec.
 
 ## Layout
 

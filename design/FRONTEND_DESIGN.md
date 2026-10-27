@@ -64,7 +64,7 @@ The public home page opens on the cloth hero and then tells, in four scroll sect
 2. Transcripts: YouTube captions first, Sarvam or Groq for the few without; over 1 million timed lines.
 3. Hindi: 676,500 lines turned into Roman Hinglish and translated to English.
 4. Speakers: every line labelled host or guest; under 1% left unknown.
-5. Extraction: 36,797 items pulled out; 36,158 (98.3%) passed the code checks for IDs, timestamps, exact quotes and numbers.
+5. Extraction: 36,797 items pulled out; 36,197 (98.4%) passed the code checks for IDs, timestamps, exact quotes and numbers.
 6. Search: 35,234 searchable passages, each answer in about 1-3 seconds.
 
 **Accuracy bars (gate 2, 209 items):** takeaways, opportunities, clips and guest profiles 100%; quotes 96%; host questions 95%; disagreements 88%; host opinions 86%.
@@ -74,7 +74,7 @@ The public home page opens on the cloth hero and then tells, in four scroll sect
 **Gemini image prompt**
 
 ```text
-A long, dark, premium landing page for a research tool called "cuepoint", shown as a tall full-page website screenshot. Deep charcoal background (#101117) with soft radial light and a faint violet glow. Top: a holographic violet foil cloth hanging from two pins, printed with lowercase "cuepoint" (a teal triangle marker instead of the dot on the i) and thin podcast waveform lines; beside it a huge heading "500 episodes. One search." in Inter (second line in grey) and a violet pill button "Log in". Below: a section "How it was built" with a horizontal line of six glowing stage nodes labelled Episodes, Transcripts, Hindi, Speakers, Extraction, Search, each with a big number. Next: "How we checked accuracy" with a giant "96%" and eight thin horizontal bars in violet and teal. Next: a row of large number tiles (36,158 insights, 2,724 clips, 429 guests). Last: two minimal charts and a chat-style answer card with small teal timestamp chips. Minimal, lots of space, no people, no photos, no logos.
+A long, dark, premium landing page for a research tool called "cuepoint", shown as a tall full-page website screenshot. Deep charcoal background (#101117) with soft radial light and a faint violet glow. Top: a holographic violet foil cloth hanging from two pins, printed with lowercase "cuepoint" (a teal triangle marker instead of the dot on the i) and thin podcast waveform lines; beside it a huge heading "500 episodes. One search." in Inter (second line in grey) and a violet pill button "Log in". Below: a section "How it was built" with a horizontal line of six glowing stage nodes labelled Episodes, Transcripts, Hindi, Speakers, Extraction, Search, each with a big number. Next: "How we checked accuracy" with a giant "96%" and eight thin horizontal bars in violet and teal. Next: a row of large number tiles (36,197 insights, 2,705 clips, 429 guests). Last: two minimal charts and a chat-style answer card with small teal timestamp chips. Minimal, lots of space, no people, no photos, no logos.
 ```
 
 **Claude mockup:** [Cuepoint Home Mockup](https://claude.ai/artifact/44enuCwspk4pjawpqsnyzD) (version 3, 27 Oct). Adds cursor glow and cloth ripple, pull-the-cloth-off to reach login, the Cuepoint logo, and the patterns explorer. It includes the new login (first name + password "demo"): clicking Log in drops the cloth, then the login form appears, then a placeholder Ask page greets you by name. Version 4 adds a teal "pull the cloth off to log in" hint pill with a tugging hand icon. Status: approved 27 Oct.
@@ -195,7 +195,7 @@ The prep brief turns an upcoming guest's name and one line about them into a one
 
 ## Page 6 — Clip finder
 
-The clip finder shows the 2,724 verified clips as vertical reel cards, so editors see what a reel would look like, and plays each one with its transcript highlighted line by line.
+The clip finder shows the 2,705 verified clips as vertical reel cards, so editors see what a reel would look like, and plays each one with its transcript highlighted line by line.
 
 | Element | Decision |
 | --- | --- |
@@ -208,7 +208,7 @@ The clip finder shows the 2,724 verified clips as vertical reel cards, so editor
 | Actions | Save (watch later), Copy timestamp link, Download clip details (.txt), Export clip (team version note) |
 | Phone | 2-column reel grid; tapping opens the player full screen |
 
-**Data step needed:** a mood tag for each clip (Funny, Emotional, Controversial, Advice) from one cheap Haiku batch over the clip text, about 2,724 short requests (well under $1).
+**Data step needed:** a mood tag for each clip (Funny, Emotional, Controversial, Advice) from one cheap Haiku batch over the clip text, about 2,705 short requests (well under $1).
 
 **Claude mockup:** [Cuepoint Clips Mockup](https://claude.ai/artifact/JWW845bk62du4AV87Ni7ZM) (version 1, 27 Oct). Tap a reel to open the player with the live transcript (sped up 4x in the mockup); pick "Kabir Singh" in the guest filter to see clips grouped by episode. Status: approved 27 Oct.
 
