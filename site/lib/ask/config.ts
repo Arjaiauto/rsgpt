@@ -37,6 +37,23 @@ export const ASK = {
   rateLimit: { max: 30, windowMs: 10 * 60 * 1000 },
 } as const;
 
+/** How timestamp chips and transcript lines name the host (third person, like the answers). */
+export const HOST_NAME = "Raj Shamani";
+
+/** Find a line: similarity of the best matching transcript line (pg_trgm, 0 to 1). */
+export const FIND_LINE = {
+  /** At or above: "Exact line found". */
+  exact: 0.55,
+  /** At or above (below exact): "Closest line". Below: not found. */
+  closest: 0.32,
+  /** Lines shown on each side of the matched one. */
+  context: 6,
+  /** The clip plays this long from the matched line. */
+  clipSeconds: 45,
+  minChars: 6,
+  maxChars: 200,
+} as const;
+
 /** Questions the archive covers well (shown when a question isn't found). Checked against the archive on 2026-10-27. */
 export const COVERED_QUESTIONS = [
   "What have founders said about raising their first round?",

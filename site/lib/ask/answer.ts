@@ -3,7 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { db } from "@/lib/db";
 import { fmtTime } from "@/lib/player-types";
 import { claude } from "./anthropic";
-import { ASK, type AnswerEffort } from "./config";
+import { ASK, HOST_NAME, type AnswerEffort } from "./config";
 import { guestLabel, monthYear, sourceOf, type Candidate, type Episode, type Retrieved, type Turn } from "./retrieve";
 import { SentenceGate, nameWordsOf, personWords, speakerCheck, type Person } from "./sentences";
 import type { Timings } from "./timing";
@@ -151,7 +151,7 @@ export async function streamAnswer(
           startS: turns[0].startS,
           endS: turns[turns.length - 1].endS,
           segmentIds: turns.flatMap((t) => t.segmentIds),
-          speaker: speakers.size === 1 && speakers.has("raj") ? "Host" : guestLabel(p.ep),
+          speaker: speakers.size === 1 && speakers.has("raj") ? HOST_NAME : guestLabel(p.ep),
           date: monthYear(p.ep.publishedAt),
           episode: p.ep.title,
           guest: guestLabel(p.ep),

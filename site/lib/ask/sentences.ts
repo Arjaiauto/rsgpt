@@ -31,6 +31,12 @@ export function splitSentences(text: string): string[] {
   return parts;
 }
 
+/** Starts with a lower-case letter: the tail of a sentence that was split in the wrong place ("…could be wrong."). */
+export const startsLower = (text: string) => /^\p{Ll}/u.test(text.replace(/^[^\p{L}\p{N}]+/u, ""));
+
+/** Under 4 words, or opening lower case: not a sentence of its own. */
+export const isFragment = (text: string) => text.trim().split(/\s+/).length < 4 || startsLower(text);
+
 const complete = (part: string) => {
   if (/\S\s*\n\s*\n\s*$/.test(part)) return true;
   const body = part.trimEnd();
@@ -146,11 +152,13 @@ export class SentenceGate<C> {
   block(text: string, cites: C[], citedTexts: string[]): void {
     // A block that starts a new paragraph also ends the sentence before it.
     if (/^\s*\n\s*\n/.test(text) && this.cur.text.trim()) this.finish();
-    for (const part of splitSentences(text)) {
+    const parts = splitSentences(text);
+    for (const [i, part] of parts.entries()) {
       this.cur.text += part;
       for (const c of cites) if (!this.cur.cites.includes(c)) this.cur.cites.push(c);
       this.cur.citedTexts.push(...citedTexts);
-      if (complete(part)) this.finish();
+      // A "sentence end" followed by a lower-case word is a false split ("…vs. the rest"): keep building.
+      if (complete(part) && !(i + 1 < parts.length && startsLower(parts[i + 1]))) this.finish();
     }
   }
 
@@ -182,9 +190,9 @@ export class SentenceGate<C> {
   }
 
   private finish(): void {
-    const s = this.cur;
+    let s = this.cur;
     this.cur = empty();
-    const body = s.text.trim();
+    let body = s.text.trim();
     const trailing = s.text.slice(s.text.trimEnd().length);
     // A paragraph break can also come before the sentence (it starts a new text block).
     if (s.text.slice(0, s.text.length - s.text.trimStart().length).includes("\n\n")) this.gap = "\n\n";
@@ -192,6 +200,22 @@ export class SentenceGate<C> {
     if (!/[\p{L}\p{N}]/u.test(body)) {
       if (trailing.includes("\n\n")) this.gap = "\n\n";
       return;
+    }
+    // A fragment (under 4 words, or opening lower case) is never shown on its own. When it continues an uncited
+    // sentence just before it, the two are one sentence; otherwise it is dropped.
+    if (isFragment(body)) {
+      const para = this.paraphrase;
+      if (para && startsLower(body)) {
+        this.paraphrase = null;
+        this.log.push(`~ fragment joined to the sentence before it: ${body}`);
+        body = `${para.body} ${body}`;
+        s = { ...s, text: `${para.body} ${s.text.trimStart()}` };
+      } else {
+        this.dropParaphrase();
+        this.counts.dropped += 1;
+        this.log.push(`- fragment: ${body}`);
+        return this.skip(trailing);
+      }
     }
     if (!s.cites.length) {
       // A connective may open the answer or a paragraph; anywhere else an uncited sentence is a claim or filler.

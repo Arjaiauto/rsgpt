@@ -2,18 +2,24 @@
 
 import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { EXAMPLE_QUESTIONS } from "@/lib/ask/config";
-import type { AskEvent, AskLanguage, Cite, RefMoment, Source } from "@/lib/ask/types";
+import { EXAMPLE_QUESTIONS, HOST_NAME } from "@/lib/ask/config";
+import { isQuoted, unquote } from "@/lib/ask/quote";
+import type { AskEvent, AskLanguage, Cite, FindLineResult, LineMatch, RefMoment, Source } from "@/lib/ask/types";
 import { fmtTime, youtubeAt, type Clip } from "@/lib/player-types";
+import { saveWithUndo } from "@/lib/save-client";
 import { toast } from "@/lib/toast";
 import { ClipPlayer } from "@/components/player/ClipPlayer";
 import { getPlayer, player } from "@/components/player/store";
 import { ReportButton } from "@/components/report/ReportButton";
+import { LineAnswer, LineThinking } from "./LineAnswer";
 
 type Block = { text: string; cites: Cite[] };
 type Turn = {
   id: string;
   q: string;
+  /** "line": a Find a line turn (database only, no answer text). */
+  kind?: "line";
+  line?: LineMatch;
   status: "thinking" | "answering" | "done" | "notfound" | "error";
   step: 1 | 2 | 3;
   moments?: number;
@@ -39,7 +45,8 @@ const load = (): Turn[] => {
   } catch { return []; }
 };
 
-const citeLabel = (c: Cite) => `${c.speaker} · ${c.date} · ${fmtTime(c.startS)}`;
+// Threads kept in sessionStorage before 21b say "Host".
+const citeLabel = (c: Cite) => `${c.speaker === "Host" ? HOST_NAME : c.speaker} · ${c.date} · ${fmtTime(c.startS)}`;
 
 const clipOf = (key: string, m: { videoId: string; startS: number; endS: number; episode: string; guest: string; date: string }, minLen = 30): Clip => ({
   key, itemType: "answer", itemId: key, videoId: m.videoId, startS: m.startS, endS: Math.max(m.endS, m.startS + minLen),
@@ -55,23 +62,43 @@ function Initials({ name }: { name: string }) {
   return <span className="src__ini" style={{ background: `linear-gradient(140deg, hsl(${h} 55% 42%), hsl(${(h + 40) % 360} 55% 30%))` }}>{ini}</span>;
 }
 
-function Composer({ docked, busy, onAsk, autoFocus }: { docked?: boolean; busy: boolean; onAsk: (q: string) => void; autoFocus?: boolean }) {
+const LINE_ICON = "M9.5 6C6.5 7 5 9.4 5 12.5V18h5v-5H7.6c.2-1.9 1.2-3.2 2.9-4zM18.5 6c-3 1-4.5 3.4-4.5 6.5V18h5v-5h-2.4c.2-1.9 1.2-3.2 2.9-4z";
+
+function Composer({ docked, busy, onAsk, autoFocus, lineMode, onLineMode }: {
+  docked?: boolean; busy: boolean; onAsk: (q: string, line?: boolean) => void; autoFocus?: boolean; lineMode: boolean; onLineMode: (on: boolean) => void;
+}) {
   const [value, setValue] = useState("");
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const q = value.trim();
     if (!q || busy) return;
-    onAsk(q);
+    onAsk(q, lineMode);
     setValue("");
   };
+  const quoted = isQuoted(value);
+  const inputRef = useRef<HTMLInputElement>(null);
   return (
     <form className="composer" onSubmit={submit}>
+      <button
+        className="modebtn"
+        type="button"
+        aria-pressed={lineMode || quoted}
+        title="Find the exact moment a line was said"
+        onClick={() => {
+          onLineMode(!lineMode);
+          toast(lineMode ? "Back to asking questions" : "Find a line is on: type words you remember");
+          inputRef.current?.focus();
+        }}
+      >
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={LINE_ICON} /></svg><span>Find a line</span>
+      </button>
       <label htmlFor={docked ? "ask-follow" : "ask-first"} className="sr">{docked ? "Ask a follow-up" : "Your question"}</label>
       <input
+        ref={inputRef}
         id={docked ? "ask-follow" : "ask-first"}
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        placeholder={docked ? "Ask a follow-up" : "What have founders said about raising their first round?"}
+        placeholder={lineMode ? (docked ? "Type a line you remember" : "Type a line you remember from an episode") : docked ? "Ask a follow-up" : "What have founders said about raising their first round?"}
         autoComplete="off"
         maxLength={400}
         autoFocus={autoFocus}
@@ -102,6 +129,7 @@ export function AskView() {
   const params = useSearchParams();
   const [turns, setTurns] = useState<Turn[]>(load);
   const startedQ = useRef<string | null>(null);
+  const [lineMode, setLineMode] = useState(false);
   const busy = turns.some((t) => t.status === "thinking" || t.status === "answering");
 
   useEffect(() => {
@@ -137,12 +165,30 @@ export function AskView() {
     }
   };
 
-  const ask = async (q: string) => {
+  /** Find a line: the database only, no Claude call. */
+  const findLine = async (id: string, query: string) => {
+    try {
+      const res = await fetch("/api/find-line", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
+      if (!res.ok) {
+        toast(res.status === 429 ? "Too many searches. Wait a few minutes and try again." : "Couldn't reach the archive. Try again.");
+        patch(id, (t) => ({ ...t, status: "error" }));
+        return;
+      }
+      const r = (await res.json()) as FindLineResult;
+      patch(id, (t) => (r.status === "found" ? { ...t, status: "done", line: r.match } : { ...t, status: "notfound" }));
+    } catch {
+      patch(id, (t) => ({ ...t, status: "error" }));
+    }
+  };
+
+  const ask = async (q: string, line = false) => {
     if (busy) return;
+    const asLine = line || isQuoted(q);
     const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const earlier = turns.map((t) => t.q).slice(-3);
-    setTurns((all) => [...all, { id, q, status: "thinking", step: 1, blocks: [], sources: [], followups: [], suggestions: [], answerId: null }]);
+    setTurns((all) => [...all, { id, q: asLine ? unquote(q) : q, kind: asLine ? "line" : undefined, status: "thinking", step: 1, blocks: [], sources: [], followups: [], suggestions: [], answerId: null }]);
     window.setTimeout(() => document.getElementById(`turn-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" }), 50);
+    if (asLine) return findLine(id, q);
     try {
       const res = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q, earlier }) });
       if (!res.ok || !res.body) {
@@ -184,13 +230,13 @@ export function AskView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
-  const reset = () => { setTurns([]); window.scrollTo({ top: 0 }); };
+  const reset = () => { setTurns([]); setLineMode(false); window.scrollTo({ top: 0 }); };
 
   if (!turns.length) {
     return (
       <section className="ask-empty">
         <h1 className="ask-h rise">Ask anything from 500 episodes<span>in English, Hindi or Hinglish</span></h1>
-        <div className="rise d1"><Composer busy={busy} onAsk={ask} autoFocus /></div>
+        <div className="rise d1"><Composer busy={busy} onAsk={ask} autoFocus lineMode={lineMode} onLineMode={setLineMode} /></div>
         <div className="chips rise d2">
           {EXAMPLE_QUESTIONS.map((x) => (
             <button key={x} className="chip" type="button" onClick={() => ask(x)} lang={/[ऀ-ॿ]/.test(x) ? "hi" : undefined}>{x}</button>
@@ -205,16 +251,25 @@ export function AskView() {
       <section className="thread">
         {turns.map((t, i) => (
           <article className="turn" key={t.id} id={`turn-${t.id}`}>
-            {i === 0 ? <h1 className="q1">{t.q}</h1> : <h2 className="qn">{t.q}</h2>}
-            {(t.status === "thinking" || (t.status === "answering" && !t.blocks.length)) && !t.ref && <Thinking turn={t} />}
+            {i === 0 ? <h1 className="q1">{t.kind === "line" ? `“${t.q}”` : t.q}</h1> : <h2 className="qn">{t.kind === "line" ? `“${t.q}”` : t.q}</h2>}
+            {t.kind === "line" && t.status === "thinking" && <LineThinking />}
+            {t.kind === "line" && t.status === "notfound" && (
+              <div className="nf rise">
+                <b>I couldn&apos;t find that line in the episodes.</b>
+                <p>Check the spelling, try a shorter part of the line you remember, or ask about the topic instead.</p>
+                <div className="chips"><button className="chip chip--follow" type="button" onClick={() => ask(t.q)} disabled={busy}>{t.q.length > 60 ? `${t.q.slice(0, 57)}…` : t.q}</button></div>
+              </div>
+            )}
+            {t.kind === "line" && t.status === "done" && t.line && <LineAnswer turnId={t.id} match={t.line} busy={busy} onAsk={ask} />}
+            {t.kind !== "line" && (t.status === "thinking" || (t.status === "answering" && !t.blocks.length)) && !t.ref && <Thinking turn={t} />}
             {t.status === "error" && (
               <div className="nf">
                 <b>Couldn&apos;t reach the archive.</b>
                 <p>Nothing was lost. Try the question again.</p>
-                <div className="chips"><button className="chip chip--follow" type="button" onClick={() => ask(t.q)} disabled={busy}>Try again</button></div>
+                <div className="chips"><button className="chip chip--follow" type="button" onClick={() => ask(t.q, t.kind === "line")} disabled={busy}>Try again</button></div>
               </div>
             )}
-            {t.status === "notfound" && (
+            {t.kind !== "line" && t.status === "notfound" && (
               <div className="nf">
                 <b>{t.thin ? "I couldn't find enough in the episodes to answer this well." : "I couldn't find this in the episodes."}</b>
                 <p>Cuepoint only answers from what was said on the show. Try one of these instead:</p>
@@ -223,12 +278,12 @@ export function AskView() {
                 </div>
               </div>
             )}
-            {(t.status === "thinking" || t.status === "answering" || t.status === "done") && (t.blocks.length > 0 || t.ref) && <Answer turn={t} busy={busy} onAsk={ask} onToggle={(k) => patch(t.id, (x) => ({ ...x, open: x.open === k ? undefined : k }))} />}
+            {t.kind !== "line" && (t.status === "thinking" || t.status === "answering" || t.status === "done") && (t.blocks.length > 0 || t.ref) && <Answer turn={t} busy={busy} onAsk={ask} onToggle={(k) => patch(t.id, (x) => ({ ...x, open: x.open === k ? undefined : k }))} />}
           </article>
         ))}
         <button className="linkbtn ask-new" type="button" onClick={reset} disabled={busy}>Start a new question</button>
       </section>
-      <div className="dock"><Composer docked busy={busy} onAsk={ask} /></div>
+      <div className="dock"><Composer docked busy={busy} onAsk={ask} lineMode={lineMode} onLineMode={setLineMode} /></div>
     </>
   );
 }
@@ -252,6 +307,19 @@ function Answer({ turn: t, busy, onAsk, onToggle }: { turn: Turn; busy: boolean;
     const lines = t.blocks.map((b) => b.text + b.cites.map((c) => ` [${citeLabel(c)} ${youtubeAt(c.videoId, c.startS)}]`).join("")).join("");
     try { await navigator.clipboard.writeText(`${t.q}\n\n${lines.trim()}`); toast("Answer copied with its timestamps"); }
     catch { toast("Copy isn't available here; select the text instead"); }
+  };
+
+  const [saved, setSaved] = useState(false);
+  const saveAnswer = async () => {
+    if (saved) return;
+    const citations = t.blocks.flatMap((b) => b.cites);
+    setSaved(true);
+    const ok = await saveWithUndo(
+      { kind: "answer", ref: { question: t.q, answer: t.blocks.map((b) => b.text).join("").trim(), citations } },
+      "Answer saved",
+      () => setSaved(false),
+    );
+    if (!ok) setSaved(false);
   };
 
   return (
@@ -334,6 +402,7 @@ function Answer({ turn: t, busy, onAsk, onToggle }: { turn: Turn; busy: boolean;
           )}
           {t.status === "done" && <div className="acts">
             <button className="linkbtn" type="button" onClick={copy}>Copy answer</button>
+            <button className="linkbtn" type="button" onClick={saveAnswer} disabled={saved}>{saved ? "Saved" : "Save answer"}</button>
             <ReportButton
               variant="link"
               item={{

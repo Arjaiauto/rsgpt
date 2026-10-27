@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { fmtTime, youtubeAt, type Clip } from "@/lib/player-types";
+import { saveWithUndo } from "@/lib/save-client";
 import { toast } from "@/lib/toast";
 import { IconBookmark, IconExternal, IconLink, IconPause, IconPlay } from "@/components/Icons";
 import { ReportButton } from "@/components/report/ReportButton";
@@ -69,6 +70,18 @@ export function ClipPlayer({ clip, label, report = true }: { clip: Clip; label?:
   const at = isCurrent ? pos : clip.startS;
   const frac = Math.max(0, Math.min(1, (at - clip.startS) / len));
 
+  const [saved, setSaved] = useState(false);
+  const save = async () => {
+    if (saved) return;
+    setSaved(true);
+    const ok = await saveWithUndo(
+      { kind: "clip", ref: { videoId: clip.videoId, startS: clip.startS, endS: clip.endS, title: clip.title, guest: clip.guest, episode: clip.episode, date: clip.date } },
+      "Clip saved",
+      () => setSaved(false),
+    );
+    if (!ok) setSaved(false);
+  };
+
   const copyLink = async () => {
     try { await navigator.clipboard.writeText(youtubeAt(clip.videoId, at)); } catch {}
     toast("Timestamp link copied");
@@ -104,8 +117,8 @@ export function ClipPlayer({ clip, label, report = true }: { clip: Clip; label?:
         </div>
         <div className="prow">
           <span className="ptime num">{fmtTime(at - clip.startS)} / {fmtTime(len)}</span>
-          <button className="pill pill--ghost" type="button" onClick={() => toast("Saved to Watch later", { undo: () => {} })}>
-            <IconBookmark />Save
+          <button className="pill pill--ghost" type="button" onClick={save} aria-pressed={saved}>
+            <IconBookmark />{saved ? "Saved" : "Save"}
           </button>
           <button className="pill pill--ghost" type="button" onClick={copyLink}><IconLink />Copy link</button>
           <a className="pill pill--ghost" href={youtubeAt(clip.videoId, at)} target="_blank" rel="noopener noreferrer">
