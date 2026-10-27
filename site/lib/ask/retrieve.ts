@@ -102,10 +102,41 @@ async function search(t: Timings, name: string, text: string, vector: number[]):
   });
 }
 
-export async function retrieve(question: string, earlier: string[], t: Timings): Promise<Retrieved> {
+/* ---------- 2b. Search limited to some episodes (a guest's), without the hybrid_search function ---------- */
+
+type ScopedChunk = { id: number; video_id: string; start_s: number; end_s: number; published_at: string | null; vector: number[] };
+
+/** Every chunk of the given episodes with its embedding. A guest has a handful of episodes (a few hundred chunks),
+    so comparing a question with all of them is cheap and needs no database function. */
+async function loadScoped(videoIds: string[]): Promise<ScopedChunk[]> {
+  const out: ScopedChunk[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db().from("chunks").select("id,video_id,start_s,end_s,published_at,embedding")
+      .in("video_id", videoIds).order("id").range(from, from + 999);
+    if (error) throw new Error(`chunks: ${error.message}`);
+    for (const r of data ?? []) {
+      out.push({ id: r.id, video_id: r.video_id, start_s: r.start_s, end_s: r.end_s, published_at: r.published_at, vector: parseVector(r.embedding) });
+    }
+    if ((data?.length ?? 0) < 1000) return out;
+  }
+}
+
+/** The closest chunks to one phrasing, scored like hybrid_search's rank fusion (1 / (60 + rank)). */
+function rankScoped(chunks: ScopedChunk[], vector: number[], count: number): Hit[] {
+  return chunks
+    .map((c) => ({ c, sim: cosine(vector, c.vector) }))
+    .sort((a, b) => b.sim - a.sim || a.c.id - b.c.id)
+    .slice(0, count)
+    .map(({ c }, i) => ({ id: c.id, video_id: c.video_id, start_s: c.start_s, end_s: c.end_s, text: "", published_at: c.published_at, score: 1 / (60 + i + 1) }));
+}
+
+/** `scopeIds` limits the search to those episodes (Ask from a guest page); without it the whole archive is searched. */
+export async function retrieve(question: string, earlier: string[], t: Timings, scopeIds?: string[]): Promise<Retrieved> {
+  const scoped = scopeIds ? loadScoped(scopeIds) : null;
+  scoped?.catch(() => {}); // a failure is reported where the chunks are used, not as an unhandled rejection
   // A first question is embedded and searched as asked straight away, while Haiku rewrites it. A follow-up
   // ("what did he say next?") only makes sense once the rewrite has resolved it, so it waits.
-  const asAsked = earlier.length
+  const asAsked = earlier.length || scoped
     ? null
     : t.time("embed_question", () => embedQueries([question]))
         .then(async ([vector]) => ({ vector, hits: await search(t, "search_question", question, vector) }));
@@ -130,7 +161,9 @@ export async function retrieve(question: string, earlier: string[], t: Timings):
   const vectors = await t.time("embed", () => embedQueries(phrasings.map((p) => p.text)));
   const [first, ...results] = await Promise.all([
     asAsked,
-    ...phrasings.map((p, i) => search(t, `search_${p.lang}`, p.text, vectors[i])),
+    ...phrasings.map((p, i) => scoped
+      ? t.time(`search_${p.lang}`, async () => rankScoped(await scoped, vectors[i], ASK.perPhrasing))
+      : search(t, `search_${p.lang}`, p.text, vectors[i])),
   ]);
   if (first) { results.push(first.hits); vectors.push(first.vector); }
 
@@ -155,11 +188,13 @@ export async function retrieve(question: string, earlier: string[], t: Timings):
   const ranked = [...byId.values()]
     .map((c) => ({ ...c, score: c.score * weight(c) }))
     .sort((a, b) => b.score - a.score || a.id - b.id);
+  // Limited to a few episodes, the best chunks may all come from one of them, so more per episode are kept.
+  const maxPerEpisode = scoped ? ASK.toModel : ASK.maxPerEpisode;
   const perEpisode = new Map<string, number>();
   const picked: Candidate[] = [];
   for (const c of ranked) {
     const n = perEpisode.get(c.videoId) ?? 0;
-    if (n >= ASK.maxPerEpisode) continue;
+    if (n >= maxPerEpisode) continue;
     perEpisode.set(c.videoId, n + 1);
     picked.push(c);
     if (picked.length >= ASK.merged) break;

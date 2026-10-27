@@ -31,7 +31,7 @@ export type SiteStats = {
   countedAt: string;
 };
 
-/** Last good numbers, counted from the database on 2026-10-27. Used only if the database can't be reached
+/** Last good numbers, counted from the database on 2026-10-27 (guests: 2026-10-28, after pipeline/corrections.json). Used only if the database can't be reached
     at build or revalidation time and this server has no newer result in memory. */
 const SNAPSHOT: SiteStats = {
   episodesListed: 500,
@@ -45,7 +45,7 @@ const SNAPSHOT: SiteStats = {
   verifiedPct: 98.4,
   verifiedClips: 2_705,
   verifiedHostQuestions: 18_533,
-  guests: 429,
+  guests: 428,
   passages: 35_234,
   opportunityCategories: 13,
   countedAt: "2026-10-27T00:00:00.000Z",

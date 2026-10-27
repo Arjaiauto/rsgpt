@@ -3,24 +3,33 @@ import { NextResponse } from "next/server";
 import { followups, logQuestion, sourceCards, streamAnswer } from "@/lib/ask/answer";
 import { ASK, COVERED_QUESTIONS } from "@/lib/ask/config";
 import { retrieve, sourceOf } from "@/lib/ask/retrieve";
+import { getGuestScope } from "@/lib/guests";
 import { Timings } from "@/lib/ask/timing";
 import type { AskEvent, AskLanguage } from "@/lib/ask/types";
 import { takeTry } from "@/lib/rate-limit";
 import { SESSION_COOKIE, VISITOR_COOKIE, readSessionToken } from "@/lib/session";
 
-/** POST /api/ask {question, earlier?: string[]} -> NDJSON stream of AskEvent (one JSON object per line). */
+/** POST /api/ask {question, earlier?: string[], guest?: slug} -> NDJSON stream of AskEvent (one JSON object per line). */
 export async function POST(request: Request) {
   const jar = await cookies();
   const session = readSessionToken(jar.get(SESSION_COOKIE)?.value);
   if (!session) return NextResponse.json({ error: "Not logged in" }, { status: 401 });
   const visitorId = jar.get(VISITOR_COOKIE)?.value ?? null;
 
-  const body = (await request.json().catch(() => ({}))) as { question?: unknown; earlier?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { question?: unknown; earlier?: unknown; guest?: unknown };
   const question = typeof body.question === "string" ? body.question.trim().slice(0, ASK.maxQuestionChars) : "";
   if (!question) return NextResponse.json({ error: "Empty question" }, { status: 400 });
   const earlier = Array.isArray(body.earlier)
     ? body.earlier.filter((q): q is string => typeof q === "string").slice(-3).map((q) => q.slice(0, ASK.maxQuestionChars))
     : [];
+
+  // Asked from a guest page: only that guest's episodes are searched.
+  let scope: { name: string; videoIds: string[] } | null = null;
+  if (body.guest != null) {
+    const slug = typeof body.guest === "string" ? body.guest : "";
+    scope = /^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug) && slug.length <= 120 ? await getGuestScope(slug) : null;
+    if (!scope) return NextResponse.json({ error: "Unknown guest" }, { status: 400 });
+  }
 
   const h = await headers();
   const who = visitorId ?? h.get("x-forwarded-for")?.split(",")[0].trim() ?? "local";
@@ -43,7 +52,7 @@ export async function POST(request: Request) {
       };
       try {
         emit({ type: "step", step: 1 });
-        const r = await retrieve(question, earlier, t);
+        const r = await retrieve(question, earlier, t, scope?.videoIds);
         language = r.rewritten.language;
         const episodes = new Set(r.chunks.map((c) => c.videoId)).size;
         emit({ type: "step", step: 2, moments: r.chunks.length, episodes });

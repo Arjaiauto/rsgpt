@@ -1,0 +1,33 @@
+{
+  "_about": "Fixes for facts the captions got wrong. Each rule replaces `wrong` with `right` in verified text (guest organisation, role and bio, insight text, clip topic and opening line) of the scoped episodes. A rule applies to a row when its video_id is in scope.video_ids, or its guest_key is scope.guest_key. `fields` (optional) limits a rule to some fields. `guest_keys` maps a guest_key that a correction made obsolete to the one it now belongs to. Applied by pipeline/corrections_lib.py: 06_extract.py (before rows are written), site_stats.py (guest count) and 14_apply_corrections.py (rows already in the database), so a re-run keeps them.",
+  "corrections": [
+    {
+      "id": "sisinty-growthschool",
+      "wrong": "Rose School",
+      "right": "GrowthSchool",
+      "ignore_case": true,
+      "scope": {
+        "guest_key": "vaibhav-sisinty--roseschool",
+        "video_ids": ["0-FUhQKe-eU", "LqY6hFLMEJw", "NcTcYDjBNNk", "keEi0LoZwL0"]
+      },
+      "reason": "Caption mishearing: Vaibhav Sisinty's company is GrowthSchool, not Rose School.",
+      "source": "https://growthschool.io"
+    },
+    {
+      "id": "sisinty-growthschool-spelling",
+      "wrong": "Growth School",
+      "right": "GrowthSchool",
+      "ignore_case": true,
+      "fields": ["organisation", "role_at_episode"],
+      "scope": {
+        "guest_key": "vaibhav-sisinty--growthschool",
+        "video_ids": ["0-FUhQKe-eU", "LqY6hFLMEJw", "NcTcYDjBNNk", "keEi0LoZwL0"]
+      },
+      "reason": "Written the way the company writes its name, so his rows show one spelling.",
+      "source": "https://growthschool.io"
+    }
+  ],
+  "guest_keys": {
+    "vaibhav-sisinty--roseschool": "vaibhav-sisinty--growthschool"
+  }
+}

@@ -12,7 +12,8 @@ Counts (final extraction run, verified = true where the table has it):
   speakerLabelledPct     share of those lines labelled host or guest
   hindiLines             translation_segments (one per Hindi line, romanised and translated)
   extracted / verified   insights + clips + guests rows in the final run, all vs verified
-  verifiedClips, verifiedHostQuestions (verified raj_question insights), guests (distinct guest_key),
+  verifiedClips, verifiedHostQuestions (verified raj_question insights), guests (distinct guest_key, after the
+  guest_keys merges in pipeline/corrections.json),
   passages (chunks), opportunityCategories (categories with a verified opportunity)
 
 Safe to rerun at any time: it only counts and replaces the one row. Network errors are retried by db_lib.
@@ -32,6 +33,7 @@ RUN_ID_PATH = ROOT / "data" / "extractions" / "haiku" / "v5" / "run_id.txt"
 BATCH = 25
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import corrections_lib  # noqa: E402
 import db_lib  # noqa: E402
 
 log = logging.getLogger("site_stats")
@@ -78,6 +80,7 @@ def compute(db, run_id: str) -> dict:
     ok = {t: count(db, f"verified {t}", t, **verified) for t in ("insights", "clips", "guests")}
     host_questions = count(db, "verified host questions", "insights", **verified, type="raj_question")
 
+    corrections = corrections_lib.load()
     keys = pages(db, "guest keys", lambda: db.table("guests").select("guest_key").eq("run_id", run_id)
                  .eq("verified", True).order("id"))
     categories = pages(db, "opportunity categories", lambda: db.table("insights").select("category")
@@ -98,7 +101,8 @@ def compute(db, run_id: str) -> dict:
         "verifiedPct": pct(passed, extracted),
         "verifiedClips": ok["clips"],
         "verifiedHostQuestions": host_questions,
-        "guests": len({k["guest_key"] for k in keys if k["guest_key"]}),
+        # corrections.json can merge two guest_keys into one (the same person under a misheard organisation)
+        "guests": len({corrections.guest_key(k["guest_key"]) for k in keys if k["guest_key"]}),
         "passages": count(db, "chunks", "chunks"),
         "opportunityCategories": len({c["category"] for c in categories}),
         "countedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),

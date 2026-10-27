@@ -8,7 +8,7 @@ import { PAGES } from "./NavLinks";
 
 type Row = { group: string; icon: ReactNode; label: string; side: string; run: () => void };
 type Results = {
-  guests: { key: string; name: string; organisation: string | null; episodes: number }[];
+  guests: { slug: string; name: string; organisation: string | null; episodes: number }[];
   episodes: { videoId: string; title: string; publishedAt: string | null; durationS: number | null }[];
 };
 
@@ -84,7 +84,7 @@ export function QuickSearch() {
     rows.push({
       group: "Guests", icon: <IconUser />, label: g.name,
       side: [g.organisation, `${g.episodes} episode${g.episodes === 1 ? "" : "s"}`].filter(Boolean).join(" · "),
-      run: go(`/guests/${encodeURIComponent(g.key)}`),
+      run: go(`/guests/${g.slug}`),
     });
   }
   for (const e of results.episodes) {

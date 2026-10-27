@@ -1,12 +1,14 @@
 import "server-only";
 import { ARCHIVE_RUN_ID, db } from "./db";
+import { guestSlug } from "./guest-slug";
 
 /** Strips characters that have meaning in PostgREST filters, so typed text is only ever matched as text. */
 function cleanQuery(q: string): string {
   return q.replace(/[%_,()*\\"]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-export type GuestHit = { key: string; name: string; organisation: string | null; episodes: number };
+/** `slug` is the clean URL slug of the guest_key (/guests/<slug>). */
+export type GuestHit = { slug: string; name: string; organisation: string | null; episodes: number };
 export type EpisodeHit = { videoId: string; title: string; publishedAt: string | null; durationS: number | null };
 
 /** Quick search: verified guests (one row per guest_key) and episode titles. */
@@ -38,7 +40,7 @@ export async function searchArchive(raw: string): Promise<{ guests: GuestHit[]; 
     if (!key) continue;
     const hit = byKey.get(key);
     if (hit) hit.episodes += 1;
-    else byKey.set(key, { key, name: r.name, organisation: r.organisation, episodes: 1 });
+    else byKey.set(key, { slug: guestSlug(key), name: r.name, organisation: r.organisation, episodes: 1 });
   }
   return {
     guests: [...byKey.values()].slice(0, 6),

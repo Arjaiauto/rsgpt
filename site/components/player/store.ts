@@ -12,9 +12,12 @@ export type PlayerState = {
   playing: boolean;
   /** Bumped whenever a slot mounts or unmounts, so the layer re-checks where to sit. */
   slots: number;
+  muted: boolean;
+  /** Captions shown (YouTube's captions module, switched with the IFrame API). */
+  captions: boolean;
 };
 
-const initial: PlayerState = { clip: null, pos: 0, playing: false, slots: 0 };
+const initial: PlayerState = { clip: null, pos: 0, playing: false, slots: 0, muted: false, captions: false };
 let state = initial;
 const listeners = new Set<() => void>();
 function set(patch: Partial<PlayerState>) {
@@ -27,6 +30,12 @@ export function usePlayer(): PlayerState {
   return useSyncExternalStore(subscribe, () => state, () => initial);
 }
 export const getPlayer = () => state;
+
+/** Only the current clip: pages with many items use this so they re-render when the clip changes, not on every
+    position tick of the playing video. */
+export function usePlayerClip(): Clip | null {
+  return useSyncExternalStore(subscribe, () => state.clip, () => null);
+}
 
 /* ---------- slots: page placeholders the fixed layer sits over ---------- */
 const slotEls = new Map<string, HTMLElement>();
@@ -49,6 +58,13 @@ type YTPlayer = {
   stopVideo(): void;
   seekTo(s: number, allowSeekAhead: boolean): void;
   getCurrentTime(): number;
+  mute(): void;
+  unMute(): void;
+  isMuted(): boolean;
+  /** Captions module (loadModule / unloadModule / getOption are undocumented but work on embeds). */
+  loadModule?(name: string): void;
+  unloadModule?(name: string): void;
+  getOption?(module: string, option: string): unknown;
 };
 type YTNamespace = {
   Player: new (el: HTMLElement, opts: Record<string, unknown>) => YTPlayer;
@@ -117,6 +133,11 @@ async function withPlayer(clip: Clip, autoplay: boolean, then?: () => void) {
       playerVars: {
         start: Math.floor(clip.startS),
         autoplay: autoplay ? 1 : 0,
+        // YouTube's own controls and overlays are off; Cuepoint draws its own (PlayerControls). The watermark stays.
+        controls: 0,
+        disablekb: 1,
+        iv_load_policy: 3,
+        fs: 0,
         playsinline: 1,
         rel: 0,
         modestbranding: 1,
@@ -125,6 +146,7 @@ async function withPlayer(clip: Clip, autoplay: boolean, then?: () => void) {
       events: {
         onReady: () => {
           ytReady = true;
+          set({ muted: yt!.isMuted() });
           yt!.seekTo(clip.startS, true);
           if (autoplay) yt!.playVideo();
           const p = pending; pending = null; p?.();
@@ -146,6 +168,13 @@ async function withPlayer(clip: Clip, autoplay: boolean, then?: () => void) {
   then?.();
 }
 
+/** Captions belong to the loaded video, so they are switched off when another video is played. */
+function resetCaptions(nextVideoId: string) {
+  if (!state.captions || state.clip?.videoId === nextVideoId) return;
+  try { yt?.unloadModule?.("captions"); } catch {}
+  set({ captions: false });
+}
+
 /* ---------- actions ---------- */
 export const player = {
   /** Plays a clip (or resumes it if it is already the current one). */
@@ -158,6 +187,7 @@ export const player = {
       return;
     }
     stopPoll();
+    resetCaptions(c.videoId);
     set({ clip: c, pos: c.startS, playing: false });
     void withPlayer(c, true).catch(() => toast("Couldn't load the YouTube player. Try again."));
   },
@@ -173,12 +203,39 @@ export const player = {
     const t = c.startS + Math.max(0, Math.min(1, f)) * (c.endS - c.startS);
     if (state.clip?.key !== c.key) {
       stopPoll();
+      resetCaptions(c.videoId);
       set({ clip: c, pos: t, playing: false });
       void withPlayer(c, true, () => yt?.seekTo(t, true)).catch(() => toast("Couldn't load the YouTube player. Try again."));
       return;
     }
     set({ pos: t });
     if (yt && ytReady) yt.seekTo(t, true);
+  },
+  toggleMute() {
+    if (!yt || !ytReady) return;
+    if (yt.isMuted()) yt.unMute(); else yt.mute();
+    set({ muted: yt.isMuted() });
+  },
+  /** Captions on or off. If the video turns out to have none, they go back off with a toast. */
+  toggleCaptions() {
+    if (!yt || !ytReady) return;
+    const on = !state.captions;
+    set({ captions: on });
+    try {
+      if (!on) { yt.unloadModule?.("captions"); return; }
+      yt.loadModule?.("captions");
+      window.setTimeout(() => {
+        const tracks = yt?.getOption?.("captions", "tracklist");
+        // The track list is only reliable while the video plays; a paused video is left with captions on.
+        if (state.captions && state.playing && Array.isArray(tracks) && tracks.length === 0) {
+          yt?.unloadModule?.("captions");
+          set({ captions: false });
+          toast("This video has no captions");
+        }
+      }, 4000); // the captions module can take a few seconds to list the tracks
+    } catch {
+      set({ captions: false });
+    }
   },
   close() {
     stopPoll();

@@ -21,6 +21,8 @@ type Turn = {
   kind?: "line";
   line?: LineMatch;
   status: "thinking" | "answering" | "done" | "notfound" | "error";
+  /** Name of the guest whose episodes this question was limited to (asked from a guest page). */
+  scope?: string;
   step: 1 | 2 | 3;
   moments?: number;
   episodes?: number;
@@ -44,6 +46,25 @@ const load = (): Turn[] => {
     return t.filter((x) => x.status === "done" || x.status === "notfound");
   } catch { return []; }
 };
+
+/** A question can be limited to one guest's episodes (the "Ask about this guest" box on a guest page). */
+type Scope = { slug: string; name: string };
+const SCOPE_STORE = "cp-ask-scope";
+const loadScope = (): Scope | null => {
+  try {
+    const s = JSON.parse(sessionStorage.getItem(SCOPE_STORE) ?? "null") as Partial<Scope> | null;
+    return s && typeof s.slug === "string" && typeof s.name === "string" ? { slug: s.slug, name: s.name } : null;
+  } catch { return null; }
+};
+
+function ScopeBar({ scope, onClear, disabled }: { scope: Scope; onClear: () => void; disabled: boolean }) {
+  return (
+    <div className="scopebar" role="status">
+      <span>Searching only <b>{scope.name}</b>&apos;s episodes</span>
+      <button className="linkbtn" type="button" onClick={onClear} disabled={disabled}>Search all episodes</button>
+    </div>
+  );
+}
 
 // Threads kept in sessionStorage before 21b say "Host".
 const citeLabel = (c: Cite) => `${c.speaker === "Host" ? HOST_NAME : c.speaker} · ${c.date} · ${fmtTime(c.startS)}`;
@@ -116,7 +137,7 @@ function Thinking({ turn }: { turn: Turn }) {
     <div className="think" role="status">
       <div className="wave" aria-hidden="true">{Array.from({ length: 14 }, (_, i) => <i key={i} />)}</div>
       <div className="steps">
-        <span className={cls(1)}>Searching 500 episodes</span>
+        <span className={cls(1)}>{turn.scope ? `Searching ${turn.scope}’s episodes` : "Searching 500 episodes"}</span>
         <span className={cls(2)}>{turn.moments != null ? `Found ${turn.moments} moments in ${turn.episodes} episodes` : "Finding the moments"}</span>
         <span className={cls(3)}>Writing the answer</span>
       </div>
@@ -130,11 +151,19 @@ export function AskView() {
   const [turns, setTurns] = useState<Turn[]>(load);
   const startedQ = useRef<string | null>(null);
   const [lineMode, setLineMode] = useState(false);
+  const [scope, setScope] = useState<Scope | null>(loadScope);
   const busy = turns.some((t) => t.status === "thinking" || t.status === "answering");
 
   useEffect(() => {
     try { sessionStorage.setItem(STORE, JSON.stringify(turns.filter((t) => t.status === "done" || t.status === "notfound"))); } catch {}
   }, [turns]);
+
+  useEffect(() => {
+    try {
+      if (scope) sessionStorage.setItem(SCOPE_STORE, JSON.stringify(scope));
+      else sessionStorage.removeItem(SCOPE_STORE);
+    } catch {}
+  }, [scope]);
 
   const patch = (id: string, fn: (t: Turn) => Turn) => setTurns((all) => all.map((t) => (t.id === id ? fn(t) : t)));
 
@@ -181,16 +210,18 @@ export function AskView() {
     }
   };
 
-  const ask = async (q: string, line = false) => {
+  /** `inScope` limits the question to a guest's episodes (default: the current scope); `fresh` ignores earlier questions. */
+  const ask = async (q: string, line = false, inScope: Scope | null = scope, fresh = false) => {
     if (busy) return;
     const asLine = line || isQuoted(q);
     const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-    const earlier = turns.map((t) => t.q).slice(-3);
-    setTurns((all) => [...all, { id, q: asLine ? unquote(q) : q, kind: asLine ? "line" : undefined, status: "thinking", step: 1, blocks: [], sources: [], followups: [], suggestions: [], answerId: null }]);
+    const earlier = fresh ? [] : turns.map((t) => t.q).slice(-3);
+    const turn: Turn = { id, q: asLine ? unquote(q) : q, kind: asLine ? "line" : undefined, scope: !asLine ? inScope?.name : undefined, status: "thinking", step: 1, blocks: [], sources: [], followups: [], suggestions: [], answerId: null };
+    setTurns((all) => (fresh ? [turn] : [...all, turn]));
     window.setTimeout(() => document.getElementById(`turn-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" }), 50);
     if (asLine) return findLine(id, q);
     try {
-      const res = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q, earlier }) });
+      const res = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q, earlier, ...(inScope ? { guest: inScope.slug } : {}) }) });
       if (!res.ok || !res.body) {
         const msg = res.status === 429 ? "Too many questions. Wait a few minutes and try again." : "Couldn't reach the archive. Try again.";
         toast(msg);
@@ -221,12 +252,21 @@ export function AskView() {
   };
 
   // /ask?q=... from quick search asks straight away (once), then clears the URL.
+  // With guest=<slug> (from a guest page) the question is limited to that guest's episodes; a different scope than
+  // the thread's starts a fresh thread, and a question without a guest searches everything.
   const q = params.get("q")?.trim();
+  const guestSlug = params.get("guest");
+  const guestName = params.get("gn");
   useEffect(() => {
     if (!q || startedQ.current === q) return;
     startedQ.current = q;
+    const next: Scope | null = guestSlug && /^[a-z0-9-]{1,120}$/.test(guestSlug)
+      ? { slug: guestSlug, name: (guestName ?? "").trim().slice(0, 80) || "this guest" }
+      : null;
+    const fresh = next?.slug !== scope?.slug;
+    setScope(next);
     router.replace("/ask", { scroll: false });
-    void ask(q);
+    void ask(q, false, next, fresh);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
@@ -235,13 +275,22 @@ export function AskView() {
   if (!turns.length) {
     return (
       <section className="ask-empty">
-        <h1 className="ask-h rise">Ask anything from 500 episodes<span>in English, Hindi or Hinglish</span></h1>
-        <div className="rise d1"><Composer busy={busy} onAsk={ask} autoFocus lineMode={lineMode} onLineMode={setLineMode} /></div>
-        <div className="chips rise d2">
-          {EXAMPLE_QUESTIONS.map((x) => (
-            <button key={x} className="chip" type="button" onClick={() => ask(x)} lang={/[ऀ-ॿ]/.test(x) ? "hi" : undefined}>{x}</button>
-          ))}
+        {scope ? (
+          <h1 className="ask-h rise">Ask about {scope.name}<span>using only their episodes</span></h1>
+        ) : (
+          <h1 className="ask-h rise">Ask anything from 500 episodes<span>in English, Hindi or Hinglish</span></h1>
+        )}
+        <div className="rise d1">
+          {scope && <ScopeBar scope={scope} onClear={() => setScope(null)} disabled={busy} />}
+          <Composer busy={busy} onAsk={ask} autoFocus lineMode={lineMode} onLineMode={setLineMode} />
         </div>
+        {!scope && (
+          <div className="chips rise d2">
+            {EXAMPLE_QUESTIONS.map((x) => (
+              <button key={x} className="chip" type="button" onClick={() => ask(x)} lang={/[ऀ-ॿ]/.test(x) ? "hi" : undefined}>{x}</button>
+            ))}
+          </div>
+        )}
       </section>
     );
   }
@@ -283,7 +332,10 @@ export function AskView() {
         ))}
         <button className="linkbtn ask-new" type="button" onClick={reset} disabled={busy}>Start a new question</button>
       </section>
-      <div className="dock"><Composer docked busy={busy} onAsk={ask} lineMode={lineMode} onLineMode={setLineMode} /></div>
+      <div className="dock">
+        {scope && <ScopeBar scope={scope} onClear={() => setScope(null)} disabled={busy} />}
+        <Composer docked busy={busy} onAsk={ask} lineMode={lineMode} onLineMode={setLineMode} />
+      </div>
     </>
   );
 }

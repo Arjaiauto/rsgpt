@@ -159,12 +159,15 @@ def clean_credit(credit: str) -> str:
     """The credit for display: "Copyright", "Photo by", bracketed or bare URLs and the site's own
     "(www.site.org)" notes are removed, and the names are joined with " / ". For example
     "Copyright World Economic Forum (www.weforum.org)/Photo by Dana Smillie" becomes
-    "World Economic Forum / Dana Smillie"."""
+    "World Economic Forum / Dana Smillie". A stray ". ." between names ("Vijay. .Tiwari") becomes a space and a
+    leading "Author " is dropped."""
     text = re.sub(r"[(\[]\s*(https?://|www\.)[^)\]]*[)\]]", " ", credit)
     text = re.sub(r"https?://\S+|www\.\S+", " ", text)
     text = re.sub(r"\bcopyright\b|©", " ", text, flags=re.I)
     text = re.sub(r"\bphoto\s+by\b", " ", text, flags=re.I)
+    text = re.sub(r"\.\s+\.", " ", text)  # "Vijay. .Tiwari" (a stray full stop pair between names) -> "Vijay Tiwari"
     parts = [" ".join(p.strip(" .,;:-").split()) for p in re.split(r"\s*/\s*", text)]
+    parts = [re.sub(r"^author\s+", "", p, flags=re.I) for p in parts]  # "Author Robert Greene" -> "Robert Greene"
     return " / ".join(p for p in parts if p)
 
 

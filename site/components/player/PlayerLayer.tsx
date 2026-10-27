@@ -4,14 +4,16 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { fmtTime, youtubeAt } from "@/lib/player-types";
 import { IconExternal, IconPause, IconPlay, IconX } from "@/components/Icons";
+import { PlayerControls } from "./PlayerControls";
 import { player, setPlayerHost, slotFor, usePlayer } from "./store";
 
 /** The one fixed layer that holds the YouTube iframe. Over the clip's slot on its source page; otherwise
     the mini player at the bottom right (full width under 820px). The iframe's DOM node never moves. */
 export function PlayerLayer() {
   const router = useRouter();
-  const { clip, pos, playing, slots } = usePlayer();
+  const { clip, pos, playing, slots, muted, captions } = usePlayer();
   const layerRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const slot = clip ? slotFor(clip.key) : null;
   const mode = !clip ? "off" : slot ? "slot" : "mini";
@@ -32,6 +34,8 @@ export function PlayerLayer() {
     }
     let raf = 0, last = "";
     const follow = () => {
+      // Full screen is the stage on its own: leave the layer position and clipping alone until it is over.
+      if (document.fullscreenElement) { layer.style.clipPath = ""; last = ""; raf = requestAnimationFrame(follow); return; }
       const r = slot.getBoundingClientRect();
       // Clip whatever part of the video has scrolled up under the sticky top bar, so it scrolls under the bar
       // like normal content (clip-path also stops clicks on the hidden part).
@@ -70,7 +74,10 @@ export function PlayerLayer() {
 
   return (
     <div ref={layerRef} className={`pl pl--${mode}`} role={mode === "mini" ? "region" : undefined} aria-label={mode === "mini" ? "Now playing" : undefined}>
-      <div className="pl__video" ref={hostRef} />
+      <div className="pl__stage" ref={stageRef}>
+        <div className="pl__video" ref={hostRef} />
+        {clip && mode !== "off" && <PlayerControls clip={clip} pos={pos} playing={playing} muted={muted} captions={captions} stageRef={stageRef} />}
+      </div>
       {mode === "mini" && clip && (
         <div className="pl__mini">
           <button className="pl__pp" type="button" onClick={() => player.toggle()} aria-label={playing ? "Pause" : "Play"}>

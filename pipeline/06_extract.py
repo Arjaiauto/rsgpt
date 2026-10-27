@@ -92,6 +92,7 @@ from anthropic.types.message_create_params import MessageCreateParamsNonStreamin
 from anthropic.types.messages.batch_create_params import Request
 from dotenv import load_dotenv
 
+import corrections_lib
 import romanize_lib
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -881,12 +882,14 @@ def write_rows(db, key: str, ep: dict, lines: list[dict], result: dict) -> dict:
     for table in ("insights", "clips", "guests"):
         db_call(f"{table} delete", lambda: db.table(table).delete().eq("video_id", vid).eq("run_id", run_id)
                 .execute())
+    corr = corrections_lib.load()  # pipeline/corrections.json: facts the captions got wrong, fixed before rows are written
     guest_id = None
     g = result["guest"]
     if g:
         row = {"name": g["name"], "organisation": g["organisation"] or None,
                "role_at_episode": g["role_at_episode"] or None, "sector_tags": g["sector_tags"],
                "bio": "\n".join(f["text"] for f in g["facts"]) or None, "video_id": vid, "model": model, "run_id": run_id}
+        row.update(corr.fix_fields(row, ("organisation", "role_at_episode", "bio")))
         guest_id = db_call("guests insert", lambda: db.table("guests").insert(row).execute()).data[0]["id"]
     rows = []
     for name, type_ in KINDS.items():
@@ -896,15 +899,15 @@ def write_rows(db, key: str, ep: dict, lines: list[dict], result: dict) -> dict:
             if name == "raj_questions":
                 notes.insert(0, f"question_type: {item['question_type']}")
             rows.append({"video_id": vid, "guest_id": guest_id, "type": type_,
-                         "category": item.get("category"), "text": item["text"], "start_s": start, "end_s": end,
+                         "category": item.get("category"), "text": corr.fix_text(item["text"], vid, field="text"), "start_s": start, "end_s": end,
                          "source_segment_ids": item["source_segment_ids"], "translated": bool(item["translated"]),
                          "verified": False, "check_notes": "; ".join(n for n in notes if n) or None,
                          "model": model, "run_id": run_id})
     for i in range(0, len(rows), DB_BATCH):
         chunk = rows[i:i + DB_BATCH]
         db_call("insights insert", lambda: db.table("insights").insert(chunk).execute())
-    clips = [{"video_id": vid, "start_s": c["start_s"], "end_s": c["end_s"], "opening_line": c["opening_line"],
-              "topic": c["topic"], "score": c["score"], "verified": False, "model": model, "run_id": run_id}
+    clips = [{"video_id": vid, "start_s": c["start_s"], "end_s": c["end_s"], "opening_line": corr.fix_text(c["opening_line"], vid, field="opening_line"),
+              "topic": corr.fix_text(c["topic"], vid, field="topic"), "score": c["score"], "verified": False, "model": model, "run_id": run_id}
              for c in result["clips"]]
     if clips:
         db_call("clips insert", lambda: db.table("clips").insert(clips).execute())
