@@ -1,8 +1,9 @@
 import { Suspense, type ReactNode } from "react";
 import { Logo } from "@/components/Logo";
 import { NavLinks, NavLinksView } from "@/components/app/NavLinks";
+import { LogoutButton } from "@/components/app/LogoutButton";
+import { QuickSearch } from "@/components/app/QuickSearch";
 import { requireSession } from "@/lib/auth";
-import { logout } from "../login/actions";
 import "./app.css";
 
 async function Hello() {
@@ -23,12 +24,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <Suspense fallback={<NavLinksView path="" />}>
           <NavLinks />
         </Suspense>
+        <QuickSearch />
         <Suspense fallback={<span className="hello" />}>
           <Hello />
         </Suspense>
-        <form action={logout}>
-          <button className="pill pill--ghost" type="submit">Log out</button>
-        </form>
+        <LogoutButton />
       </header>
       <main className="app-main">{children}</main>
     </div>

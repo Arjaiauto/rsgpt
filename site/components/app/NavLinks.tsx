@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
+import { IconMenu } from "@/components/Icons";
 
 export const PAGES: [href: string, label: string][] = [
   ["/ask", "Ask"],
@@ -30,7 +31,7 @@ export function NavLinksView({ path }: { path: string }) {
     <>
       <nav className="links" aria-label="Main">{links}</nav>
       <details className="menu" ref={menuRef}>
-        <summary className="pill pill--ghost" aria-label="Menu">Menu</summary>
+        <summary aria-label="Menu"><IconMenu /></summary>
         <nav className="menu__list" aria-label="Main">{links}</nav>
       </details>
     </>

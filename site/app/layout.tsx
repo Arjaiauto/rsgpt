@@ -1,6 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Noto_Sans_Devanagari } from "next/font/google";
+import { PlayerLayer } from "@/components/player/PlayerLayer";
+import { Toaster } from "@/components/Toaster";
 import "./globals.css";
+import "./components.css";
 
 const inter = Inter({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-inter" });
 const deva = Noto_Sans_Devanagari({ subsets: ["devanagari"], weight: ["400", "500"], variable: "--font-deva" });
@@ -42,6 +45,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         </svg>
         {children}
         <p className="foot">{FOOT_LINE}</p>
+        {/* Shared across every page: the single player layer (one iframe, never moved) and the toasts. */}
+        <PlayerLayer />
+        <Toaster />
       </body>
     </html>
   );
