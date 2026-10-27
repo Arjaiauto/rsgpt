@@ -1,0 +1,31 @@
+/* Login view (design/01-home-and-login.html, #v-login) */
+.auth {
+  min-height: calc(100svh - var(--foot-h)); display: grid; place-items: center; position: relative;
+  background: radial-gradient(90% 70% at 50% 40%, var(--paper-lit) 0%, var(--paper) 55%, var(--paper-edge) 100%);
+  padding-block: 80px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.auth .nav {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between;
+  padding-top: calc(18px + env(safe-area-inset-top, 0px));
+  padding-left: max(16px, var(--gutter), env(safe-area-inset-left, 0px));
+  padding-right: max(16px, var(--gutter), env(safe-area-inset-right, 0px));
+}
+.auth__box { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 26px; }
+.auth h1 { margin: 0; font-size: clamp(38px, 6vw, 60px); font-weight: 500; letter-spacing: -0.055em; line-height: 1; }
+.auth h1 > span { display: block; color: var(--ink-soft); }
+.auth h1 .wm, .auth h1 .ci { display: inline-block; color: var(--ink); }
+.fields { display: flex; flex-direction: column; gap: 12px; }
+.input {
+  height: 48px; width: 100%; padding: 0 22px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--raised);
+  color: var(--ink); font: 500 16px/1 var(--sans); letter-spacing: -0.02em; outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+}
+.input::placeholder { color: var(--ink-faint); }
+.input:focus-visible { border-color: var(--violet-text); box-shadow: 0 0 0 3px rgba(165, 139, 255, 0.18); }
+.input.shake { animation: shake 0.36s var(--ease); }
+.input[aria-invalid="true"] { border-color: rgba(255, 138, 154, 0.55); }
+.msg { min-height: 18px; font-size: 13px; color: var(--ink-faint); padding-left: 22px; }
+.msg.err { color: var(--error); }
+.auth .pill--primary { height: 48px; width: 100%; }
+.auth__note { margin: 0; font-size: 12.5px; color: var(--ink-faint); line-height: 1.5; }
+@media (prefers-reduced-motion: reduce) { .input.shake { animation: none; } }

@@ -1,0 +1,356 @@
+<title>Cuepoint Insights Mockup</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Cuepoint insights mockup: eight interactive findings about what goes with higher views.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+Devanagari:wght@400;500&display=swap">
+<style>
+
+/* Layout: sticky top bar; heading + toolbar; responsive card grid (4/3/2/1) */
+:root{
+  --paper:#101117; --paper-lit:#1a1b24; --paper-edge:#08090c;
+  --surface:#15161e; --raised:#1d1e28; --line:rgba(255,255,255,.08); --line-strong:rgba(255,255,255,.16);
+  --ink:#f2f2f5; --ink-soft:rgba(242,242,245,.6); --ink-faint:rgba(242,242,245,.4);
+  --violet:#5b07fb; --violet-deep:#4a00d6; --violet-text:#a58bff; --cite:#4fe3c1;
+  --gutter:clamp(16px,3.2vw,46px);
+  --ease:cubic-bezier(.2,.8,.2,1);
+  --sans:"Inter","Noto Sans Devanagari","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;min-height:100vh;background:var(--paper);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow-x:hidden;
+  background-image:radial-gradient(120% 60% at 50% -10%,var(--paper-lit) 0%,var(--paper) 55%,var(--paper-edge) 100%);background-attachment:fixed}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--paper)}
+button,input,select{font:inherit;color:inherit}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+:focus-visible{outline:2px solid var(--violet-text);outline-offset:3px}
+
+.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;display:flex;align-items:center;gap:26px;height:60px;
+  padding-left:max(16px,var(--gutter),env(safe-area-inset-left,0px));padding-right:max(16px,var(--gutter),env(safe-area-inset-right,0px));
+  background:rgba(16,17,23,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.logo{display:inline-flex;align-items:center;gap:10px;font-size:20px;color:var(--ink);text-decoration:none}
+.mk{width:26px;height:26px;flex:none;display:block}
+.wm{font-weight:600;letter-spacing:-.05em;white-space:nowrap}
+.ci{display:inline-block;position:relative;width:.27em;height:.545em;vertical-align:baseline}
+.ci i{position:absolute;left:.075em;bottom:0;width:.12em;height:.545em;border-radius:.06em;background:currentColor}
+.ci i::after{content:"";position:absolute;left:50%;top:-.33em;width:.25em;height:.21em;margin-left:-.125em;background:var(--cite);clip-path:polygon(6% 0,94% 0,50% 100%)}
+.links{display:flex;gap:22px;font-size:15px;letter-spacing:-.02em}
+.links a{color:var(--ink-soft);text-decoration:none;padding:6px 0;border-bottom:2px solid transparent}
+.links a[aria-current]{color:var(--ink);border-color:var(--violet)}
+.me{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:14px;color:var(--ink-soft)}
+.av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:600;color:#fff;background:linear-gradient(140deg,#7c3cff,#2bb79a)}
+
+
+/* Layout: report column (max 980px); sticky filter row; one finding per section; drill-down side panel */
+:root{--bar:#8b5cff;--bar-hi:#14957a;--grid:rgba(255,255,255,.07)}
+main{width:100%;max-width:1040px;margin:0 auto;padding-block:40px 110px;
+  padding-left:max(16px,var(--gutter),env(safe-area-inset-left,0px));padding-right:max(16px,var(--gutter),env(safe-area-inset-right,0px))}
+h1{margin:0;font-size:clamp(38px,6vw,72px);font-weight:500;line-height:1;letter-spacing:-.055em}
+h1 span{display:block;color:var(--ink-soft)}
+.proof{margin-top:22px;display:flex;gap:14px;align-items:flex-start;padding:16px 18px;border-radius:16px;border:1px solid rgba(255,207,122,.3);background:rgba(255,207,122,.06);font-size:14.5px;line-height:1.55;color:var(--ink)}
+.proof b{font-weight:600;color:#ffcf7a;white-space:nowrap}
+.how{margin:14px 0 0;font-size:14px;line-height:1.6;color:var(--ink-soft);max-width:70ch}
+.filters{position:sticky;top:calc(60px + env(safe-area-inset-top,0px));z-index:12;margin:26px 0 8px;padding-block:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:linear-gradient(180deg,var(--paper) 80%,rgba(16,17,23,0))}
+.sel{height:42px;padding:0 36px 0 16px;border-radius:999px;border:1px solid var(--line);background:var(--raised);font-size:14px;cursor:pointer;appearance:none;-webkit-appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,var(--ink-soft) 50%),linear-gradient(135deg,var(--ink-soft) 50%,transparent 50%);background-position:calc(100% - 19px) 18px,calc(100% - 14px) 18px;background-size:5px 5px;background-repeat:no-repeat}
+.sel option{background:var(--raised)}
+.fcount{margin-left:auto;font-size:13.5px;color:var(--ink-soft)}
+.fcount b{color:var(--ink);font-weight:500;font-variant-numeric:tabular-nums}
+.reset{height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--ink-soft);font-size:13px;cursor:pointer}
+.sec{padding-block:44px;border-top:1px solid var(--line)}
+.sec:first-of-type{border-top:0}
+.eb{margin:0 0 10px;font-size:12.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--violet-text)}
+.hl{margin:0;font-size:clamp(22px,3vw,32px);font-weight:500;line-height:1.2;letter-spacing:-.035em;text-wrap:balance;max-width:28ch}
+.hl em{font-style:normal;color:var(--cite)}
+.sub{margin:10px 0 22px;font-size:14px;color:var(--ink-faint);line-height:1.5}
+.card{padding:20px;border-radius:20px;border:1px solid var(--line);background:var(--surface)}
+.two{display:grid;grid-template-columns:minmax(0,1fr);gap:26px}
+.two h3{margin:0 0 12px;font-size:14px;font-weight:500;color:var(--ink-soft)}
+svg.ch{display:block;width:100%;height:auto;overflow:visible}
+.ch text{fill:var(--ink-faint);font:12px var(--sans)}
+.ch .lab{fill:var(--ink-soft);font-size:13px}
+.ch .val{fill:var(--ink);font-size:12.5px;font-weight:500;font-variant-numeric:tabular-nums}
+.ch .gl{stroke:var(--grid)}
+.ch .ref{stroke:rgba(242,242,245,.45);stroke-dasharray:4 4}
+.ch .bx{fill:var(--bar);transition:fill .2s,opacity .2s}
+.ch .hit{fill:transparent;cursor:pointer}
+.ch g.row:hover .bx,.ch g.row:focus-visible .bx{fill:#a27dff}
+.ch g.row.on .bx{fill:var(--bar-hi)}
+.ch g.row:focus-visible{outline:none}
+.ch g.row:focus-visible .hit{stroke:var(--violet-text);stroke-width:2}
+.ch .wh{stroke:rgba(242,242,245,.6);stroke-width:1.5}
+.ch .dot{fill:var(--bar);opacity:.55;stroke:var(--surface);stroke-width:1.5}
+.ch .dot.on{fill:var(--bar-hi);opacity:1}
+.ch .med{fill:none;stroke:#ffcf7a;stroke-width:2;stroke-linejoin:round}
+.ch .cell{stroke:var(--surface);stroke-width:2;cursor:pointer}
+.ch .cell:hover{stroke:var(--violet-text)}
+.ch .cell.on{stroke:var(--cite);stroke-width:2.5}
+.ch .ctext{fill:#fff;font-size:12px;font-weight:500;pointer-events:none}
+.grow .bx{animation:grow .7s var(--ease) both;transform-box:fill-box;transform-origin:left}
+@keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:12.5px;color:var(--ink-faint)}
+.legend i{display:inline-block;width:18px;height:0;border-top:2px dashed rgba(242,242,245,.45);vertical-align:3px;margin-right:6px}
+.legend i.w{border-top:1.5px solid rgba(242,242,245,.6)}
+.legend i.m{border-top:2px solid #ffcf7a}
+.legend i.sq{width:12px;height:12px;border:0;border-radius:3px;vertical-align:-1px}
+.hidden-note{margin-top:10px;font-size:12.5px;color:var(--ink-faint)}
+.tip{position:fixed;z-index:70;pointer-events:none;padding:9px 12px;border-radius:12px;background:#0b0c11;border:1px solid var(--line-strong);font-size:13px;line-height:1.45;box-shadow:0 10px 30px rgba(0,0,0,.5);max-width:260px;opacity:0;transition:opacity .12s}
+.tip b{font-weight:500}
+.tip.on{opacity:1}
+.tbl-btn{margin-top:12px;border:0;background:none;color:var(--ink-faint);font-size:12.5px;cursor:pointer;padding:0;text-decoration:underline}
+table.dt{width:100%;margin-top:10px;border-collapse:collapse;font-size:13px}
+table.dt th,table.dt td{padding:7px 8px;text-align:left;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+table.dt th{color:var(--ink-faint);font-weight:500}
+.tw{overflow-x:auto}
+
+/* drill-down */
+.scrim{position:fixed;inset:0;z-index:40;background:rgba(5,5,8,.55);opacity:0;pointer-events:none;transition:opacity .3s}
+.scrim.on{opacity:1;pointer-events:auto}
+.panel{position:fixed;top:0;right:0;bottom:0;z-index:41;width:min(460px,100%);display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--line-strong);transform:translateX(102%);transition:transform .35s var(--ease)}
+.panel.on{transform:none}
+.ph{display:flex;align-items:flex-start;gap:12px;padding:calc(20px + env(safe-area-inset-top,0px)) max(20px,env(safe-area-inset-right,0px)) 14px 20px;border-bottom:1px solid var(--line)}
+.ph div{flex:1;min-width:0}
+.ph b{display:block;font-size:18px;font-weight:500;letter-spacing:-.02em}
+.ph span{font-size:13px;color:var(--ink-soft)}
+.x{flex:none;width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:var(--raised);color:var(--ink-soft);font-size:17px;cursor:pointer}
+.eps{flex:1;overflow-y:auto;padding:10px max(12px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) 12px;display:flex;flex-direction:column;gap:6px}
+.ep{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:12px;border-radius:12px;background:var(--raised);font-size:13.5px}
+.ep b{font-weight:500;line-height:1.35}
+.ep .s{text-align:right;font-weight:500;color:var(--ink);font-variant-numeric:tabular-nums}
+.ep .m{grid-column:1/-1;font-size:12px;color:var(--ink-faint)}
+.ep a{color:var(--violet-text);text-decoration:none}
+.foot{text-align:center;font-size:12.5px;color:var(--ink-faint);margin:40px 0 0}
+.tag{display:inline-block;margin-left:8px;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:500;letter-spacing:.04em;color:var(--violet-text);border:1px solid rgba(165,139,255,.35);vertical-align:3px}
+@media (max-width:820px){.links{display:none}.me span:last-child{display:none}.two{grid-template-columns:minmax(0,1fr)}.fcount{margin-left:0;width:100%}.filters .sel{flex:1 1 0;min-width:0}}
+@media (prefers-reduced-motion:reduce){.grow .bx{animation:none}.panel,.scrim{transition:none}}
+</style>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs><linearGradient id="cp-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c3cff"/><stop offset=".55" stop-color="#5b07fb"/><stop offset="1" stop-color="#3a0aa8"/></linearGradient></defs>
+  <symbol id="cp-mark" viewBox="0 0 56 56">
+    <rect width="56" height="56" rx="16" fill="url(#cp-g)"/>
+    <g fill="#fff" opacity=".38"><rect x="10.5" y="27" width="3.2" height="8" rx="1.6"/><rect x="16.8" y="22.5" width="3.2" height="17" rx="1.6"/><rect x="36" y="20.5" width="3.2" height="21" rx="1.6"/><rect x="42.3" y="25" width="3.2" height="12" rx="1.6"/></g>
+    <rect x="25.4" y="19" width="5.2" height="26" rx="2.6" fill="#fff"/>
+    <path d="M20.6 9.6h14.8a1.6 1.6 0 0 1 1.2 2.7l-7.4 7.6a1.6 1.6 0 0 1-2.3 0l-7.4-7.6a1.6 1.6 0 0 1 1.1-2.7z" fill="#4fe3c1"/>
+  </symbol>
+</svg>
+
+<header class="bar">
+  <a class="logo" href="#"><svg class="mk" aria-hidden="true"><use href="#cp-mark"/></svg><span class="sr">Cuepoint</span><span class="wm" aria-hidden="true">cuepo<span class="ci"><i></i></span>nt</span></a>
+  <nav class="links" aria-label="Main"><a href="#">Ask</a><a href="#">Guests</a><a href="#">Prep brief</a><a href="#">Clips</a><a href="#">Saved</a><a href="#" aria-current="page">Insights</a></nav>
+  <div class="me"><span class="av" aria-hidden="true">A</span><span>Hi Arjun</span></div>
+</header>
+
+
+<main>
+  <h1>Insights<span>what goes with higher views</span></h1>
+  <div class="proof"><b>Patterns, not proof.</b><span>Guest fame, news cycles and the YouTube algorithm move views too. Use these to ask better questions, not as rules.</span></div>
+  <p class="how">Every episode gets a <b style="font-weight:500;color:var(--ink)">fair score</b>: its views divided by the typical views of the channel's episodes at the same age. 2.0× means twice a typical episode of that age. Bars show the middle (median) score; the thin line shows where the middle half of episodes fall. Groups with fewer than 20 episodes are hidden. <span class="tag">SAMPLE DATA</span></p>
+  <div class="filters" role="group" aria-label="Filters">
+    <label class="sr" for="fy">Years</label><select class="sel" id="fy"><option value="2022">2022 to 2026</option><option value="2024">2024 to 2026</option><option value="2025">2025 to 2026</option></select>
+    <label class="sr" for="fl">Language</label><select class="sel" id="fl"><option value="">All languages</option><option>English</option><option>Hindi</option><option>Hinglish</option></select>
+    <label class="sr" for="fg">Guest type</label><select class="sel" id="fg"><option value="">All guest types</option></select>
+    <button class="reset" type="button" id="reset">Reset</button>
+    <p class="fcount"><b id="n">499</b> episodes in view</p>
+  </div>
+  <div id="secs"></div>
+  <p class="foot">Unofficial project, not affiliated with Figuring Out. Every answer links to its source.</p>
+</main>
+<div class="tip" id="tip" role="tooltip"></div>
+<div class="scrim" id="scrim"></div>
+<aside class="panel" id="panel" aria-hidden="true" aria-label="Episodes behind this group">
+  <div class="ph"><div><b id="pTitle"></b><span id="pSub"></span></div><button class="x" type="button" id="pX" aria-label="Close">&times;</button></div>
+  <div class="eps" id="eps"></div>
+</aside>
+
+<script>
+(() => {
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ---------- sample dataset: 499 episodes, seeded so it is the same every load ---------- */
+let seed = 42; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const pick = (arr, w) => { let r = rnd() * w.reduce((a, b) => a + b, 0); for (let i = 0; i < arr.length; i++) { r -= w[i]; if (r <= 0) return arr[i]; } return arr[arr.length - 1]; };
+const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+const TITLE = ["Money amount", "Has a number", "Guest name first", "Asks a question", "No hook"], TITLE_B = [.45, .3, .2, .05, -.25];
+const TOPIC = ["Geopolitics", "Money", "Health", "Spirituality", "Startups", "Careers", "Relationships"], TOPIC_B = [.4, .3, .2, .15, .05, -.05, .1];
+const GTYPE = ["Celebrity", "Politician", "Expert", "Founder", "Creator", "Athlete"], GTYPE_B = [.5, .35, .15, .05, .1, .05];
+const LANG = ["English", "Hindi", "Hinglish"], LANG_B = [-.05, .15, .05];
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], SLOTS = ["Morning", "Afternoon", "Evening", "Night"];
+const NAMES = ["Asha", "Vikram", "Meera", "Rohan", "Sana", "Kabir", "Priya", "Aditya", "Neha", "Farhan", "Ishita", "Dev", "Tara", "Arnav", "Zoya", "Karan"];
+const EP = [];
+for (let i = 0; i < 499; i++) {
+  const year = pick([2022, 2023, 2024, 2025, 2026], [40, 80, 120, 150, 109]);
+  const month = 1 + Math.floor(rnd() * (year === 2026 ? 10 : 12));
+  const t = pick(TITLE, [12, 22, 30, 16, 20]), tp = pick(TOPIC, [9, 22, 16, 8, 20, 15, 10]), g = pick(GTYPE, [9, 7, 26, 30, 18, 10]);
+  const lang = pick(LANG, [26, 30, 44]), len = Math.round(55 + rnd() * 110), day = Math.floor(rnd() * 7), slot = pick([0, 1, 2, 3], [20, 25, 40, 15]);
+  const chall = Math.max(0, +(2.5 + gauss() * 1.6 + (g === "Politician" ? 1.2 : 0)).toFixed(1));
+  const repeat = rnd() < .28, repeatGuest = rnd() < .08;
+  const lenB = len > 140 ? -.05 : len > 100 ? .1 : 0, slotB = [.05, 0, .12, -.08][slot] + (day >= 5 ? .06 : 0);
+  const logS = TITLE_B[TITLE.indexOf(t)] + TOPIC_B[TOPIC.indexOf(tp)] * .8 + GTYPE_B[GTYPE.indexOf(g)] + LANG_B[LANG.indexOf(lang)] + lenB + slotB + .06 * (chall - 2.5) - (repeat ? .18 : 0) + gauss() * .38;
+  const score = Math.exp(logS);
+  const comments = Math.max(.3, (2.2 + (tp === "Geopolitics" ? 1.6 : tp === "Relationships" ? 1.2 : tp === "Spirituality" ? .9 : 0) + gauss() * .7));
+  const guest = NAMES[i % NAMES.length] + " " + "ABCDEFGHKLMNPRS"[Math.floor(rnd() * 15)] + ".";
+  EP.push({ id: i, year, month, t, tp, g, lang, len, day, slot, chall, repeat, repeatGuest, score, comments, guest, views: +(score * (0.8 + rnd() * 1.6) * (1 + (2026 - year) * .35)).toFixed(1) });
+}
+{ const s = EP.map(e => e.score).sort((x, y) => x - y), m = s[Math.floor(s.length / 2)]; EP.forEach(e => e.score /= m); }
+$("#fg").innerHTML += GTYPE.map(g => `<option>${g}</option>`).join("");
+
+/* ---------- stats helpers ---------- */
+const q = (a, p) => { if (!a.length) return NaN; const s = [...a].sort((x, y) => x - y), i = (s.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i); return s[lo] + (s[hi] - s[lo]) * (i - lo); };
+const fx = v => v.toFixed(1) + "×";
+const MIN_N = 20;
+function groups(list, key, order, label = x => x) {
+  return order.map(k => { const e = list.filter(x => key(x) === k), sc = e.map(x => x.score); return { k, label: label(k), n: e.length, med: q(sc, .5), lo: q(sc, .25), hi: q(sc, .75), eps: e }; });
+}
+
+/* ---------- tooltip ---------- */
+const tip = $("#tip");
+function showTip(html, ev) { tip.innerHTML = html; tip.classList.add("on"); const x = Math.min(ev.clientX + 14, innerWidth - tip.offsetWidth - 8), y = Math.max(8, ev.clientY - tip.offsetHeight - 12); tip.style.left = x + "px"; tip.style.top = y + "px"; }
+const hideTip = () => tip.classList.remove("on");
+
+/* ---------- horizontal bar chart with range whisker ---------- */
+function hbars(gs, { max = 3, unit = "score", fmt = fx, ref = 1 } = {}) {
+  const shown = gs.filter(g => g.n >= MIN_N), hidden = gs.filter(g => g.n < MIN_N && g.n > 0);
+  shown.sort((a, b) => b.med - a.med);
+  const W = 640, L = 132, R = 56, rowH = 38, H = shown.length * rowH + 26, X = v => L + Math.min(v, max) / max * (W - L - R);
+  let s = `<svg class="ch grow" viewBox="0 0 ${W} ${H}" role="img" aria-label="${unit} by group">`;
+  for (let t = 0; t <= max; t += max > 4 ? 1 : .5) s += `<line class="gl" x1="${X(t)}" x2="${X(t)}" y1="0" y2="${H - 22}"/><text x="${X(t)}" y="${H - 6}" text-anchor="middle">${max > 4 ? t : fmt(t)}</text>`;
+  if (ref != null) s += `<line class="ref" x1="${X(ref)}" x2="${X(ref)}" y1="-4" y2="${H - 22}"/>`;
+  shown.forEach((g, i) => {
+    const y = i * rowH + 6, bh = 22;
+    s += `<g class="row" tabindex="0" role="button" data-i="${gs.indexOf(g)}" aria-label="${esc(g.label)}: ${fmt(g.med)}, ${g.n} episodes. Show episodes">
+      <rect class="hit" x="0" y="${y - 6}" width="${W}" height="${rowH}"/>
+      <text class="lab" x="${L - 12}" y="${y + 15}" text-anchor="end">${esc(g.label)}</text>
+      <rect class="bx" x="${L}" y="${y}" width="${Math.max(2, X(g.med) - L)}" height="${bh}" rx="4" style="animation-delay:${i * 50}ms"/>
+      ${isNaN(g.lo) ? "" : `<line class="wh" x1="${X(g.lo)}" x2="${X(g.hi)}" y1="${y + bh / 2}" y2="${y + bh / 2}"/><line class="wh" x1="${X(g.lo)}" x2="${X(g.lo)}" y1="${y + 6}" y2="${y + bh - 6}"/><line class="wh" x1="${X(g.hi)}" x2="${X(g.hi)}" y1="${y + 6}" y2="${y + bh - 6}"/>`}
+      <text class="val" x="${Math.max(X(g.hi), X(g.med)) + 8}" y="${y + 15}">${fmt(g.med)}</text>
+    </g>`;
+  });
+  s += `</svg><div class="legend">${ref != null ? '<span><i></i>Typical episode (1.0×)</span>' : ""}<span><i class="w"></i>Middle half of episodes</span></div>`;
+  if (hidden.length) s += `<p class="hidden-note">Hidden (fewer than ${MIN_N} episodes): ${hidden.map(h => `${esc(h.label)} (${h.n})`).join(", ")}</p>`;
+  return { svg: s, shown };
+}
+
+/* ---------- sections ---------- */
+const SECTIONS = [];
+const filtered = () => { const y = +$("#fy").value, l = $("#fl").value, g = $("#fg").value; return EP.filter(e => e.year >= y && (!l || e.lang === l) && (!g || e.g === g)); };
+function headlineBest(shown, noun, unitFmt = fx) {
+  if (!shown.length) return "Not enough episodes in this filter to compare.";
+  const b = shown[0], w = shown[shown.length - 1];
+  return `${esc(b.label)} ${noun} did best, at <em>${unitFmt(b.med)}</em>${shown.length > 1 ? `; ${esc(w.label).toLowerCase()} did least well, at ${unitFmt(w.med)}` : ""}.`;
+}
+function section(id, eb, build) { SECTIONS.push({ id, eb, build }); }
+section("title", "1 · Title style", list => { const gs = groups(list, e => e.t, TITLE); const c = hbars(gs); return { hl: headlineBest(c.shown, "titles"), sub: "Title style is read from the YouTube title of each episode.", body: c.svg, gs, table: gs }; });
+section("topic", "2 · Topics", list => { const gs = groups(list, e => e.tp, TOPIC); const c = hbars(gs); return { hl: headlineBest(c.shown, "episodes"), sub: "Each episode's main topic comes from the extraction step.", body: c.svg, gs, table: gs }; });
+section("guest", "3 · Guest types", list => {
+  const gs = groups(list, e => e.g, GTYPE); const c = hbars(gs);
+  const rg = groups(list, e => e.repeatGuest ? "Repeat guest" : "First-time guest", ["First-time guest", "Repeat guest"]);
+  const c2 = hbars(rg);
+  return { hl: headlineBest(c.shown, "guests"), sub: "Guest type comes from the guest's sector tags. Repeat guests have been on the show before.", body: `<div class="two"><div><h3>By guest type</h3>${c.svg}</div><div><h3>First-time vs repeat</h3>${c2.svg}</div></div>`, gs: gs.concat(rg), table: gs.concat(rg) };
+});
+section("style", "4 · Host's interview style", list => {
+  const W = 640, H = 300, L = 46, R = 16, T = 12, B = 34, xmax = 8, lo = .2, hi = 5;
+  const X = v => L + Math.min(v, xmax) / xmax * (W - L - R), Y = v => T + (Math.log(hi) - Math.log(Math.max(lo, Math.min(hi, v)))) / (Math.log(hi) - Math.log(lo)) * (H - T - B);
+  let s = `<svg class="ch" viewBox="0 0 ${W} ${H}" role="img" aria-label="Challenge questions per hour against score">`;
+  [.25, .5, 1, 2, 4].forEach(v => s += `<line class="gl" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L - 8}" y="${Y(v) + 4}" text-anchor="end">${v}×</text>`);
+  for (let x = 0; x <= xmax; x += 2) s += `<text x="${X(x)}" y="${H - 12}" text-anchor="middle">${x}</text>`;
+  s += `<text x="${(L + W - R) / 2}" y="${H}" text-anchor="middle">Challenge questions per hour</text><line class="ref" x1="${L}" x2="${W - R}" y1="${Y(1)}" y2="${Y(1)}"/>`;
+  list.forEach(e => s += `<circle class="dot" cx="${X(e.chall).toFixed(1)}" cy="${Y(e.score).toFixed(1)}" r="4" data-ep="${e.id}"/>`);
+  const bins = [[0, 1.5], [1.5, 2.5], [2.5, 3.5], [3.5, 4.5], [4.5, 9]], meds = bins.map(b => { const e = list.filter(x => x.chall >= b[0] && x.chall < b[1]); return { b, n: e.length, med: q(e.map(x => x.score), .5), eps: e, label: b[1] > 8 ? `${b[0]}+ per hour` : `${b[0]} to ${b[1]} per hour` }; });
+  const ok = meds.filter(m => m.n >= MIN_N);
+  if (ok.length > 1) s += `<polyline class="med" points="${ok.map(m => `${X((m.b[0] + Math.min(m.b[1], 6.5)) / 2)},${Y(m.med)}`).join(" ")}"/>`;
+  ok.forEach(m => s += `<g class="row" tabindex="0" role="button" data-i="${meds.indexOf(m)}" aria-label="${m.label}: median ${fx(m.med)}, ${m.n} episodes. Show episodes"><rect class="hit" x="${X(m.b[0])}" y="${T}" width="${X(Math.min(m.b[1], xmax)) - X(m.b[0])}" height="${H - T - B}"/></g>`);
+  s += `</svg><div class="legend"><span><i class="m"></i>Median score at each level</span><span><i></i>Typical episode (1.0×)</span><span>Each dot is one episode</span></div>`;
+  const first = ok[0], last = ok[ok.length - 1];
+  const hl = ok.length > 1 ? (last.med > first.med ? `Sharper interviews tend to do better: <em>${fx(last.med)}</em> with ${last.label}, against ${fx(first.med)} with the fewest.` : `More challenging questions do not go with higher views here: ${fx(last.med)} at the top level vs ${fx(first.med)}.`) : "Not enough episodes in this filter to compare.";
+  return { hl, sub: "Challenge questions are host questions tagged \"challenge\" in the extraction, per hour of episode. Tap a column of dots to see those episodes.", body: s, gs: meds, table: meds };
+});
+section("length", "5 · Length and language", list => {
+  const bands = groups(list, e => e.len < 80 ? "Under 80 min" : e.len < 100 ? "80 to 100 min" : e.len < 140 ? "100 to 140 min" : "Over 140 min", ["Under 80 min", "80 to 100 min", "100 to 140 min", "Over 140 min"]);
+  const langs = groups(list, e => e.lang, LANG);
+  const a = hbars(bands), b = hbars(langs);
+  const bl = a.shown[0], ll = b.shown[0];
+  return { hl: bl && ll ? `${esc(bl.label)} episodes and ${esc(ll.label)} episodes did best, at <em>${fx(bl.med)}</em> and <em>${fx(ll.med)}</em>.` : "Not enough episodes in this filter to compare.", sub: "Language is the main language of the episode's captions.", body: `<div class="two"><div><h3>By length</h3>${a.svg}</div><div><h3>By language</h3>${b.svg}</div></div>`, gs: bands.concat(langs), table: bands.concat(langs) };
+});
+section("time", "6 · Publish time (IST)", list => {
+  const cells = []; DAYS.forEach((d, di) => SLOTS.forEach((s, si) => { const e = list.filter(x => x.day === di && x.slot === si); cells.push({ k: d + " " + s, label: `${d} ${s.toLowerCase()}`, di, si, n: e.length, med: q(e.map(x => x.score), .5), eps: e }); }));
+  const W = 640, L = 86, T = 30, cw = (W - L) / 7, chh = 46, H = T + chh * 4 + 6;
+  const ok = cells.filter(c => c.n >= 8), vals = ok.map(c => c.med), mn = Math.min(...vals), mx = Math.max(...vals);
+  const col = v => { const t = mx > mn ? (v - mn) / (mx - mn) : .5; return `hsl(262 ${40 + t * 45}% ${18 + t * 40}%)`; };
+  let s = `<svg class="ch" viewBox="0 0 ${W} ${H}" role="img" aria-label="Median score by publish day and time">`;
+  DAYS.forEach((d, i) => s += `<text x="${L + i * cw + cw / 2}" y="18" text-anchor="middle">${d}</text>`);
+  SLOTS.forEach((sl, i) => s += `<text class="lab" x="${L - 10}" y="${T + i * chh + chh / 2 + 4}" text-anchor="end">${sl}</text>`);
+  cells.forEach((c, i) => {
+    const x = L + c.di * cw, y = T + c.si * chh, show = c.n >= 8;
+    s += show ? `<g class="row" tabindex="0" role="button" data-i="${i}" aria-label="${c.label}: median ${fx(c.med)}, ${c.n} episodes. Show episodes"><rect class="cell" x="${x}" y="${y}" width="${cw}" height="${chh}" rx="6" fill="${col(c.med)}"/><text class="ctext" x="${x + cw / 2}" y="${y + chh / 2 + 4}" text-anchor="middle">${fx(c.med)}</text></g>`
+      : `<rect x="${x}" y="${y}" width="${cw}" height="${chh}" rx="6" fill="var(--raised)" stroke="var(--surface)" stroke-width="2"/><text x="${x + cw / 2}" y="${y + chh / 2 + 4}" text-anchor="middle">–</text>`;
+  });
+  s += `</svg><div class="legend"><span><i class="sq" style="background:${col(mn)}"></i>Lower</span><span><i class="sq" style="background:${col(mx)}"></i>Higher median score</span><span>– fewer than 8 episodes</span></div>`;
+  const best = ok.sort((a, b) => b.med - a.med)[0];
+  return { hl: best ? `${esc(best.label[0].toUpperCase() + best.label.slice(1))} releases did best, at <em>${fx(best.med)}</em>.` : "Not enough episodes in this filter to compare.", sub: "Slots: morning 6 to 12, afternoon 12 to 5, evening 5 to 10, night 10 to 6. Cells need 8 episodes here because each slot is small.", body: s, gs: cells, table: cells.filter(c => c.n >= 8) };
+});
+section("eng", "7 · Engagement", list => {
+  const gs = TOPIC.map(k => { const e = list.filter(x => x.tp === k), v = e.map(x => x.comments); return { k, label: k, n: e.length, med: q(v, .5), lo: q(v, .25), hi: q(v, .75), eps: e }; });
+  const f = v => v.toFixed(1);
+  const c = hbars(gs, { max: 6, unit: "comments per 1,000 views", fmt: f, ref: null });
+  const b = c.shown[0];
+  return { hl: b ? `${esc(b.label)} episodes start the most conversation: <em>${f(b.med)}</em> comments per 1,000 views.` : "Not enough episodes in this filter to compare.", sub: "Comments per 1,000 views, from the YouTube Data API.", body: c.svg, gs, table: gs, fmt: f };
+});
+section("fatigue", "8 · Topic fatigue", list => {
+  const gs = groups(list, e => e.repeat ? "Topic repeated within 4 weeks" : "Fresh topic", ["Fresh topic", "Topic repeated within 4 weeks"]);
+  const c = hbars(gs); const fr = gs[0], rp = gs[1];
+  return { hl: fr.n >= MIN_N && rp.n >= MIN_N ? (rp.med < fr.med ? `Repeating a topic within four weeks goes with lower views: <em>${fx(rp.med)}</em> against ${fx(fr.med)} for a fresh topic.` : `Repeating a topic did not hurt here: ${fx(rp.med)} against ${fx(fr.med)}.`) : "Not enough episodes in this filter to compare.", sub: "A topic counts as repeated when another episode with the same main topic came out in the four weeks before.", body: c.svg, gs, table: gs };
+});
+
+/* ---------- render ---------- */
+let state = {};
+function render(animate) {
+  const list = filtered(); $("#n").textContent = list.length;
+  $("#secs").innerHTML = SECTIONS.map(S => {
+    const r = S.build(list); state[S.id] = r;
+    const tbl = r.table.filter(g => g.n > 0);
+    return `<section class="sec" id="s-${S.id}" data-s="${S.id}"><p class="eb">${S.eb}</p><h2 class="hl">${r.hl}</h2><p class="sub">${r.sub}</p><div class="card">${r.body}
+      <button class="tbl-btn" type="button" data-tbl>Show as a table</button><div class="tw" hidden><table class="dt"><thead><tr><th>Group</th><th>Episodes</th><th>Median</th><th>Middle half</th></tr></thead><tbody>${tbl.map(g => { const f = r.fmt || fx; return `<tr><td>${esc(g.label)}</td><td>${g.n}</td><td>${isNaN(g.med) ? "–" : f(g.med)}</td><td>${g.lo == null || isNaN(g.lo) ? "–" : f(g.lo) + " to " + f(g.hi)}</td></tr>`; }).join("")}</tbody></table></div></div></section>`;
+  }).join("");
+  if (!animate || reduce) document.querySelectorAll(".grow").forEach(s => s.classList.remove("grow"));
+}
+["#fy", "#fl", "#fg"].forEach(s => $(s).addEventListener("change", () => { hideTip(); render(true); }));
+$("#reset").addEventListener("click", () => { $("#fy").value = "2022"; $("#fl").value = ""; $("#fg").value = ""; render(true); });
+
+/* hover + click on any chart */
+const findGroup = el => { const sec = el.closest(".sec"), r = state[sec.dataset.s]; const svgs = [...sec.querySelectorAll("svg.ch")]; const svg = el.closest("svg"); const idx = svgs.indexOf(svg);
+  let gs = r.gs; if (sec.dataset.s === "guest") gs = idx === 0 ? r.gs.slice(0, GTYPE.length) : r.gs.slice(GTYPE.length); if (sec.dataset.s === "length") gs = idx === 0 ? r.gs.slice(0, 4) : r.gs.slice(4);
+  return { g: gs[+el.dataset.i], r }; };
+$("#secs").addEventListener("pointermove", e => {
+  const row = e.target.closest("g.row"), dot = e.target.closest(".dot");
+  if (row) { const { g, r } = findGroup(row); const f = r.fmt || fx; showTip(`<b>${esc(g.label)}</b><br>Median ${f(g.med)}${g.lo != null && !isNaN(g.lo) ? ` · middle half ${f(g.lo)} to ${f(g.hi)}` : ""}<br>${g.n} episodes · click to see them`, e); return; }
+  if (dot) { const ep = EP[+dot.dataset.ep]; showTip(`<b>${esc(ep.guest)}</b> · ${ep.tp}<br>${ep.chall} challenge questions per hour · ${fx(ep.score)}`, e); return; }
+  hideTip();
+});
+$("#secs").addEventListener("pointerleave", hideTip);
+addEventListener("scroll", hideTip, { passive: true });
+const open = el => { const { g, r } = findGroup(el); el.closest("svg").querySelectorAll("g.row").forEach(x => x.classList.toggle("on", x === el)); openPanel(g, r.fmt); };
+$("#secs").addEventListener("click", e => {
+  const b = e.target.closest("[data-tbl]"); if (b) { const w = b.nextElementSibling; w.hidden = !w.hidden; b.textContent = w.hidden ? "Show as a table" : "Hide table"; return; }
+  const row = e.target.closest("g.row"); if (row) open(row);
+});
+$("#secs").addEventListener("keydown", e => { const row = e.target.closest("g.row"); if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); open(row); } });
+
+/* drill-down */
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+let lastFocus = null;
+function openPanel(g, f) {
+  lastFocus = document.activeElement;
+  $("#pTitle").textContent = g.label; $("#pSub").textContent = `${g.n} episodes · median ${(f || fx)(g.med)} · sorted by fair score`;
+  $("#eps").innerHTML = [...g.eps].sort((a, b) => b.score - a.score).slice(0, 40).map(e => `<div class="ep"><b>${esc(e.guest)} on ${e.tp.toLowerCase()}</b><span class="s">${fx(e.score)}</span><span class="m">${MON[e.month - 1]} ${e.year} · ${e.views}M views · ${e.lang} · ${e.len} min · <a href="#" onclick="return false">Guest profile</a></span></div>`).join("") + (g.n > 40 ? `<p class="hidden-note" style="padding:6px">Showing the top 40 of ${g.n}.</p>` : "");
+  $("#panel").classList.add("on"); $("#scrim").classList.add("on"); $("#panel").setAttribute("aria-hidden", "false"); $("#pX").focus({ preventScroll: true });
+}
+function closePanel() { $("#panel").classList.remove("on"); $("#scrim").classList.remove("on"); $("#panel").setAttribute("aria-hidden", "true"); document.querySelectorAll("g.row.on").forEach(x => x.classList.remove("on")); lastFocus && lastFocus.focus && lastFocus.focus({ preventScroll: true }); }
+$("#pX").addEventListener("click", closePanel); $("#scrim").addEventListener("click", closePanel);
+addEventListener("keydown", e => { if (e.key === "Escape" && $("#panel").classList.contains("on")) closePanel(); });
+render(true);
+})();
+</script>

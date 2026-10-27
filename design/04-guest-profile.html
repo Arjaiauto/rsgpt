@@ -1,0 +1,314 @@
+<title>Cuepoint Profile Mockup</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Cuepoint guest profile mockup with tabs and a sticky player.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+Devanagari:wght@400;500&display=swap">
+<style>
+
+/* Layout: sticky top bar; heading + toolbar; responsive card grid (4/3/2/1) */
+:root{
+  --paper:#101117; --paper-lit:#1a1b24; --paper-edge:#08090c;
+  --surface:#15161e; --raised:#1d1e28; --line:rgba(255,255,255,.08); --line-strong:rgba(255,255,255,.16);
+  --ink:#f2f2f5; --ink-soft:rgba(242,242,245,.6); --ink-faint:rgba(242,242,245,.4);
+  --violet:#5b07fb; --violet-deep:#4a00d6; --violet-text:#a58bff; --cite:#4fe3c1;
+  --gutter:clamp(16px,3.2vw,46px);
+  --ease:cubic-bezier(.2,.8,.2,1);
+  --sans:"Inter","Noto Sans Devanagari","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;min-height:100vh;background:var(--paper);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow-x:hidden;
+  background-image:radial-gradient(120% 60% at 50% -10%,var(--paper-lit) 0%,var(--paper) 55%,var(--paper-edge) 100%);background-attachment:fixed}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--paper)}
+button,input,select{font:inherit;color:inherit}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+:focus-visible{outline:2px solid var(--violet-text);outline-offset:3px}
+
+.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;display:flex;align-items:center;gap:26px;height:60px;
+  padding-left:max(16px,var(--gutter),env(safe-area-inset-left,0px));padding-right:max(16px,var(--gutter),env(safe-area-inset-right,0px));
+  background:rgba(16,17,23,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.logo{display:inline-flex;align-items:center;gap:10px;font-size:20px;color:var(--ink);text-decoration:none}
+.mk{width:26px;height:26px;flex:none;display:block}
+.wm{font-weight:600;letter-spacing:-.05em;white-space:nowrap}
+.ci{display:inline-block;position:relative;width:.27em;height:.545em;vertical-align:baseline}
+.ci i{position:absolute;left:.075em;bottom:0;width:.12em;height:.545em;border-radius:.06em;background:currentColor}
+.ci i::after{content:"";position:absolute;left:50%;top:-.33em;width:.25em;height:.21em;margin-left:-.125em;background:var(--cite);clip-path:polygon(6% 0,94% 0,50% 100%)}
+.links{display:flex;gap:22px;font-size:15px;letter-spacing:-.02em}
+.links a{color:var(--ink-soft);text-decoration:none;padding:6px 0;border-bottom:2px solid transparent}
+.links a[aria-current]{color:var(--ink);border-color:var(--violet)}
+.me{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:14px;color:var(--ink-soft)}
+.av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:600;color:#fff;background:linear-gradient(140deg,#7c3cff,#2bb79a)}
+
+
+/* Layout: two columns on desktop (profile 2fr, sticky player 1fr); one column on phones with a docked mini player */
+main{width:100%;max-width:1280px;margin:0 auto;padding-block:30px 120px;
+  padding-left:max(16px,var(--gutter),env(safe-area-inset-left,0px));padding-right:max(16px,var(--gutter),env(safe-area-inset-right,0px))}
+.back{display:inline-flex;align-items:center;gap:6px;margin-bottom:22px;font-size:14px;color:var(--ink-soft);text-decoration:none}
+.back:hover{color:var(--ink)}
+.layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:clamp(20px,3vw,40px);align-items:start}
+.hero{display:grid;grid-template-columns:minmax(0,240px) minmax(0,1fr);gap:28px;align-items:start}
+.photo{position:relative;aspect-ratio:4/5;max-width:100%;border-radius:22px;overflow:hidden;background:linear-gradient(150deg,hsl(262 42% 36%),hsl(302 48% 16%));display:grid;place-items:center}
+.photo svg{position:absolute;inset:auto 0 0 0;width:100%;height:86%}
+.credit{margin:8px 2px 0;font-size:11.5px;color:var(--ink-faint);line-height:1.4}
+.credit a{color:var(--ink-soft)}
+h1{margin:0;font-size:clamp(34px,5vw,58px);font-weight:500;line-height:1;letter-spacing:-.05em}
+.role{margin:10px 0 0;font-size:16px;color:var(--ink-soft)}
+.asof{display:inline-block;margin-left:6px;padding:2px 8px;border-radius:999px;font-size:11.5px;color:var(--ink-faint);border:1px solid var(--line)}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.tag{padding:4px 10px;border-radius:999px;font-size:12px;color:var(--violet-text);border:1px solid rgba(165,139,255,.3)}
+.bio{margin:16px 0 0;max-width:60ch;font-size:16px;line-height:1.6;color:var(--ink)}
+.links2{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.lp{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--raised);color:var(--ink);font-size:13.5px;text-decoration:none;cursor:pointer;transition:border-color .2s,transform .25s var(--ease)}
+.lp:hover{border-color:var(--line-strong);transform:translateY(-1px)}
+.lp small{color:var(--ink-faint);font-size:11px}
+.ep{margin-top:26px;display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:16px 18px;border-radius:18px;border:1px solid var(--line);background:var(--surface)}
+.ep__t{flex:1 1 260px;min-width:0}
+.ep__t b{display:block;font-size:15.5px;font-weight:500;letter-spacing:-.02em}
+.ep__t span{font-size:13px;color:var(--ink-faint)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 18px;border-radius:999px;border:0;background:var(--violet);color:#fff;font-weight:500;font-size:14px;cursor:pointer;transition:background-color .2s,transform .25s var(--ease)}
+.btn:hover{background:var(--violet-deep);transform:translateY(-1px)}
+.btn svg{width:14px;height:14px}
+.askg{margin-top:18px;display:flex;align-items:center;gap:8px;min-height:54px;padding:6px 6px 6px 20px;border-radius:999px;border:1px solid var(--line);background:var(--raised)}
+.askg:focus-within{border-color:var(--violet-text)}
+.askg input{flex:1;min-width:0;height:42px;border:0;background:transparent;outline:none;font-size:15.5px}
+.askg input::placeholder{color:var(--ink-faint)}
+.mini-ans{margin-top:12px;padding:16px 18px;border-radius:16px;border:1px solid var(--line);background:var(--surface);font-size:15px;line-height:1.6;animation:rise .4s var(--ease) both}
+
+.tabs{position:sticky;top:calc(60px + env(safe-area-inset-top,0px));z-index:11;display:flex;gap:4px;margin-top:34px;padding:10px 0;overflow-x:auto;scrollbar-width:none;background:linear-gradient(180deg,var(--paper) 80%,rgba(16,17,23,0))}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex:none;height:38px;padding:0 16px;border-radius:999px;border:1px solid transparent;background:transparent;color:var(--ink-soft);font-size:14.5px;font-weight:500;cursor:pointer;transition:color .2s,background-color .2s,border-color .2s}
+.tab span{margin-left:6px;font-size:12px;color:var(--ink-faint);font-variant-numeric:tabular-nums}
+.tab:hover{color:var(--ink)}
+.tab[aria-selected="true"]{color:var(--ink);background:var(--raised);border-color:var(--line-strong)}
+.panel{display:flex;flex-direction:column;gap:10px;margin-top:8px;animation:rise .35s var(--ease) both}
+.item{position:relative;display:flex;flex-direction:column;gap:10px;padding:16px 18px;border-radius:16px;border:1px solid var(--line);background:var(--surface);transition:border-color .2s}
+.item:hover{border-color:var(--line-strong)}
+.item.playing{border-color:rgba(79,227,193,.5);box-shadow:inset 3px 0 0 var(--cite)}
+.item p{margin:0;font-size:15.5px;line-height:1.6;max-width:70ch}
+.item .row2{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}
+.cite{display:inline-flex;align-items:center;gap:6px;height:27px;padding:0 10px;border-radius:999px;border:1px solid rgba(79,227,193,.3);background:rgba(79,227,193,.09);color:var(--cite);font:500 12.5px/1 var(--sans);cursor:pointer;white-space:nowrap;transition:background-color .2s}
+.cite::before{content:"";border-left:6px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent}
+.cite:hover{background:rgba(79,227,193,.18)}
+.rep{border:0;background:none;padding:0;font-size:12.5px;color:var(--ink-faint);cursor:pointer;opacity:0;transition:opacity .2s,color .2s}
+.item:hover .rep,.rep:focus-visible{opacity:1}.rep:hover{color:var(--ink)}
+.cat{margin:14px 0 2px;font-size:12px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:var(--violet-text)}
+.cat:first-child{margin-top:4px}
+.quote p{font-size:19px;line-height:1.5;letter-spacing:-.01em;padding-left:16px;border-left:2px solid var(--violet)}
+.dis{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.side{padding:12px 14px;border-radius:12px;background:var(--raised)}
+.side b{display:block;margin-bottom:4px;font-size:12px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint)}
+.side.g b{color:var(--cite)}
+.side span{font-size:14.5px;line-height:1.55}
+.clip{flex-direction:row;align-items:center;gap:14px}
+.clip .len{flex:none;width:52px;height:52px;border-radius:14px;display:grid;place-items:center;background:var(--raised);font-size:13px;font-weight:500;font-variant-numeric:tabular-nums}
+.clip p{flex:1;min-width:0}
+
+/* side column */
+.aside{position:sticky;top:calc(84px + env(safe-area-inset-top,0px));display:flex;flex-direction:column;gap:18px}
+.pl{border-radius:20px;border:1px solid var(--line);background:var(--surface);overflow:hidden}
+.pl__v{position:relative;aspect-ratio:16/9;max-width:100%;display:grid;place-items:center;background:radial-gradient(120% 90% at 30% 20%,rgba(91,7,251,.35),transparent 60%),radial-gradient(90% 80% at 80% 90%,rgba(79,227,193,.14),transparent 60%),#0b0c11}
+.pl__bars{position:absolute;left:8%;right:8%;top:50%;height:42%;transform:translateY(-50%);display:flex;align-items:center;gap:3px;opacity:.28}
+.pl__bars i{flex:1;border-radius:2px;background:#fff}
+.pbtn{position:relative;z-index:1;width:58px;height:58px;border-radius:50%;border:0;background:rgba(255,255,255,.95);color:#111;display:grid;place-items:center;cursor:pointer}
+.pbtn svg{width:22px;height:22px}
+.pl__badge{position:absolute;right:12px;top:12px;z-index:1;padding:4px 9px;border-radius:999px;background:rgba(0,0,0,.45);color:var(--cite);font-size:12px;font-weight:500}
+.pl__prog{position:absolute;left:0;right:0;bottom:0;height:4px;background:rgba(255,255,255,.12)}
+.pl__prog i{display:block;height:100%;width:0;background:var(--cite)}
+.pl__info{padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.pl__info b{font-size:14.5px;font-weight:500}
+.pl__info span{font-size:13px;color:var(--ink-soft);line-height:1.45}
+.pl__acts{display:flex;gap:8px;padding:0 16px 16px}
+.ghost{height:34px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--raised);color:var(--ink);font-size:13px;cursor:pointer}
+.ghost:hover{border-color:var(--line-strong)}
+.pl.idle .pl__v{opacity:.55}
+.box{padding:16px;border-radius:20px;border:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:10px}
+.box h3{margin:0;font-size:13px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint)}
+.oe{display:flex;align-items:center;gap:12px;padding:10px;border-radius:12px;background:var(--raised);font-size:13.5px}
+.oe span{display:block;font-size:12px;color:var(--ink-faint)}
+.oe .cite{flex:none;display:inline-flex;color:var(--cite);font-size:12.5px}
+.sim{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.sg{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:12px;background:var(--raised);font-size:13px;cursor:pointer;border:1px solid transparent;text-align:left}
+.sg:hover{border-color:var(--line-strong)}
+.sg i{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-style:normal;font-size:12px;font-weight:600;color:#fff}
+.sg span{color:var(--ink-faint);font-size:11.5px}
+.dock{display:none}
+.foot{text-align:center;font-size:12.5px;color:var(--ink-faint);margin:50px 0 0}
+.note{margin:14px 0 0;font-size:12.5px;color:var(--ink-faint)}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.toast{position:fixed;left:0;right:0;margin-inline:auto;width:max-content;max-width:calc(100% - 32px);bottom:calc(24px + env(safe-area-inset-bottom,0px));z-index:40;padding:11px 18px;border-radius:999px;background:var(--raised);border:1px solid var(--line-strong);font-size:14px;box-shadow:0 14px 40px rgba(0,0,0,.45);animation:rise .3s var(--ease) both}
+
+@media (max-width:820px){.links{display:none}.me span:last-child{display:none}}
+@media (max-width:1000px){
+  .layout{grid-template-columns:minmax(0,1fr)}
+  .aside{position:static}
+  .aside .pl{display:none}
+  .dock{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:30;align-items:center;gap:12px;padding-block:10px calc(10px + env(safe-area-inset-bottom,0px));
+    padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));background:rgba(21,22,30,.96);border-top:1px solid var(--line-strong);backdrop-filter:blur(14px);transform:translateY(110%);transition:transform .35s var(--ease)}
+  .dock.on{transform:none}
+  .dock .pbtn{width:44px;height:44px;flex:none}
+  .dock .pbtn svg{width:18px;height:18px}
+  .dock__t{flex:1;min-width:0}
+  .dock__t b{display:block;font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dock__t span{font-size:12px;color:var(--cite)}
+  .dock__bar{position:absolute;left:0;right:0;top:0;height:3px;background:rgba(255,255,255,.1)}
+  .dock__bar i{display:block;height:100%;width:0;background:var(--cite)}
+  .x{flex:none;width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:var(--raised);color:var(--ink-soft);cursor:pointer;font-size:16px}
+  .toast{bottom:calc(84px + env(safe-area-inset-bottom,0px))}
+}
+@media (max-width:640px){
+  .hero{grid-template-columns:minmax(0,1fr)}
+  .photo{aspect-ratio:1/1;max-width:220px}
+  .dis{grid-template-columns:minmax(0,1fr)}
+  .rep{opacity:1}
+  .sim{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+}
+@media (hover:none){.rep{opacity:1}}
+@media (prefers-reduced-motion:reduce){.panel,.mini-ans,.toast{animation:none}.dock{transition:none}}
+</style>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs><linearGradient id="cp-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c3cff"/><stop offset=".55" stop-color="#5b07fb"/><stop offset="1" stop-color="#3a0aa8"/></linearGradient></defs>
+  <symbol id="cp-mark" viewBox="0 0 56 56">
+    <rect width="56" height="56" rx="16" fill="url(#cp-g)"/>
+    <g fill="#fff" opacity=".38"><rect x="10.5" y="27" width="3.2" height="8" rx="1.6"/><rect x="16.8" y="22.5" width="3.2" height="17" rx="1.6"/><rect x="36" y="20.5" width="3.2" height="21" rx="1.6"/><rect x="42.3" y="25" width="3.2" height="12" rx="1.6"/></g>
+    <rect x="25.4" y="19" width="5.2" height="26" rx="2.6" fill="#fff"/>
+    <path d="M20.6 9.6h14.8a1.6 1.6 0 0 1 1.2 2.7l-7.4 7.6a1.6 1.6 0 0 1-2.3 0l-7.4-7.6a1.6 1.6 0 0 1 1.1-2.7z" fill="#4fe3c1"/>
+  </symbol>
+</svg>
+
+<header class="bar">
+  <a class="logo" href="#"><svg class="mk" aria-hidden="true"><use href="#cp-mark"/></svg><span class="sr">Cuepoint</span><span class="wm" aria-hidden="true">cuepo<span class="ci"><i></i></span>nt</span></a>
+  <nav class="links" aria-label="Main"><a href="#">Ask</a><a href="#" aria-current="page">Guests</a><a href="#">Prep brief</a><a href="#">Clips</a><a href="#">Saved</a><a href="#">Insights</a></nav>
+  <div class="me"><span class="av" aria-hidden="true">A</span><span>Hi Arjun</span></div>
+</header>
+
+
+<main>
+  <a class="back" href="#">&larr; All guests</a>
+  <div class="layout">
+    <div>
+      <section class="hero">
+        <div>
+          <div class="photo" aria-label="Photo of Ananya Rao (sample placeholder)"><svg viewBox="0 0 200 250" preserveAspectRatio="xMidYMax meet" aria-hidden="true"><circle cx="100" cy="98" r="44" fill="rgba(255,255,255,.22)"/><path d="M18 250c6-58 42-90 82-90s76 32 82 90z" fill="rgba(255,255,255,.18)"/></svg></div>
+          <p class="credit">Photo: A. Photographer, CC BY-SA 4.0, via Wikimedia Commons</p>
+        </div>
+        <div>
+          <h1>Ananya Rao</h1>
+          <p class="role">Founder and CEO, Kosh Payments<span class="asof">as of Mar 2025</span></p>
+          <div class="tags"><span class="tag">Founders</span><span class="tag">Finance</span><span class="tag">Fintech</span></div>
+          <p class="bio">Started a payments company for small shops after working at a bank for six years. Talked about raising money from people who knew her work, hiring outside big cities, and what regulators look for in a new fintech.</p>
+          <div class="links2">
+            <a class="lp" href="#" data-t="Opens a LinkedIn search for her name and company">Search on LinkedIn</a>
+            <a class="lp" href="#" data-t="Opens her YouTube channel">YouTube channel <small>matched automatically</small></a>
+            <a class="lp" href="#" data-t="Opens her Wikipedia page">From Wikipedia</a>
+          </div>
+        </div>
+      </section>
+      <div class="ep">
+        <div class="ep__t"><b>Building a fintech from a small town</b><span>Mar 2025 · 1h 48m · 4.8M views · English</span></div>
+        <button class="btn" type="button" data-play='{"t":"0:00","l":"Full episode from the start"}'><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>Play episode</button>
+      </div>
+      <form class="askg" id="askg">
+        <label class="sr" for="gq">Ask about Ananya Rao</label>
+        <input id="gq" placeholder="Ask about Ananya Rao's episodes" autocomplete="off">
+        <button class="btn" type="submit">Ask</button>
+      </form>
+      <div id="miniAns"></div>
+
+      <div class="tabs" role="tablist" aria-label="What she said" id="tabs"></div>
+      <div id="panel" role="tabpanel"></div>
+      <p class="note">Mockup: this guest and everything she says are sample data.</p>
+    </div>
+
+    <aside class="aside">
+      <div class="pl idle" id="pl">
+        <div class="pl__v"><div class="pl__bars" aria-hidden="true" id="bars"></div><span class="pl__badge" id="plBadge">Ready</span>
+          <button class="pbtn" type="button" id="plBtn" aria-label="Play"></button><div class="pl__prog"><i id="plProg"></i></div></div>
+        <div class="pl__info"><b id="plTitle">Tap any timestamp to play it here</b><span id="plLine">The player stays here while you browse the tabs.</span></div>
+        <div class="pl__acts"><button class="ghost" type="button" data-t="Opens this moment on YouTube">Open on YouTube</button><button class="ghost" type="button" id="plSave">Save</button></div>
+      </div>
+      <div class="box">
+        <h3>Other episodes</h3>
+        <div class="oe"><span class="cite" data-play='{"t":"0:00","l":"Two years later: Kosh after the Series A"}'>Play</span><div>Two years later: Kosh after the Series A<span>Jan 2027 · 1h 35m</span></div></div>
+      </div>
+      <div class="box">
+        <h3>Similar guests</h3>
+        <div class="sim" id="sim"></div>
+      </div>
+    </aside>
+  </div>
+  <p class="foot">Unofficial project, not affiliated with Figuring Out. Every answer links to its source.</p>
+</main>
+
+<div class="dock" id="dock" aria-label="Now playing">
+  <div class="dock__bar"><i id="dkProg"></i></div>
+  <button class="pbtn" type="button" id="dkBtn" aria-label="Play"></button>
+  <div class="dock__t"><b id="dkTitle">Not playing</b><span id="dkTime"></span></div>
+  <button class="x" type="button" id="dkX" aria-label="Close player">&times;</button>
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const D = {
+  takeaways: [["Her first cheque came from people who already knew her work: an old boss, two college friends and a customer.", "41:09"], ["She waited until 300 shops were paying before talking to any investor.", "43:20"], ["Hiring in smaller cities cut costs and kept people longer, she said.", "1:05:12"], ["She plans for regulation from day one instead of fixing it later.", "1:18:40"], ["Talking to every early customer on the phone shaped the product more than any survey.", "27:55"]],
+  opportunities: [["Growing sectors", "Payments for small shops in smaller cities are still mostly cash.", "19:30"], ["Market gaps", "Simple credit for shopkeepers who have sales data but no credit history.", "52:08"], ["Career paths", "People from banks who understand compliance are in demand at fintechs.", "1:22:15"], ["Warnings", "Raising too much too early can make the next round harder.", "1:02:40"]],
+  quotes: [["“Nobody I pitched cold ever wrote a cheque.”", "41:06"], ["“The regulator is not your enemy; surprise is.”", "1:19:02"], ["“Our best salespeople were shopkeepers who already used us.”", "33:47"]],
+  disagreements: [["Whether every founder should raise venture money.", "Most big companies needed outside money to grow fast.", "Many good businesses never need a VC; customers are the best investors.", "1:00:21"], ["Hiring only in big cities.", "The best talent is in Bengaluru and Mumbai.", "Smaller-city hires stay longer and learn just as fast.", "1:06:30"]],
+  clips: [["“Nobody I pitched cold ever wrote a cheque”", "0:52", "41:06"], ["Why 300 paying shops came before any investor", "1:14", "43:20"], ["Planning for the regulator from day one", "0:48", "1:18:40"]]
+};
+const TABS = [["takeaways", "Takeaways"], ["opportunities", "Opportunities"], ["quotes", "Quotes"], ["disagreements", "Disagreements"], ["clips", "Clips"]];
+const chip = (t, line) => `<button class="cite" type="button" data-play='${esc(JSON.stringify({ t, l: line }))}'>${t}</button>`;
+const rep = '<button class="rep" type="button" data-rep>Report an error</button>';
+function panel(k) {
+  if (k === "takeaways") return D.takeaways.map(x => `<div class="item"><p>${esc(x[0])}</p><div class="row2">${chip(x[1], x[0])}${rep}</div></div>`).join("");
+  if (k === "opportunities") { let last = ""; return D.opportunities.map(x => { const h = x[0] !== last ? `<p class="cat">${x[0]}</p>` : ""; last = x[0]; return h + `<div class="item"><p>${esc(x[1])}</p><div class="row2">${chip(x[2], x[1])}${rep}</div></div>`; }).join(""); }
+  if (k === "quotes") return D.quotes.map(x => `<div class="item quote"><p>${esc(x[0])}</p><div class="row2">${chip(x[1], x[0])}${rep}</div></div>`).join("");
+  if (k === "disagreements") return D.disagreements.map(x => `<div class="item"><p><b style="font-weight:500">${esc(x[0])}</b></p><div class="dis"><div class="side"><b>Host</b><span>${esc(x[1])}</span></div><div class="side g"><b>Ananya Rao</b><span>${esc(x[2])}</span></div></div><div class="row2">${chip(x[3], x[0])}${rep}</div></div>`).join("");
+  return D.clips.map(x => `<div class="item clip"><span class="len">${x[1]}</span><p>${esc(x[0])}</p>${chip(x[2], x[0])}</div>`).join("");
+}
+$("#tabs").innerHTML = TABS.map((t, i) => `<button class="tab" role="tab" type="button" aria-selected="${!i}" data-k="${t[0]}">${t[1]}<span>${D[t[0]].length}</span></button>`).join("");
+function show(k) { document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.k === k))); const p = $("#panel"); p.className = ""; void p.offsetWidth; p.className = "panel"; p.innerHTML = panel(k); markPlaying(); }
+$("#tabs").addEventListener("click", e => { const b = e.target.closest(".tab"); if (b) show(b.dataset.k); });
+
+/* similar guests */
+$("#sim").innerHTML = [["Rohan Mehta", "Ladder Capital", 210], ["Farhan Ali", "Policy researcher", 160], ["Priya Nair", "Threadline Apparel", 330], ["Meera Kapoor", "Glow Theory", 20]].map(g =>
+  `<button class="sg" type="button" data-t="Opens ${g[0]}'s profile"><i style="background:linear-gradient(150deg,hsl(${g[2]} 42% 40%),hsl(${(g[2] + 40) % 360} 48% 18%))">${g[0].split(" ").map(w => w[0]).join("")}</i><b style="font-weight:500">${g[0]}</b><span>${g[1]}</span></button>`).join("");
+
+/* player */
+$("#bars").innerHTML = Array.from({ length: 40 }, (_, i) => `<i style="height:${(18 + 70 * Math.abs(Math.sin(i * .7) * Math.cos(i * .23))).toFixed(0)}%"></i>`).join("");
+const PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>', PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/></svg>';
+$("#plBtn").innerHTML = PLAY; $("#dkBtn").innerHTML = PLAY;
+let cur = null, playing = false, prog = 0, raf = 0, last = 0;
+function markPlaying() { document.querySelectorAll(".item").forEach(it => it.classList.toggle("playing", !!cur && !!it.querySelector(`.cite[data-play*='"t":"${cur.t}"']`))); }
+function setPlaying(on) {
+  playing = on; [$("#plBtn"), $("#dkBtn")].forEach(b => { b.innerHTML = on ? PAUSE : PLAY; b.setAttribute("aria-label", on ? "Pause" : "Play"); });
+  cancelAnimationFrame(raf); if (on) { last = performance.now(); raf = requestAnimationFrame(tick); }
+}
+function tick(now) { prog = Math.min(100, prog + (now - last) / 60); last = now; $("#plProg").style.width = $("#dkProg").style.width = prog + "%"; if (prog >= 100) { setPlaying(false); prog = 0; toast("Clip ended"); return; } raf = requestAnimationFrame(tick); }
+function load(c) {
+  cur = c; prog = 0; $("#pl").classList.remove("idle");
+  $("#plBadge").textContent = "Starts " + c.t; $("#plTitle").textContent = "Ananya Rao · " + c.t; $("#plLine").textContent = c.l;
+  $("#dkTitle").textContent = c.l; $("#dkTime").textContent = "Ananya Rao · " + c.t; $("#dock").classList.add("on");
+  $("#plSave").textContent = "Save"; setPlaying(true); markPlaying();
+}
+document.addEventListener("click", e => {
+  const p = e.target.closest("[data-play]"); if (p) { load(JSON.parse(p.dataset.play)); return; }
+  if (e.target.closest("#plBtn,#dkBtn")) { if (!cur) return toast("Tap any timestamp to play it"); setPlaying(!playing); return; }
+  if (e.target.closest("#dkX")) { setPlaying(false); $("#dock").classList.remove("on"); return; }
+  if (e.target.closest("#plSave")) { const s = $("#plSave"); if (!cur) return toast("Play a moment first"); s.textContent = s.textContent === "Save" ? "Saved ✓" : "Save"; return toast(s.textContent === "Save" ? "Removed from Watch later" : "Saved to Watch later"); }
+  const r = e.target.closest("[data-rep]"); if (r) { r.textContent = "Thanks, we'll check it"; r.disabled = true; return; }
+  const t = e.target.closest("[data-t]"); if (t) { e.preventDefault(); toast("Live site: " + t.dataset.t); }
+});
+$("#askg").addEventListener("submit", e => {
+  e.preventDefault(); const q = $("#gq").value.trim(); if (!q) return;
+  $("#miniAns").innerHTML = `<div class="mini-ans">Searching only Ananya Rao's episodes: she said her first investors were people who had worked with her, and that she waited for 300 paying shops before pitching. <button class="cite" type="button" data-play='{"t":"41:09","l":"First cheque from people who knew her work"}'>41:09</button> <button class="cite" type="button" data-play='{"t":"43:20","l":"300 paying shops first"}'>43:20</button></div>`;
+});
+let tEl, tT;
+function toast(m) { tEl && tEl.remove(); clearTimeout(tT); tEl = document.createElement("div"); tEl.className = "toast"; tEl.setAttribute("role", "status"); tEl.textContent = m; document.body.appendChild(tEl); tT = setTimeout(() => { tEl.remove(); tEl = null; }, 2600); }
+show("takeaways");
+})();
+</script>

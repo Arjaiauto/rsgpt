@@ -1,0 +1,224 @@
+<title>Cuepoint Prep Brief Mockup</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Cuepoint prep brief mockup: a one-page research memo for an upcoming guest.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+Devanagari:wght@400;500&display=swap">
+<style>
+
+/* Layout: sticky top bar; heading + toolbar; responsive card grid (4/3/2/1) */
+:root{
+  --paper:#101117; --paper-lit:#1a1b24; --paper-edge:#08090c;
+  --surface:#15161e; --raised:#1d1e28; --line:rgba(255,255,255,.08); --line-strong:rgba(255,255,255,.16);
+  --ink:#f2f2f5; --ink-soft:rgba(242,242,245,.6); --ink-faint:rgba(242,242,245,.4);
+  --violet:#5b07fb; --violet-deep:#4a00d6; --violet-text:#a58bff; --cite:#4fe3c1;
+  --gutter:clamp(16px,3.2vw,46px);
+  --ease:cubic-bezier(.2,.8,.2,1);
+  --sans:"Inter","Noto Sans Devanagari","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;min-height:100vh;background:var(--paper);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow-x:hidden;
+  background-image:radial-gradient(120% 60% at 50% -10%,var(--paper-lit) 0%,var(--paper) 55%,var(--paper-edge) 100%);background-attachment:fixed}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--paper)}
+button,input,select{font:inherit;color:inherit}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+:focus-visible{outline:2px solid var(--violet-text);outline-offset:3px}
+
+.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;display:flex;align-items:center;gap:26px;height:60px;
+  padding-left:max(16px,var(--gutter),env(safe-area-inset-left,0px));padding-right:max(16px,var(--gutter),env(safe-area-inset-right,0px));
+  background:rgba(16,17,23,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.logo{display:inline-flex;align-items:center;gap:10px;font-size:20px;color:var(--ink);text-decoration:none}
+.mk{width:26px;height:26px;flex:none;display:block}
+.wm{font-weight:600;letter-spacing:-.05em;white-space:nowrap}
+.ci{display:inline-block;position:relative;width:.27em;height:.545em;vertical-align:baseline}
+.ci i{position:absolute;left:.075em;bottom:0;width:.12em;height:.545em;border-radius:.06em;background:currentColor}
+.ci i::after{content:"";position:absolute;left:50%;top:-.33em;width:.25em;height:.21em;margin-left:-.125em;background:var(--cite);clip-path:polygon(6% 0,94% 0,50% 100%)}
+.links{display:flex;gap:22px;font-size:15px;letter-spacing:-.02em}
+.links a{color:var(--ink-soft);text-decoration:none;padding:6px 0;border-bottom:2px solid transparent}
+.links a[aria-current]{color:var(--ink);border-color:var(--violet)}
+.me{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:14px;color:var(--ink-soft)}
+.av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:600;color:#fff;background:linear-gradient(140deg,#7c3cff,#2bb79a)}
+
+
+/* Layout: narrow input column + saved briefs on the left, the brief as a paper-like document on the right */
+main{width:100%;max-width:1280px;margin:0 auto;padding-block:40px 120px;
+  padding-left:max(16px,var(--gutter),env(safe-area-inset-left,0px));padding-right:max(16px,var(--gutter),env(safe-area-inset-right,0px))}
+h1{margin:0;font-size:clamp(36px,5.6vw,66px);font-weight:500;line-height:1;letter-spacing:-.055em}
+h1 span{display:block;color:var(--ink-soft)}
+.layout{margin-top:34px;display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:clamp(20px,3vw,40px);align-items:start}
+.side{position:sticky;top:calc(84px + env(safe-area-inset-top,0px));display:flex;flex-direction:column;gap:16px}
+.box{padding:18px;border-radius:20px;border:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:12px}
+.box h2{margin:0;font-size:12.5px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint)}
+.fld{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--ink-soft)}
+.fld input{height:46px;padding:0 16px;border-radius:14px;border:1px solid var(--line);background:var(--raised);font-size:15px;outline:none;color:var(--ink)}
+.fld input:focus-visible{border-color:var(--violet-text)}
+.or{font-size:12.5px;color:var(--ink-faint);text-align:center}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{height:32px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--raised);color:var(--ink-soft);font-size:13px;cursor:pointer}
+.chip:hover{color:var(--ink);border-color:var(--line-strong)}
+.chip[aria-pressed="true"]{background:var(--violet);border-color:transparent;color:#fff}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:46px;padding:0 20px;border-radius:999px;border:0;background:var(--violet);color:#fff;font-weight:500;font-size:15px;cursor:pointer;transition:background-color .2s,transform .25s var(--ease)}
+.btn:hover{background:var(--violet-deep);transform:translateY(-1px)}
+.past{display:flex;flex-direction:column;gap:4px}
+.pb{display:flex;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:12px;border:0;background:transparent;text-align:left;cursor:pointer;font-size:14px}
+.pb:hover,.pb.on{background:var(--raised)}
+.pb span{font-size:12px;color:var(--ink-faint);white-space:nowrap}
+
+.doc{position:relative;border-radius:24px;border:1px solid var(--line);background:linear-gradient(180deg,#171822,#13141c);padding:clamp(22px,4vw,48px);box-shadow:0 30px 80px rgba(0,0,0,.35)}
+.bar2{position:sticky;top:calc(68px + env(safe-area-inset-top,0px));z-index:5;display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin:-8px -8px 18px;padding:8px;border-radius:16px;background:rgba(23,24,34,.92);backdrop-filter:blur(10px)}
+.ghost{height:34px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--raised);color:var(--ink);font-size:13px;cursor:pointer;white-space:nowrap}
+.ghost:hover{border-color:var(--line-strong)}
+.ghost.pri{background:var(--violet);border-color:transparent;color:#fff}
+.meta{font-size:12.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--violet-text)}
+.doc h2.t{margin:10px 0 4px;font-size:clamp(28px,3.6vw,40px);font-weight:500;letter-spacing:-.045em;line-height:1.05}
+.doc .sub{margin:0;font-size:14.5px;color:var(--ink-soft)}
+.sec{margin-top:34px;padding-top:24px;border-top:1px solid var(--line)}
+.sec h3{display:flex;align-items:baseline;gap:12px;margin:0 0 14px;font-size:19px;font-weight:500;letter-spacing:-.02em}
+.sec h3 i{font-style:normal;font-size:13px;color:var(--ink-faint);font-variant-numeric:tabular-nums}
+.sec .why{margin:-6px 0 14px;font-size:13.5px;color:var(--ink-faint)}
+.li{position:relative;display:flex;gap:12px;align-items:flex-start;padding:10px 40px 10px 12px;margin:0 -12px;border-radius:12px;transition:background-color .2s}
+.li:hover{background:rgba(255,255,255,.03)}
+.li .txt{flex:1;min-width:0;font-size:15.5px;line-height:1.6;outline:none;border-radius:6px}
+.li .txt:focus{box-shadow:0 0 0 2px rgba(165,139,255,.5);background:rgba(165,139,255,.06)}
+.li.gone .txt{text-decoration:line-through;color:var(--ink-faint)}
+.li.gone .cite,.li.gone .badge{opacity:.4}
+.rm{position:absolute;right:6px;top:8px;width:28px;height:28px;border-radius:50%;border:1px solid transparent;background:transparent;color:var(--ink-faint);cursor:pointer;font-size:15px;opacity:0;transition:opacity .2s}
+.li:hover .rm,.rm:focus-visible{opacity:1}
+.rm:hover{border-color:var(--line-strong);color:var(--ink)}
+.num{flex:none;width:22px;color:var(--ink-faint);font-size:13px;padding-top:3px;font-variant-numeric:tabular-nums}
+.cite{display:inline-flex;align-items:center;gap:6px;height:26px;margin-left:6px;padding:0 10px;border-radius:999px;border:1px solid rgba(79,227,193,.3);background:rgba(79,227,193,.09);color:var(--cite);font:500 12.5px/1 var(--sans);vertical-align:1px;white-space:nowrap;cursor:pointer}
+.cite::before{content:"";border-left:6px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent}
+.badge{display:inline-block;margin-right:8px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500;letter-spacing:.04em;color:var(--violet-text);border:1px solid rgba(165,139,255,.35);vertical-align:2px}
+.badge.chk{color:#ffcf7a;border-color:rgba(255,207,122,.35)}
+.guests{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.gc{display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:16px;background:var(--raised);border:1px solid var(--line);position:relative}
+.gc .av{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:600;color:#fff}
+.gc b{font-size:15px;font-weight:500}
+.gc span{font-size:13px;color:var(--ink-soft);line-height:1.45}
+.gc.gone{opacity:.4}
+.gc .rm{top:8px;right:8px}
+.gc:hover .rm{opacity:1}
+.topics{display:flex;flex-wrap:wrap;gap:8px}
+.tp{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 14px;border-radius:999px;background:var(--raised);border:1px solid var(--line);font-size:14px}
+.tp em{font-style:normal;font-size:12px;color:var(--ink-faint)}
+.tp button{width:24px;height:24px;border-radius:50%;border:0;background:transparent;color:var(--ink-faint);cursor:pointer}
+.tp.gone{opacity:.4;text-decoration:line-through}
+.build{display:flex;align-items:center;gap:16px;padding:30px;border-radius:24px;border:1px solid var(--line);background:var(--surface)}
+.wave{display:flex;align-items:center;gap:3px;height:28px}
+.wave i{width:3px;height:30%;border-radius:2px;background:var(--violet-text);animation:wv 1.1s var(--ease) infinite}
+.wave i:nth-child(odd){animation-delay:-.35s}.wave i:nth-child(3n){animation-delay:-.7s}
+@keyframes wv{0%,100%{height:22%}50%{height:100%}}
+.steps{display:flex;flex-direction:column;gap:4px;font-size:14px}
+.steps span{color:var(--ink-faint)}.steps span.on{color:var(--ink)}.steps span.done{color:var(--ink-soft)}.steps span.done::after{content:"  \2713";color:var(--cite)}
+.rise > *{animation:rise .5s var(--ease) both}
+.rise > *:nth-child(2){animation-delay:.06s}.rise > *:nth-child(3){animation-delay:.12s}.rise > *:nth-child(4){animation-delay:.18s}.rise > *:nth-child(5){animation-delay:.24s}.rise > *:nth-child(6){animation-delay:.3s}.rise > *:nth-child(7){animation-delay:.36s}.rise > *:nth-child(8){animation-delay:.42s}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.note{margin:22px 0 0;font-size:12.5px;color:var(--ink-faint)}
+.foot{text-align:center;font-size:12.5px;color:var(--ink-faint);margin:50px 0 0}
+.toast{position:fixed;left:0;right:0;margin-inline:auto;width:max-content;max-width:calc(100% - 32px);bottom:calc(24px + env(safe-area-inset-bottom,0px));z-index:40;padding:11px 18px;border-radius:999px;background:var(--raised);border:1px solid var(--line-strong);font-size:14px;box-shadow:0 14px 40px rgba(0,0,0,.45);animation:rise .3s var(--ease) both}
+@media (max-width:980px){.layout{grid-template-columns:minmax(0,1fr)}.side{position:static}.guests{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@media (max-width:820px){.links{display:none}.me span:last-child{display:none}}
+@media (max-width:560px){.guests{grid-template-columns:minmax(0,1fr)}.bar2{justify-content:flex-start;overflow-x:auto;flex-wrap:nowrap}.rm{opacity:1}}
+@media (hover:none){.rm{opacity:1}}
+@media (prefers-reduced-motion:reduce){.rise > *,.toast{animation:none}.wave i{animation:none;height:60%}}
+</style>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs><linearGradient id="cp-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c3cff"/><stop offset=".55" stop-color="#5b07fb"/><stop offset="1" stop-color="#3a0aa8"/></linearGradient></defs>
+  <symbol id="cp-mark" viewBox="0 0 56 56">
+    <rect width="56" height="56" rx="16" fill="url(#cp-g)"/>
+    <g fill="#fff" opacity=".38"><rect x="10.5" y="27" width="3.2" height="8" rx="1.6"/><rect x="16.8" y="22.5" width="3.2" height="17" rx="1.6"/><rect x="36" y="20.5" width="3.2" height="21" rx="1.6"/><rect x="42.3" y="25" width="3.2" height="12" rx="1.6"/></g>
+    <rect x="25.4" y="19" width="5.2" height="26" rx="2.6" fill="#fff"/>
+    <path d="M20.6 9.6h14.8a1.6 1.6 0 0 1 1.2 2.7l-7.4 7.6a1.6 1.6 0 0 1-2.3 0l-7.4-7.6a1.6 1.6 0 0 1 1.1-2.7z" fill="#4fe3c1"/>
+  </symbol>
+</svg>
+
+<header class="bar">
+  <a class="logo" href="#"><svg class="mk" aria-hidden="true"><use href="#cp-mark"/></svg><span class="sr">Cuepoint</span><span class="wm" aria-hidden="true">cuepo<span class="ci"><i></i></span>nt</span></a>
+  <nav class="links" aria-label="Main"><a href="#">Ask</a><a href="#">Guests</a><a href="#" aria-current="page">Prep brief</a><a href="#">Clips</a><a href="#">Saved</a><a href="#">Insights</a></nav>
+  <div class="me"><span class="av" aria-hidden="true">A</span><span>Hi Arjun</span></div>
+</header>
+
+
+<main>
+  <h1>Prep brief<span>for your next guest</span></h1>
+  <div class="layout">
+    <aside class="side">
+      <form class="box" id="form">
+        <h2>Upcoming guest</h2>
+        <label class="fld" for="gname">Name<input id="gname" value="Nikhil Kamath" autocomplete="off"></label>
+        <label class="fld" for="gdesc">One line about them<input id="gdesc" value="Co-founder of Zerodha, investor" autocomplete="off"></label>
+        <p class="or">or build from a sector</p>
+        <div class="chips" id="sectors"><button class="chip" type="button" aria-pressed="false">Fintech founder</button><button class="chip" type="button" aria-pressed="false">Health expert</button><button class="chip" type="button" aria-pressed="false">Creator</button><button class="chip" type="button" aria-pressed="false">Policy</button></div>
+        <button class="btn" type="submit">Build brief</button>
+      </form>
+      <div class="box">
+        <h2>Past briefs</h2>
+        <div class="past" id="past">
+          <button class="pb on" type="button">Nikhil Kamath<span>27 Oct</span></button>
+          <button class="pb" type="button">Sleep doctor<span>24 Oct</span></button>
+          <button class="pb" type="button">D2C beauty founder<span>21 Oct</span></button>
+        </div>
+      </div>
+    </aside>
+    <section id="out"></section>
+  </div>
+  <p class="foot">Unofficial project, not affiliated with Figuring Out. Every answer links to its source.</p>
+</main>
+
+<script>
+(() => {
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const out = $("#out"), reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+function brief(name, desc) {
+  const sim = [["Ananya Rao", "Kosh Payments", "Fintech founder who built for small shops; also talked about regulators.", 262], ["Rohan Mehta", "Ladder Capital", "Investor who backs fintechs; strong views on raising early.", 210], ["Farhan Ali", "Policy researcher", "Explained how tax and market rules shape new businesses.", 160]];
+  const asked = [["How did you get your first 1,000 customers?", "Ananya Rao", "18:40"], ["Would you take venture money again if you started today?", "Rohan Mehta", "1:01:15"], ["What does the regulator worry about most with new fintechs?", "Ananya Rao", "1:17:30"], ["Which mistake cost you the most money?", "Rohan Mehta", "44:05"], ["Kya India mein abhi bhi trading apps ke liye jagah hai?", "Farhan Ali", "36:22"]];
+  const topics = [["Raising money", 6], ["Regulation", 4], ["First customers", 5], ["Hiring", 3], ["Stock market basics", 2], ["Failure", 3]];
+  const sugg = [`Ask ${name.split(" ")[0]} how a company stays profitable without outside money, since past guests mostly raised it.`, "Ask what he would build today with no brand behind him.", "Ask about investing habits for people in their twenties; no past guest went deep on this.", "Ask where he disagrees with common advice on the show about raising money early."];
+  const verify = ["His current role and any recent change in it.", "Latest company numbers (users, revenue) if they come up.", "Any recent news or regulatory action involving the company.", "Pronunciation and spelling of names he may mention."];
+  const item = (i, html) => `<div class="li"><span class="num">${i}</span><div class="txt" contenteditable="true" spellcheck="false">${html}</div><button class="rm" type="button" aria-label="Remove item">&times;</button></div>`;
+  return `<article class="doc rise" id="doc">
+    <div class="bar2"><button class="ghost" type="button" data-a="copy">Copy as text</button><button class="ghost" type="button" data-a="pdf">Download PDF</button><button class="ghost" type="button" data-a="word">Download Word</button><button class="ghost pri" type="button" data-a="save">Save brief</button></div>
+    <p class="meta">Prep brief · 27 Oct 2026 · built from 500 episodes</p>
+    <h2 class="t">${esc(name)}</h2>
+    <p class="sub">${esc(desc)}. Tap any line to edit it, or × to remove it before sharing.</p>
+    <div class="sec"><h3>1. Similar past guests <i>${sim.length}</i></h3><div class="guests">${sim.map(g => `<div class="gc"><span class="av" style="background:linear-gradient(150deg,hsl(${g[3]} 42% 40%),hsl(${(g[3] + 40) % 360} 48% 18%))">${g[0].split(" ").map(w => w[0]).join("")}</span><b>${g[0]}</b><span>${g[1]}</span><span>${g[2]}</span><button class="rm" type="button" aria-label="Remove guest">&times;</button></div>`).join("")}</div></div>
+    <div class="sec"><h3>2. What the host asked them <i>${asked.length}</i></h3><p class="why">Real questions from past episodes. Tap a timestamp to hear how it went.</p>${asked.map((a, i) => item(i + 1, `${esc(a[0])} <span style="color:var(--ink-faint);font-size:13px">to ${a[1]}</span><span class="cite" contenteditable="false">${a[2]}</span>`)).join("")}</div>
+    <div class="sec"><h3>3. Topics already covered <i>${topics.length}</i></h3><p class="why">Number of past episodes that covered each, so you can avoid repeats.</p><div class="topics">${topics.map(t => `<span class="tp">${t[0]}<em>${t[1]} episodes</em><button type="button" aria-label="Remove topic">&times;</button></span>`).join("")}</div></div>
+    <div class="sec"><h3>4. Suggested new questions <i>${sugg.length}</i></h3><p class="why">Suggestions from the gaps in past episodes, not facts.</p>${sugg.map((s, i) => item(i + 1, `<span class="badge" contenteditable="false">SUGGESTION</span>${esc(s)}`)).join("")}</div>
+    <div class="sec"><h3>5. Points to verify before recording <i>${verify.length}</i></h3><p class="why">These depend on facts outside the archive.</p>${verify.map((s, i) => item(i + 1, `<span class="badge chk" contenteditable="false">CHECK</span>${esc(s)}`)).join("")}</div>
+    <p class="note">Mockup: guests, questions and timestamps are sample data. On the live site every past question links to its real moment.</p>
+  </article>`;
+}
+function build(name, desc) {
+  out.innerHTML = `<div class="build" role="status"><div class="wave" aria-hidden="true">${"<i></i>".repeat(14)}</div><div class="steps"><span class="on">Finding similar guests</span><span>Collecting past questions</span><span>Writing the brief</span></div></div>`;
+  const s = out.querySelectorAll(".steps span"), t = reduce ? [0, 0, 0] : [600, 1200, 1800];
+  setTimeout(() => { s[0].className = "done"; s[1].className = "on"; }, t[0]);
+  setTimeout(() => { s[1].className = "done"; s[2].className = "on"; }, t[1]);
+  setTimeout(() => { out.innerHTML = brief(name, desc); }, t[2]);
+}
+$("#form").addEventListener("submit", e => { e.preventDefault(); const n = $("#gname").value.trim(), d = $("#gdesc").value.trim(); const sec = document.querySelector('#sectors [aria-pressed="true"]'); if (!n && !sec) return toast("Add a name or pick a sector"); build(n || sec.textContent, d || ("Upcoming " + (sec ? sec.textContent.toLowerCase() : "guest"))); });
+$("#sectors").addEventListener("click", e => { const c = e.target.closest(".chip"); if (!c) return; const on = c.getAttribute("aria-pressed") !== "true"; document.querySelectorAll("#sectors .chip").forEach(x => x.setAttribute("aria-pressed", "false")); c.setAttribute("aria-pressed", String(on)); if (on) { $("#gname").value = ""; $("#gdesc").value = ""; } });
+$("#past").addEventListener("click", e => { const b = e.target.closest(".pb"); if (!b) return; document.querySelectorAll(".pb").forEach(x => x.classList.toggle("on", x === b)); const n = b.firstChild.textContent; out.innerHTML = brief(n, n === "Nikhil Kamath" ? "Co-founder of Zerodha, investor" : "Saved brief"); });
+out.addEventListener("click", e => {
+  const rm = e.target.closest(".rm, .tp button");
+  if (rm) { const row = rm.closest(".li, .gc, .tp"); const g = row.classList.toggle("gone"); rm.innerHTML = g ? "↺" : "&times;"; rm.setAttribute("aria-label", g ? "Undo remove" : "Remove"); return; }
+  const c = e.target.closest(".cite"); if (c) return toast("Live site: plays this past question at " + c.textContent);
+  const a = e.target.closest("[data-a]"); if (!a) return;
+  const k = a.dataset.a;
+  if (k === "copy") {
+    const doc = $("#doc"), lines = [doc.querySelector(".t").textContent];
+    doc.querySelectorAll(".sec").forEach(s => { lines.push("", s.querySelector("h3").firstChild.textContent.trim()); s.querySelectorAll(".li:not(.gone) .txt, .gc:not(.gone) b, .tp:not(.gone)").forEach(x => lines.push("- " + x.textContent.replace(/\s+/g, " ").replace(/[×↺]/g, "").trim())); });
+    const done = () => toast("Brief copied, without removed items");
+    try { navigator.clipboard.writeText(lines.join("\n")).then(done, () => toast("Copy isn't available here; select the text instead")); } catch (_) { toast("Copy isn't available here; select the text instead"); }
+  } else if (k === "pdf" || k === "word") toast("Live site: downloads the brief as a " + (k === "pdf" ? "PDF" : "Word file") + ", without removed items");
+  else { a.textContent = "Saved ✓"; toast("Saved to Past briefs"); }
+});
+let tEl, tT;
+function toast(m) { tEl && tEl.remove(); clearTimeout(tT); tEl = document.createElement("div"); tEl.className = "toast"; tEl.setAttribute("role", "status"); tEl.textContent = m; document.body.appendChild(tEl); tT = setTimeout(() => { tEl.remove(); tEl = null; }, 2600); }
+out.innerHTML = brief("Nikhil Kamath", "Co-founder of Zerodha, investor");
+})();
+</script>

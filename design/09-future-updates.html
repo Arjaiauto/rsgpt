@@ -1,0 +1,230 @@
+<title>Cuepoint Future Updates</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Cuepoint future updates: a slide deck of ten features that could be built for the team.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+Devanagari:wght@400;500&display=swap">
+<style>
+
+/* Layout: sticky top bar; heading + toolbar; responsive card grid (4/3/2/1) */
+:root{
+  --paper:#101117; --paper-lit:#1a1b24; --paper-edge:#08090c;
+  --surface:#15161e; --raised:#1d1e28; --line:rgba(255,255,255,.08); --line-strong:rgba(255,255,255,.16);
+  --ink:#f2f2f5; --ink-soft:rgba(242,242,245,.6); --ink-faint:rgba(242,242,245,.4);
+  --violet:#5b07fb; --violet-deep:#4a00d6; --violet-text:#a58bff; --cite:#4fe3c1;
+  --gutter:clamp(16px,3.2vw,46px);
+  --ease:cubic-bezier(.2,.8,.2,1);
+  --sans:"Inter","Noto Sans Devanagari","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;min-height:100vh;background:var(--paper);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow-x:hidden;
+  background-image:radial-gradient(120% 60% at 50% -10%,var(--paper-lit) 0%,var(--paper) 55%,var(--paper-edge) 100%);background-attachment:fixed}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--paper)}
+button,input,select{font:inherit;color:inherit}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+:focus-visible{outline:2px solid var(--violet-text);outline-offset:3px}
+
+.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;display:flex;align-items:center;gap:26px;height:60px;
+  padding-left:max(16px,var(--gutter),env(safe-area-inset-left,0px));padding-right:max(16px,var(--gutter),env(safe-area-inset-right,0px));
+  background:rgba(16,17,23,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.logo{display:inline-flex;align-items:center;gap:10px;font-size:20px;color:var(--ink);text-decoration:none}
+.mk{width:26px;height:26px;flex:none;display:block}
+.wm{font-weight:600;letter-spacing:-.05em;white-space:nowrap}
+.ci{display:inline-block;position:relative;width:.27em;height:.545em;vertical-align:baseline}
+.ci i{position:absolute;left:.075em;bottom:0;width:.12em;height:.545em;border-radius:.06em;background:currentColor}
+.ci i::after{content:"";position:absolute;left:50%;top:-.33em;width:.25em;height:.21em;margin-left:-.125em;background:var(--cite);clip-path:polygon(6% 0,94% 0,50% 100%)}
+.links{display:flex;gap:22px;font-size:15px;letter-spacing:-.02em}
+.links a{color:var(--ink-soft);text-decoration:none;padding:6px 0;border-bottom:2px solid transparent}
+.links a[aria-current]{color:var(--ink);border-color:var(--violet)}
+.me{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:14px;color:var(--ink-soft)}
+.av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:600;color:#fff;background:linear-gradient(140deg,#7c3cff,#2bb79a)}
+
+
+/* Layout: the deck fills the screen under the top bar; each slide is text left + flow infographic right; stacks on phones */
+html,body{height:100%}
+body{overflow:hidden}
+.deck{position:relative;height:calc(100svh - 60px - env(safe-area-inset-top,0px));overflow:hidden}
+.track{display:flex;height:100%;transition:transform .6s var(--ease);will-change:transform}
+.slide{flex:0 0 100%;height:100%;overflow-y:auto;display:flex;align-items:center;
+  padding-block:clamp(24px,5vh,56px) 110px;padding-left:max(16px,var(--gutter),env(safe-area-inset-left,0px));padding-right:max(16px,var(--gutter),env(safe-area-inset-right,0px))}
+.in{width:100%;max-width:1180px;margin:0 auto;display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:clamp(24px,5vw,72px);align-items:center}
+.k{display:flex;align-items:center;gap:12px;margin:0 0 18px;font-size:13px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--violet-text)}
+.k b{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:10px;background:rgba(91,7,251,.18);border:1px solid rgba(165,139,255,.35);color:var(--ink);font-size:14px;letter-spacing:0}
+.t{margin:0;font-size:clamp(32px,4.6vw,60px);font-weight:500;line-height:1.02;letter-spacing:-.05em;text-wrap:balance}
+.tag{margin:14px 0 0;font-size:clamp(16px,1.6vw,19px);line-height:1.5;color:var(--ink-soft);max-width:40ch}
+.facts{margin:26px 0 0;display:flex;flex-direction:column;gap:14px;max-width:48ch}
+.f{display:grid;grid-template-columns:92px minmax(0,1fr);gap:14px;font-size:15px;line-height:1.55}
+.f span{font-size:12px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);padding-top:3px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.chip{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--raised);font-size:13.5px}
+.chip.time{color:var(--cite);border-color:rgba(79,227,193,.35);background:rgba(79,227,193,.08)}
+.chip.who{color:var(--ink-soft)}
+.cite{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:999px;border:1px solid rgba(79,227,193,.3);background:rgba(79,227,193,.09);color:var(--cite);font-size:12.5px;font-weight:500;vertical-align:1px;white-space:nowrap}
+.cite::before{content:"";border-left:6px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent}
+/* infographic */
+.viz{position:relative;padding:clamp(18px,3vw,32px);border-radius:26px;border:1px solid var(--line);background:radial-gradient(120% 90% at 20% 0%,rgba(91,7,251,.16),transparent 60%),var(--surface);min-width:0}
+.flow{display:flex;flex-direction:column;gap:0}
+.step{position:relative;display:grid;grid-template-columns:48px minmax(0,1fr);gap:16px;align-items:center;padding:14px 0}
+.step + .step::before{content:"";position:absolute;left:23px;top:-14px;height:28px;width:2px;background:linear-gradient(var(--violet),var(--violet-text))}
+.ic{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;background:var(--raised);border:1px solid var(--line-strong);color:var(--violet-text)}
+.ic svg{width:22px;height:22px}
+.step:last-child .ic{background:rgba(79,227,193,.1);border-color:rgba(79,227,193,.4);color:var(--cite)}
+.step b{display:block;font-size:15.5px;font-weight:500;letter-spacing:-.01em}
+.step small{display:block;margin-top:2px;font-size:13px;color:var(--ink-soft);line-height:1.45}
+.on .step{animation:stepIn .5s var(--ease) both}
+.on .step:nth-child(2){animation-delay:.12s}.on .step:nth-child(3){animation-delay:.24s}.on .step:nth-child(4){animation-delay:.36s}
+@keyframes stepIn{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+.ex{margin-top:18px;padding:14px 16px;border-radius:16px;border:1px dashed var(--line-strong);font-size:13.5px;line-height:1.55;color:var(--ink-soft)}
+.ex b{color:var(--ink);font-weight:500}
+.cmp{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-top:14px}
+.cmp div{padding:12px;border-radius:12px;background:var(--raised);font-size:13px;line-height:1.45}
+.cmp i{display:block;font-style:normal;font-size:11px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px}
+.cmp .bad i{color:#ff8a9a}.cmp .good i{color:var(--cite)}
+/* intro + close */
+.cover .in,.close .in{grid-template-columns:minmax(0,1fr);text-align:left}
+.big{margin:0;font-size:clamp(44px,7.4vw,108px);font-weight:500;line-height:.98;letter-spacing:-.06em}
+.big span{display:block;color:var(--ink-soft)}
+.grid10{margin-top:34px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.g10{padding:14px;border-radius:16px;border:1px solid var(--line);background:var(--surface);font-size:14px;line-height:1.35;cursor:pointer;text-align:left;transition:border-color .2s,transform .25s var(--ease)}
+.g10:hover{border-color:var(--line-strong);transform:translateY(-2px)}
+.g10 b{display:block;font-size:12px;color:var(--violet-text);font-weight:500;margin-bottom:6px}
+.offer{margin-top:28px;display:flex;flex-direction:column;gap:12px;max-width:62ch;font-size:17px;line-height:1.6;color:var(--ink-soft)}
+.offer p{margin:0}
+.offer b{color:var(--ink);font-weight:500}
+/* controls */
+.ctrl{position:absolute;left:0;right:0;bottom:calc(22px + env(safe-area-inset-bottom,0px));display:flex;align-items:center;justify-content:center;gap:16px;pointer-events:none}
+.ctrl > *{pointer-events:auto}
+.nav{width:46px;height:46px;border-radius:50%;border:1px solid var(--line-strong);background:rgba(29,30,40,.9);color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:transform .2s,opacity .2s}
+.nav:hover{transform:scale(1.06)}
+.nav[disabled]{opacity:.3;cursor:default;transform:none}
+.nav svg{width:18px;height:18px}
+.dots{display:flex;gap:6px;padding:8px 12px;border-radius:999px;background:rgba(29,30,40,.85);border:1px solid var(--line)}
+.dot{width:8px;height:8px;border-radius:999px;border:0;padding:0;background:rgba(255,255,255,.22);cursor:pointer;transition:width .3s var(--ease),background-color .3s}
+.dot[aria-current="true"]{width:24px;background:var(--violet-text)}
+.num{position:absolute;right:max(16px,var(--gutter),env(safe-area-inset-right,0px));bottom:calc(34px + env(safe-area-inset-bottom,0px));font-size:13px;color:var(--ink-faint);font-variant-numeric:tabular-nums}
+.prog{position:absolute;left:0;top:0;height:2px;background:linear-gradient(90deg,var(--violet),var(--cite));transition:width .6s var(--ease)}
+@media (max-width:900px){.in{grid-template-columns:minmax(0,1fr);gap:24px}.grid10{grid-template-columns:repeat(2,minmax(0,1fr))}.slide{align-items:flex-start}}
+@media (max-width:820px){.links{display:none}.me span:last-child{display:none}.num{display:none}}
+@media (max-width:520px){.ctrl{bottom:0;padding-block:12px calc(12px + env(safe-area-inset-bottom,0px));background:linear-gradient(180deg,rgba(16,17,23,0),var(--paper) 40%)}.f{grid-template-columns:minmax(0,1fr);gap:2px}.cmp{grid-template-columns:minmax(0,1fr)}.dots{display:none}}
+@media (prefers-reduced-motion:reduce){.track,.prog{transition:none}.on .step{animation:none}}
+</style>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs><linearGradient id="cp-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c3cff"/><stop offset=".55" stop-color="#5b07fb"/><stop offset="1" stop-color="#3a0aa8"/></linearGradient></defs>
+  <symbol id="cp-mark" viewBox="0 0 56 56">
+    <rect width="56" height="56" rx="16" fill="url(#cp-g)"/>
+    <g fill="#fff" opacity=".38"><rect x="10.5" y="27" width="3.2" height="8" rx="1.6"/><rect x="16.8" y="22.5" width="3.2" height="17" rx="1.6"/><rect x="36" y="20.5" width="3.2" height="21" rx="1.6"/><rect x="42.3" y="25" width="3.2" height="12" rx="1.6"/></g>
+    <rect x="25.4" y="19" width="5.2" height="26" rx="2.6" fill="#fff"/>
+    <path d="M20.6 9.6h14.8a1.6 1.6 0 0 1 1.2 2.7l-7.4 7.6a1.6 1.6 0 0 1-2.3 0l-7.4-7.6a1.6 1.6 0 0 1 1.1-2.7z" fill="#4fe3c1"/>
+  </symbol>
+</svg>
+
+<header class="bar">
+  <a class="logo" href="#"><svg class="mk" aria-hidden="true"><use href="#cp-mark"/></svg><span class="sr">Cuepoint</span><span class="wm" aria-hidden="true">cuepo<span class="ci"><i></i></span>nt</span></a>
+  <nav class="links" aria-label="Main"><a href="#">Ask</a><a href="#">Guests</a><a href="#">Prep brief</a><a href="#">Clips</a><a href="#">Saved</a><a href="#">Insights</a><a href="#" aria-current="page">Future</a></nav>
+  <div class="me"><span class="av" aria-hidden="true">A</span><span>Hi Arjun</span></div>
+</header>
+
+
+<div class="deck" id="deck" aria-roledescription="carousel" aria-label="Future updates">
+  <div class="prog" id="prog"></div>
+  <div class="track" id="track"></div>
+  <div class="ctrl">
+    <button class="nav" type="button" id="prev" aria-label="Previous slide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <div class="dots" id="dots" role="tablist" aria-label="Slides"></div>
+    <button class="nav" type="button" id="next" aria-label="Next slide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>
+  </div>
+  <p class="num" id="num"></p>
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = s => document.querySelector(s);
+const I = {
+  upload: '<path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>',
+  wave: '<path d="M4 12h2M8 8v8M12 5v14M16 8v8M20 12h-2"/>',
+  brain: '<path d="M9 4a3 3 0 0 0-3 3v1a3 3 0 0 0-2 5 3 3 0 0 0 3 5h2V4z"/><path d="M15 4a3 3 0 0 1 3 3v1a3 3 0 0 1 2 5 3 3 0 0 1-3 5h-2V4z"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/>',
+  doc: '<rect x="5" y="4" width="14" height="16" rx="2"/><path d="M9 9h6M9 13h6M9 17h3"/>',
+  globe: '<circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4a12 12 0 0 1 0 16M12 4a12 12 0 0 0 0 16"/>',
+  flag: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
+  clip: '<rect x="3.5" y="6" width="17" height="12" rx="2"/><path d="M10.5 9.5v5l4-2.5z"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4"/>',
+  tablet: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M11 18h2"/>',
+  pen: '<path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/>',
+  check: '<path d="M5 12l4 4L19 7"/>',
+  map: '<path d="M4 6l5-2 6 2 5-2v14l-5 2-6-2-5 2z"/><path d="M9 4v14M15 6v14"/>',
+  user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
+  chat: '<path d="M5 5h14v10H9l-4 4z"/>',
+  chart: '<path d="M5 19V9M12 19V5M19 19v-7"/>',
+  lang: '<path d="M4 6h9M8.5 4v2M6 6c1 4 4 7 7 8M11 6c-1 4-4 7-7 8"/><path d="M14 20l3.5-8 3.5 8M15.3 17h4.4"/>',
+  tag: '<path d="M4 12V4h8l8 8-8 8z"/><circle cx="8.5" cy="8.5" r="1.5"/>',
+  shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>'
+};
+const ic = k => `<span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${I[k]}</svg></span>`;
+const F = [
+  { t: "Add any podcast or raw footage", tag: "Bring in a new show, a new episode the day it's recorded, or raw studio files, and every Cuepoint tool works on it.", problem: "Cuepoint only covers the latest 500 YouTube episodes.", how: "Upload audio or video, or paste a channel. The best transcriber is picked per language (Hindi, English, Hinglish), then the same checked pipeline runs.", who: "Whole team", time: "3-4 weeks",
+    steps: [["upload", "Upload raw files or a channel", "Studio audio, video, or a YouTube link"], ["wave", "Best transcriber per language", "Chosen automatically for Hindi, English or Hinglish"], ["check", "Checked extraction", "Quotes, timestamps and numbers verified"], ["search", "Searchable everywhere", "Ask, clips, guests, briefs and insights"]],
+    ex: "<b>Bonus:</b> raw studio files mean word-perfect transcripts and clean clip exports, instead of YouTube captions." },
+  { t: "Deep guest research", tag: "A research agent on the Claude API that studies an upcoming guest from several angles and writes a briefing in minutes.", problem: "Good guest research takes hours, and angles get missed.", how: "It reads public sources about the guest, compares them with what past guests said, and runs fixed frameworks: career arc, numbers to verify, contrarian views, what the audience will ask.", who: "Research team", time: "2-3 weeks",
+    steps: [["user", "Guest name + context", "Plus any links the team already has"], ["globe", "Reads public sources", "Interviews, articles, filings, with links kept"], ["brain", "Runs research frameworks", "Career arc, controversies, numbers, contrarian angles"], ["doc", "Cited research brief", "Every claim linked to its source"]],
+    ex: "<b>Different from today's prep brief:</b> today's brief only uses past episodes. This one also reads the outside world, with every claim cited." },
+  { t: "Context guard", tag: "An AI agent that finds clips of the show posted by others and flags the ones that cut away the context.", problem: "Short clips reposted by other creators can make a point mean the opposite of what was said.", how: "The agent searches platforms for reposted clips, matches each one to the exact moment in the archive, compares the clip with the full conversation around it, and flags the ones that change the meaning for the team to review.", who: "Leadership, legal, social", time: "5-6 weeks",
+    steps: [["search", "Find reposted clips", "Searches YouTube first, other platforms where their rules allow"], ["clip", "Match to the original", "Locates the exact second in the archive"], ["brain", "Compare with full context", "Did the cut change what was meant?"], ["flag", "Flag for the team", "Side by side: the clip vs the full moment"]],
+    cmp: ["Example: the reposted clip", "“Loyalty is bad.”", "Example: the full moment", "Said about staying loyal to an organisation that doesn't give you your due."],
+    ex: "The host talks about this worry in one archive episode; on the live slide this links to that verified moment, found with Find a line.", exLink: true },
+  { t: "Live recording copilot", tag: "A tablet screen during the shoot that surfaces related past moments and sharper follow-up questions as the guest speaks.", problem: "The best follow-up questions are often thought of after the recording.", how: "It listens to the live conversation, searches the archive in the background, and shows short prompts: a past guest who said the opposite, a number to check, a question not yet asked.", who: "Host, producers", time: "4 weeks",
+    steps: [["mic", "Listens live", "Live transcript during the recording"], ["search", "Searches the archive", "Every few seconds, in the background"], ["tablet", "Quiet prompts on a tablet", "One line each, easy to ignore"]] },
+  { t: "Repurpose studio", tag: "For every clip, a first draft of the reel hook, caption, title and thumbnail text, in English and Hindi.", problem: "Writing hooks and captions for every clip takes the social team hours a day.", how: "Pick a clip; Cuepoint drafts three hooks, captions in English and Hindi, a title and thumbnail text, all from what was actually said. The team edits and posts.", who: "Social, editing", time: "2 weeks",
+    steps: [["clip", "Pick a clip", "From the clip finder"], ["pen", "Draft hooks and captions", "3 options, English and Hindi"], ["check", "Team edits and approves", "Nothing posts automatically"]] },
+  { t: "Fact-check before publish", tag: "Flags names, numbers and claims in a new episode that need checking before it goes live.", problem: "A wrong name, number or claim in a published episode is hard to take back.", how: "After recording, Cuepoint lists every number, name and factual claim with its timestamp, marks the ones it could not confirm, and links sources for the rest.", who: "Research, editing", time: "3 weeks",
+    steps: [["wave", "New episode transcribed", "Before it is published"], ["search", "Finds checkable claims", "Numbers, names, dates, facts"], ["shield", "Checklist with timestamps", "Confirmed, unclear, or needs a source"]] },
+  { t: "Guest ideas from gaps", tag: "A map of every topic the show has covered, and suggested guests for the topics it hasn't.", problem: "Choosing the next guests without a clear view of what's already covered.", how: "Topics from all episodes are grouped into a map sized by how often they come up and how they perform. Thin areas get suggested guest profiles to look for.", who: "Research, leadership", time: "2 weeks",
+    steps: [["map", "Topic map of the archive", "Sized by coverage and performance"], ["chart", "Finds the gaps", "Topics audiences want but the show rarely covers"], ["user", "Suggested guest profiles", "The kind of guest to book, with reasons"]] },
+  { t: "Audience comment insights", tag: "Reads the comments on every episode to find what viewers want next and which moments they quote.", problem: "Thousands of comments per episode, and nobody can read them all.", how: "Comments are pulled through the YouTube Data API, grouped into themes, and matched to the moments viewers mention. A weekly summary shows requests, praise and complaints.", who: "Content, leadership", time: "2 weeks",
+    steps: [["chat", "Pull every comment", "Official YouTube Data API"], ["brain", "Group into themes", "Requests, praise, complaints, quoted moments"], ["chart", "Weekly summary", "With links to the comments behind each theme"]] },
+  { t: "Regional language subtitles", tag: "Subtitles and short summaries in Tamil, Telugu, Bengali, Marathi and more, so episodes reach all of India.", problem: "Hindi and English leave most of India's languages out.", how: "Checked transcripts are translated into regional languages, kept in sync with the timestamps, and exported as subtitle files plus a short summary per episode.", who: "Social, growth", time: "3 weeks",
+    steps: [["wave", "Checked transcript", "With exact timestamps"], ["lang", "Translate per language", "Tamil, Telugu, Bengali, Marathi, more"], ["doc", "Subtitles + summaries", "Ready-to-upload subtitle files"]] },
+  { t: "Sponsor match + brand safety", tag: "Matches brands to the right episodes and checks that each episode is safe for that brand.", problem: "Matching sponsors to episodes is done by hand, with brand risk checked by memory.", how: "Pick a brand or category; Cuepoint lists matching episodes with views and topics, and flags moments a brand may want to avoid, each with a timestamp.", who: "Partnerships", time: "3 weeks",
+    steps: [["tag", "Pick a brand or category", "e.g. fintech, health, travel"], ["search", "Matching episodes", "With views, audience and topics"], ["shield", "Brand safety check", "Flagged moments with timestamps"]] }
+];
+const slides = [];
+slides.push(`<section class="slide cover" aria-label="Slide 1"><div class="in"><div><p class="k">Future updates</p><h1 class="big">What Cuepoint<span>could do next</span></h1>
+  <p class="tag" style="max-width:56ch">Ten features that could be built for the team, each starting from a real problem. Pick any one to see how it would work and how long it would take.</p>
+  <div class="grid10">${F.map((f, i) => `<button class="g10" type="button" data-go="${i + 1}"><b>${String(i + 1).padStart(2, "0")}</b>${f.t}</button>`).join("")}</div></div></div></section>`);
+F.forEach((f, i) => slides.push(`<section class="slide" aria-label="Slide ${i + 2}: ${f.t}"><div class="in">
+  <div><p class="k"><b>${i + 1}</b>Future update</p><h2 class="t">${f.t}</h2><p class="tag">${f.tag}</p>
+    <div class="facts"><div class="f"><span>Problem</span><div>${f.problem}</div></div><div class="f"><span>How</span><div>${f.how}</div></div></div>
+    <div class="chips"><span class="chip who">${f.who}</span><span class="chip time">About ${f.time} to build</span></div></div>
+  <div class="viz"><div class="flow">${f.steps.map(s => `<div class="step">${ic(s[0])}<div><b>${s[1]}</b><small>${s[2]}</small></div></div>`).join("")}</div>
+    ${f.cmp ? `<div class="cmp"><div class="bad"><i>${f.cmp[0]}</i>${f.cmp[1]}</div><div class="good"><i>${f.cmp[2]}</i>${f.cmp[3]}</div></div>` : ""}
+    ${f.ex ? `<div class="ex">${f.ex}${f.exLink ? ' <span class="cite">verified moment</span>' : ""}</div>` : ""}</div>
+</div></section>`));
+slides.push(`<section class="slide close" aria-label="Slide ${F.length + 2}"><div class="in"><div><p class="k">Next step</p><h2 class="big">Built on your files,<span>with your team</span></h2>
+  <div class="offer"><p>Every feature here gets better on <b>Figuring Out's own raw recordings</b>: word-perfect transcripts, clean clip exports and no YouTube limits.</p>
+  <p>I'd start with whichever one saves the team the most hours, ship it in weeks, and measure it.</p>
+  <p>This demo stays private, and I'll take it down whenever you ask.</p></div></div></div></section>`);
+
+const track = $("#track"); track.innerHTML = slides.join("");
+const N = slides.length; let cur = 0;
+$("#dots").innerHTML = Array.from({ length: N }, (_, i) => `<button class="dot" type="button" role="tab" aria-label="Go to slide ${i + 1}" data-go="${i}"></button>`).join("");
+const els = [...track.children];
+function go(i) {
+  cur = Math.max(0, Math.min(N - 1, i));
+  track.style.transform = `translateX(${-cur * 100}%)`;
+  els.forEach((s, k) => { s.classList.toggle("on", k === cur); s.setAttribute("aria-hidden", String(k !== cur)); s.inert = k !== cur; if (k === cur) s.scrollTop = 0; });
+  document.querySelectorAll(".dot").forEach((d, k) => d.setAttribute("aria-current", String(k === cur)));
+  $("#prev").disabled = cur === 0; $("#next").disabled = cur === N - 1;
+  $("#num").textContent = `${cur + 1} / ${N}`; $("#prog").style.width = ((cur + 1) / N * 100) + "%";
+}
+$("#prev").addEventListener("click", () => go(cur - 1)); $("#next").addEventListener("click", () => go(cur + 1));
+document.addEventListener("click", e => { const g = e.target.closest("[data-go]"); if (g) go(+g.dataset.go); });
+addEventListener("keydown", e => { if (e.target.closest("input,textarea,select")) return; if (e.key === "ArrowRight" || e.key === "PageDown") go(cur + 1); else if (e.key === "ArrowLeft" || e.key === "PageUp") go(cur - 1); else if (e.key === "Home") go(0); else if (e.key === "End") go(N - 1); });
+let sx = null, sy = 0;
+$("#deck").addEventListener("touchstart", e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+$("#deck").addEventListener("touchend", e => { if (sx == null) return; const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy; if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.3) go(cur + (dx < 0 ? 1 : -1)); sx = null; }, { passive: true });
+go(0);
+})();
+</script>
