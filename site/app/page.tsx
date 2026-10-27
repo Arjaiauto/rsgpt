@@ -4,13 +4,15 @@ import { StoryEffects } from "@/components/home/StoryEffects";
 import { LoginButton } from "@/components/home/LoginButton";
 import "./home.css";
 
-/* Build numbers from FRONTEND_DESIGN.md (Page 1A, from the build logs) and gate 2. */
+/* Build numbers from FRONTEND_DESIGN.md (Page 1A) and gate 2. Extraction and "What's inside" counts match the
+   database for the final run (extract-haiku-v5-20261023-011718), checked 2026-10-27: 36,797 rows extracted,
+   36,197 verified (98.4%); verified clips 2,705; verified host questions 18,533; 429 guests (unique guest_key). */
 const STAGES = [
   { name: "Episodes", count: "499", text: "499", note: "of the latest 500 episodes transcribed; one age-restricted episode skipped." },
   { name: "Transcripts", count: "1.04", dec: "2", suffix: "M", text: "1.04M", note: "timed lines, from YouTube captions first and audio transcription where captions were missing." },
   { name: "Hindi", count: "676500", text: "676,500", note: "Hindi lines written in Roman Hinglish and translated to English, so any phrasing finds them." },
   { name: "Speakers", count: "99", suffix: "%", text: "99%", note: "of lines labelled host or guest, so opinions are credited to the right person." },
-  { name: "Extraction", count: "36797", text: "36,797", note: "takeaways, quotes, clips and questions pulled out; 98.3% passed the timestamp and exact-quote checks." },
+  { name: "Extraction", count: "36797", text: "36,797", note: "takeaways, quotes, clips and questions pulled out; 36,197 (98.4%) passed the timestamp and exact-quote checks." },
   { name: "Search", count: "35234", text: "35,234", note: "searchable passages in English, Hinglish and Hindi; most answers arrive in 1 to 3 seconds." },
 ];
 
@@ -20,10 +22,10 @@ const ACCURACY: [string, number][] = [
 ];
 
 const TILES = [
-  { count: "36158", text: "36,158", note: "verified insights: takeaways, opportunities, quotes and disagreements" },
-  { count: "2724", text: "2,724", note: "clips of 30 to 90 seconds that stand on their own" },
+  { count: "36197", text: "36,197", note: "verified items: takeaways, opportunities, quotes, disagreements, clips and host questions" },
+  { count: "2705", text: "2,705", note: "clips of 30 to 90 seconds that stand on their own" },
   { count: "429", text: "429", note: "guests, each profile dated to their episode" },
-  { count: "18822", text: "18,822", note: "questions the host asked, sorted by type" },
+  { count: "18533", text: "18,533", note: "questions the host asked, sorted by type" },
   { count: "13", text: "13", note: "opportunity categories, from growing sectors to warnings" },
   { count: "3", text: "3", note: "languages you can ask in: English, Hindi and Hinglish" },
 ];
