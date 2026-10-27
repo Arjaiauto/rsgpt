@@ -211,6 +211,14 @@ create table if not exists public.qa_log (
     visitor_id       text,
     created_at       timestamptz not null default now()
 );
+-- Ticket 21a (same SQL as sql/qa_log_v2.sql)
+alter table public.qa_log add column if not exists language    text check (language in ('en', 'hi', 'hinglish'));
+alter table public.qa_log add column if not exists found       boolean;
+alter table public.qa_log add column if not exists first_name  text;
+alter table public.qa_log add column if not exists latency_ms  integer;
+create index if not exists qa_log_created_idx on public.qa_log (created_at desc);
+-- Ask speed work (same SQL as sql/qa_log_timings.sql): per-question stage timings and sentence counts
+alter table public.qa_log add column if not exists timings jsonb;
 comment on table public.qa_log is
     'Log of questions asked on the website, the answers given and the chunk IDs they cited.';
 

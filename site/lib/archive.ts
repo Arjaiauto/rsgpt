@@ -1,6 +1,5 @@
 import "server-only";
 import { ARCHIVE_RUN_ID, db } from "./db";
-import type { Clip } from "./player-types";
 
 /** Strips characters that have meaning in PostgREST filters, so typed text is only ever matched as text. */
 function cleanQuery(q: string): string {
@@ -49,38 +48,5 @@ export async function searchArchive(raw: string): Promise<{ guests: GuestHit[]; 
       publishedAt: r.published_at,
       durationS: r.duration_seconds,
     })),
-  };
-}
-
-/** The highest-scored verified clip, with its episode title and guest names (test block on /ask). */
-export async function topClip(sourcePath: string): Promise<Clip | null> {
-  const { data, error } = await db()
-    .from("clips")
-    .select("id,video_id,start_s,end_s,topic,opening_line,score")
-    .eq("verified", true)
-    .eq("run_id", ARCHIVE_RUN_ID)
-    .order("score", { ascending: false })
-    .order("id", { ascending: true })
-    .limit(1);
-  if (error) throw error;
-  const c = data?.[0];
-  if (!c) return null;
-  const [ep, gs] = await Promise.all([
-    db().from("episodes").select("title,published_at").eq("video_id", c.video_id).single(),
-    db().from("guests").select("name").eq("video_id", c.video_id).eq("verified", true).eq("run_id", ARCHIVE_RUN_ID),
-  ]);
-  if (ep.error) throw ep.error;
-  const guest = [...new Set((gs.data ?? []).map((g) => g.name as string))].join(", ");
-  return {
-    key: `clip:${c.id}`,
-    itemType: "clip",
-    itemId: String(c.id),
-    videoId: c.video_id,
-    startS: c.start_s,
-    endS: c.end_s,
-    title: c.topic || c.opening_line || "Clip",
-    guest: guest || "Guest",
-    episode: ep.data.title,
-    sourcePath,
   };
 }

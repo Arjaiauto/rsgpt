@@ -10,6 +10,8 @@ export type Clip = {
   title: string;
   guest: string;
   episode: string;
+  /** Episode month, e.g. "Mar 2025" (optional). */
+  date?: string;
   /** The page that owns the big player for this clip; null when there is none (mini player only). */
   sourcePath: string | null;
 };

@@ -9,7 +9,7 @@ import { toast } from "@/lib/toast";
 import { IconFlag, IconX } from "@/components/Icons";
 
 /** Flag button + "Report an error" popup (a bottom sheet under 820px). */
-export function ReportButton({ item, compact = false }: { item: ReportItem; compact?: boolean }) {
+export function ReportButton({ item, compact = false, variant }: { item: ReportItem; compact?: boolean; variant?: "link" }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const path = usePathname();
   const [reason, setReason] = useState("");
@@ -36,7 +36,11 @@ export function ReportButton({ item, compact = false }: { item: ReportItem; comp
 
   return (
     <>
-      {compact ? (
+      {variant === "link" ? (
+        <button className="linkbtn" type="button" onClick={open} disabled={reported}>
+          {reported ? "Reported" : "Report an error"}
+        </button>
+      ) : compact ? (
         <button className="ib" type="button" onClick={open} disabled={reported} aria-label={reported ? "Reported" : "Report an error"}>
           <IconFlag />
         </button>

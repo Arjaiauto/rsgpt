@@ -1,16 +1,38 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fmtTime, youtubeAt, type Clip } from "@/lib/player-types";
 import { toast } from "@/lib/toast";
 import { IconBookmark, IconExternal, IconLink, IconPause, IconPlay } from "@/components/Icons";
 import { ReportButton } from "@/components/report/ReportButton";
 import { loadYouTubeApi, player, registerSlot, usePlayer } from "./store";
 
-const BARS = Array.from({ length: 64 }, (_, i) => 18 + Math.abs(Math.sin(i * 1.7) * 60 + Math.sin(i * 0.5) * 22));
+const thumb = (videoId: string, size: "maxresdefault" | "hqdefault") =>
+  `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/${size}.jpg`;
 
-/** An empty 16:9 placeholder. When its clip is the current one, the fixed player layer sits over it. */
-export function PlayerSlot({ clip }: { clip: Clip }) {
+/** The episode's YouTube thumbnail as the poster of a playable player (CLAUDE.md rule 1 exception: posters of
+    playable players only, never as photos, avatars, logos or decoration). maxresdefault when it exists; YouTube
+    answers a missing one with a 120x90 placeholder, so that falls back to hqdefault. */
+function Poster({ videoId }: { videoId: string }) {
+  const [src, setSrc] = useState(thumb(videoId, "maxresdefault"));
+  const fallback = () => setSrc((s) => (s.includes("maxresdefault") ? thumb(videoId, "hqdefault") : s));
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- a lazy poster from i.ytimg.com; no resizing needed
+    <img
+      className="slot__img"
+      src={src}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onLoad={(e) => { if (e.currentTarget.naturalWidth <= 120) fallback(); }}
+      onError={fallback}
+    />
+  );
+}
+
+/** A 16:9 placeholder with the episode poster, a round play button and the teal start time. When its clip is the
+    current one, the fixed player layer sits over it. `caption` is shown over the poster (top left). */
+export function PlayerSlot({ clip, caption }: { clip: Clip; caption?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const { clip: current, playing } = usePlayer();
   const isCurrent = current?.key === clip.key;
@@ -27,21 +49,20 @@ export function PlayerSlot({ clip }: { clip: Clip }) {
       className="slot"
       role="button"
       tabIndex={0}
-      aria-label={`Play ${clip.title}`}
+      aria-label={`Play from ${fmtTime(clip.startS)}: ${clip.title}`}
       onClick={() => player.toggle(clip)}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); player.toggle(clip); } }}
     >
-      <span className="slot__lab">{clip.episode}</span>
-      <div className="slot__wave" aria-hidden="true">
-        {BARS.map((h, i) => <i key={i} style={{ height: `${h}%` }} />)}
-      </div>
+      <Poster key={clip.videoId} videoId={clip.videoId} />
+      {caption && <span className="slot__lab">{caption}</span>}
+      <span className="slot__badge num">{fmtTime(clip.startS)}</span>
       <div className="slot__big" aria-hidden="true">{isCurrent && playing ? <IconPause /> : <IconPlay />}</div>
     </div>
   );
 }
 
 /** Big player card: slot, title, guest, episode, start time, progress, actions. */
-export function ClipPlayer({ clip }: { clip: Clip }) {
+export function ClipPlayer({ clip, label, report = true }: { clip: Clip; label?: string; report?: boolean }) {
   const { clip: current, pos } = usePlayer();
   const isCurrent = current?.key === clip.key;
   const len = clip.endS - clip.startS;
@@ -55,12 +76,13 @@ export function ClipPlayer({ clip }: { clip: Clip }) {
 
   return (
     <div className="card player">
-      <PlayerSlot clip={clip} />
+      {/* The episode title appears once: as the bold line when there is no label, else over the poster. */}
+      <PlayerSlot clip={clip} caption={label || clip.title !== clip.episode ? clip.episode : undefined} />
       <div className="pmeta">
         <div>
-          <div className="pmeta__t">{clip.title}</div>
+          <div className="pmeta__t">{label ?? clip.title}</div>
           <div className="pmeta__g">
-            {clip.guest} · {clip.episode} · starts <span className="ts">{fmtTime(clip.startS)}</span>
+            {[clip.guest, clip.date].filter(Boolean).join(" · ")} · starts <span className="ts">{fmtTime(clip.startS)}</span>
           </div>
         </div>
         <div
@@ -89,9 +111,11 @@ export function ClipPlayer({ clip }: { clip: Clip }) {
           <a className="pill pill--ghost" href={youtubeAt(clip.videoId, at)} target="_blank" rel="noopener noreferrer">
             <IconExternal />Open on YouTube
           </a>
-          <ReportButton
-            item={{ itemType: clip.itemType, itemId: clip.itemId, videoId: clip.videoId, startS: clip.startS, episode: clip.episode, title: clip.title }}
-          />
+          {report && (
+            <ReportButton
+              item={{ itemType: clip.itemType, itemId: clip.itemId, videoId: clip.videoId, startS: clip.startS, episode: clip.episode, title: clip.title }}
+            />
+          )}
         </div>
       </div>
     </div>

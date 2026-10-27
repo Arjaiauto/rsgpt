@@ -41,7 +41,7 @@ The base is the holographic-cloth design Arjun chose, switched to a dark studio 
 
 **Motion:** one easing curve everywhere (fast start, soft stop); elements rise 18 px into place on entry, staggered 80 ms. With "reduce motion" turned on, everything becomes quick fades.
 
-**Fixed rules:** no Raj Shamani photos, logos or show branding; the product is named Cuepoint (domain cuepoint.in) and the wordmark is only lowercase "cuepoint"; every page carries "Unofficial project, not affiliated with Figuring Out. Every answer links to its source."; every claim shows a timestamp.
+**Fixed rules:** no Raj Shamani photos, logos or show branding (exception: a YouTube thumbnail may be shown only as the poster of a playable video player (reference player, inline chip player, mini player before play), because the YouTube embed shows the same image once loaded; never use thumbnails as guest photos, source-card avatars, logos, backgrounds or decoration); the product is named Cuepoint (domain cuepoint.in) and the wordmark is only lowercase "cuepoint"; every page carries "Unofficial project, not affiliated with Figuring Out. Every answer links to its source."; every claim shows a timestamp.
 
 **Logo:** lowercase "cuepoint" in Inter semibold; the i has no dot, instead a small teal downward cue marker sits above its stem, the way an editor marks the start of a clip. The app icon is a violet rounded square with a white playhead line, the teal cue marker on top and faint waveform bars either side; it sits next to the wordmark in the top bar and above the login heading.
 
@@ -62,7 +62,7 @@ The public home page opens on the cloth hero and then tells, in four scroll sect
 
 1. Episodes: 500 listed, 499 transcribed (1 age-restricted episode skipped).
 2. Transcripts: YouTube captions first, Sarvam or Groq for the few without; over 1 million timed lines.
-3. Hindi: 676,500 lines turned into Roman Hinglish and translated to English.
+3. Hindi: 732,026 lines turned into Roman Hinglish and translated to English.
 4. Speakers: every line labelled host or guest; under 1% left unknown.
 5. Extraction: 36,797 items pulled out; 36,197 (98.4%) passed the code checks for IDs, timestamps, exact quotes and numbers.
 6. Search: 35,234 searchable passages, each answer in about 1-3 seconds.

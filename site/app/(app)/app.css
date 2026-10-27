@@ -7,7 +7,7 @@
   position: sticky; top: env(safe-area-inset-top, 0px); z-index: var(--z-topbar); display: flex; align-items: center; gap: 28px; height: 60px;
   padding-left: max(16px, var(--gutter), env(safe-area-inset-left, 0px));
   padding-right: max(16px, var(--gutter), env(safe-area-inset-right, 0px));
-  background: rgba(16, 17, 23, 0.8); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--line);
+  background: rgba(16, 17, 23, 0.97); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--line);
 }
 .bar-top form { margin: 0; }
 .bar-top > * { flex: none; white-space: nowrap; } /* nothing in the top bar wraps */

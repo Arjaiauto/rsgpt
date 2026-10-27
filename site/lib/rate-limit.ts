@@ -7,10 +7,10 @@ const store: Map<string, number[]> = ((globalThis as { __cpRateLimit?: Map<strin
   new Map());
 
 /** Records one try for this key and says whether it is allowed. */
-export function takeTry(key: string): boolean {
+export function takeTry(key: string, max = MAX_TRIES, windowMs = WINDOW_MS): boolean {
   const now = Date.now();
-  const recent = (store.get(key) ?? []).filter((t) => now - t < WINDOW_MS);
-  if (recent.length >= MAX_TRIES) {
+  const recent = (store.get(key) ?? []).filter((t) => now - t < windowMs);
+  if (recent.length >= max) {
     store.set(key, recent);
     return false;
   }
