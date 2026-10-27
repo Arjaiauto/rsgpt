@@ -2,35 +2,59 @@ import { Hero } from "@/components/home/Hero";
 import { Explorer } from "@/components/home/Explorer";
 import { StoryEffects } from "@/components/home/StoryEffects";
 import { LoginButton } from "@/components/home/LoginButton";
+import { getSiteStats, type SiteStats } from "@/lib/site-stats";
 import "./home.css";
 
-/* Build numbers from FRONTEND_DESIGN.md (Page 1A) and gate 2. Extraction and "What's inside" counts match the
-   database for the final run (extract-haiku-v5-20261023-011718), checked 2026-10-27: 36,797 rows extracted,
-   36,197 verified (98.4%); verified clips 2,705; verified host questions 18,533; 429 guests (unique guest_key). */
-const STAGES = [
-  { name: "Episodes", count: "499", text: "499", note: "of the latest 500 episodes transcribed; one age-restricted episode skipped." },
-  { name: "Transcripts", count: "1.04", dec: "2", suffix: "M", text: "1.04M", note: "timed lines, from YouTube captions first and audio transcription where captions were missing." },
-  { name: "Hindi", count: "676500", text: "676,500", note: "Hindi lines written in Roman Hinglish and translated to English, so any phrasing finds them." },
-  { name: "Speakers", count: "99", suffix: "%", text: "99%", note: "of lines labelled host or guest, so opinions are credited to the right person." },
-  { name: "Extraction", count: "36797", text: "36,797", note: "takeaways, quotes, clips and questions pulled out; 36,197 (98.4%) passed the timestamp and exact-quote checks." },
-  { name: "Search", count: "35234", text: "35,234", note: "searchable passages in English, Hinglish and Hindi; most answers arrive in 1 to 3 seconds." },
-];
+/* Gate 2: a one-time hand review of a random sample (data/gate2_report.md, Ticket 17, 2026-10-26).
+   These are not live counts, so they stay fixed here; every other number comes from getSiteStats(). */
+const GATE2 = {
+  accuracyPct: 96,
+  itemsReviewed: 209,
+  itemsCorrect: 199,
+  episodesSampled: 50,
+  byType: [
+    ["Takeaways", 100], ["Opportunities", 100], ["Clips", 100], ["Guest profiles", 100],
+    ["Quotes", 96], ["Host questions", 95], ["Disagreements", 88], ["Host opinions", 86],
+  ] as [string, number][],
+};
 
-const ACCURACY: [string, number][] = [
-  ["Takeaways", 100], ["Opportunities", 100], ["Clips", 100], ["Guest profiles", 100],
-  ["Quotes", 96], ["Host questions", 95], ["Disagreements", 88], ["Host opinions", 86],
-];
+const n = (v: number) => v.toLocaleString("en-US");
 
-const TILES = [
-  { count: "36197", text: "36,197", note: "verified items: takeaways, opportunities, quotes, disagreements, clips and host questions" },
-  { count: "2705", text: "2,705", note: "clips of 30 to 90 seconds that stand on their own" },
-  { count: "429", text: "429", note: "guests, each profile dated to their episode" },
-  { count: "18533", text: "18,533", note: "questions the host asked, sorted by type" },
-  { count: "13", text: "13", note: "opportunity categories, from growing sectors to warnings" },
-  { count: "3", text: "3", note: "languages you can ask in: English, Hindi and Hinglish" },
-];
+/** One count-up number: data-count is the target, the text is the final value (shown without JavaScript). */
+type Big = { count: string; dec?: string; suffix?: string; text: string };
+const big = (v: number, dec = 0, suffix = ""): Big => ({
+  count: String(v), dec: dec ? String(dec) : undefined, suffix: suffix || undefined,
+  text: (dec ? v.toFixed(dec) : n(v)) + suffix,
+});
 
-export default function Home() {
+function stages(s: SiteStats) {
+  const millions = Math.round(s.transcriptLines / 10_000) / 100;
+  const skipped = s.episodesSkipped === 1 ? "one episode skipped" : `${n(s.episodesSkipped)} episodes skipped`;
+  return [
+    { name: "Episodes", ...big(s.episodesTranscribed), note: `of the latest ${n(s.episodesListed)} episodes transcribed${s.episodesSkipped ? `; ${skipped} (age-restricted)` : ""}.` },
+    { name: "Transcripts", ...big(millions, 2, "M"), note: "timed lines, from YouTube captions first and audio transcription where captions were missing." },
+    { name: "Hindi", ...big(s.hindiLines), note: "Hindi lines written in Roman Hinglish and translated to English, so any phrasing finds them." },
+    { name: "Speakers", ...big(s.speakerLabelledPct, 1, "%"), note: "of lines labelled host or guest, so opinions are credited to the right person." },
+    { name: "Extraction", ...big(s.extracted), note: `takeaways, quotes, clips and questions pulled out; ${n(s.verified)} (${s.verifiedPct.toFixed(1)}%) passed the timestamp and exact-quote checks.` },
+    { name: "Search", ...big(s.passages), note: "searchable passages in English, Hinglish and Hindi; most answers arrive in 1 to 3 seconds." },
+  ];
+}
+
+function tiles(s: SiteStats) {
+  return [
+    { ...big(s.verified), note: "verified items: takeaways, opportunities, quotes, disagreements, clips and host questions" },
+    { ...big(s.verifiedClips), note: "clips of 30 to 90 seconds that stand on their own" },
+    { ...big(s.guests), note: "guests, each profile dated to their episode" },
+    { ...big(s.verifiedHostQuestions), note: "questions the host asked, sorted by type" },
+    { ...big(s.opportunityCategories), note: "opportunity categories, from growing sectors to warnings" },
+    // A product fact, not a data count.
+    { ...big(3), note: "languages you can ask in: English, Hindi and Hinglish" },
+  ];
+}
+
+export default async function Home() {
+  // Counted from verified rows in Supabase, cached for 24 hours (lib/site-stats.ts).
+  const stats = await getSiteStats();
   return (
     <div className="home">
       <Hero />
@@ -45,7 +69,7 @@ export default function Home() {
             </p>
             <ol className="pipe" id="pipe">
               <div className="pipe__track" aria-hidden="true"><div className="pipe__fill" id="pipefill" /></div>
-              {STAGES.map((s, i) => (
+              {stages(stats).map((s, i) => (
                 <li className="stage on" key={s.name}>
                   <span className="dot">{i + 1}</span>
                   <h3>{s.name}</h3>
@@ -63,14 +87,14 @@ export default function Home() {
             <h2 className="h2" id="acc-h">Checked by hand, not only by code</h2>
             <div className="acc">
               <div className="acc__num">
-                <div className="acc__big num" data-count="96" data-suffix="%" aria-label="96 percent">96%</div>
+                <div className="acc__big num" data-count={GATE2.accuracyPct} data-suffix="%" aria-label={`${GATE2.accuracyPct} percent`}>{GATE2.accuracyPct}%</div>
                 <p className="acc__cap">
-                  209 items picked at random from 50 episodes and checked against the episode itself. 199 were correct. Most of the
-                  rest credited a guest&apos;s line to the host.
+                  {GATE2.itemsReviewed} items picked at random from {GATE2.episodesSampled} episodes and checked against the
+                  episode itself. {GATE2.itemsCorrect} were correct. Most of the rest credited a guest&apos;s line to the host.
                 </p>
               </div>
               <ul className="bars" id="bars">
-                {ACCURACY.map(([name, pct]) => (
+                {GATE2.byType.map(([name, pct]) => (
                   <li className="bar" key={name}>
                     <span>{name}</span>
                     <span className="bar__t"><span className={`bar__f${pct < 90 ? " lo" : ""}`} style={{ width: `${pct}%` }} /></span>
@@ -87,7 +111,7 @@ export default function Home() {
             <p className="eyebrow">What&apos;s inside</p>
             <h2 className="h2" id="in-h">Every answer points to a moment</h2>
             <div className="tiles">
-              {TILES.map((t) => (
+              {tiles(stats).map((t) => (
                 <div className="tile" key={t.note}>
                   <span className="big num" data-count={t.count}>{t.text}</span>
                   <p>{t.note}</p>
