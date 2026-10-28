@@ -6,7 +6,10 @@ export const guestSlug = (key: string): string => key.toLowerCase().replace(/-{2
 /** Slugs that no longer exist because pipeline/corrections.json merged the guest into another key (a misheard
     organisation fixed), and where they went. Mirrors the "guest_keys" map there. */
 const MERGED_SLUGS: Record<string, string> = {
-  "vaibhav-sisinty-roseschool": "vaibhav-sisinty-growthschool",
+  "vaibhav-sisinty-roseschool": "vaibhav-sisinty",
+  "vaibhav-sisinty-growthschool": "vaibhav-sisinty",
+  "vaibhav-sisinty-curahome": "vaibhav-sisinty",
+  "vaibhav": "vaibhav-sisinty",
 };
 
 /** The slug a guest page lives at now, for a raw guest_key or an old slug. */

@@ -169,7 +169,7 @@ export function GuestProfile({ profile: p }: { profile: Profile }) {
           <section className="gx-hero">
             <div>
               <div className="gx-photo"><Portrait name={p.name} photoUrl={p.photo?.url ?? null} priority /></div>
-              {p.photo && (
+              {p.photo && p.photo.source !== "manual" && (
                 <p className="gx-credit">
                   Photo: {[p.photo.credit, p.photo.license].filter(Boolean).join(", ")}
                   {p.photo.source && <>, via <a href={p.photo.source} target="_blank" rel="noopener noreferrer">Wikimedia Commons</a></>}

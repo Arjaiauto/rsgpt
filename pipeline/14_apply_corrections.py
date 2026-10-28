@@ -66,9 +66,14 @@ def main() -> None:
     db = db_lib.client()
     corr = corrections_lib.load()
     run_id = RUN_ID_PATH.read_text(encoding="utf-8").strip()
-    video_ids = sorted({v for r in corr.rules for v in r["videos"]})
+    video_ids = {v for r in corr.rules for v in r["videos"]}
     if not video_ids:
         sys.exit("corrections.json has no scoped episodes")
+    # Episodes of a guest_key that a merge moves (corrections.json "guest_keys") are scanned too.
+    for key in corr.keys:
+        video_ids |= {g["video_id"] for g in db_lib.call("guests select", lambda: db.table("guests").select("video_id")
+                      .eq("run_id", run_id).eq("guest_key", key).execute(), db).data}
+    video_ids = sorted(video_ids)
 
     guest_cols = ("id,video_id,guest_key,name,organisation,role_at_episode,bio,linkedin_search_url,verified,"
                   + ",".join(LINK_FIELDS))
@@ -80,11 +85,14 @@ def main() -> None:
     changes: list[tuple[str, dict, dict]] = []  # (table, row, {field: new value})
     for g in guests:
         new = corr.fix_fields(g, ("organisation", "role_at_episode", "bio"))
-        if "organisation" in new:
-            new["linkedin_search_url"] = corrections_lib.linkedin_search_url(g["name"], new["organisation"])
         key = corr.guest_key(g["guest_key"])
         if key != g["guest_key"]:
             new["guest_key"] = key
+        org = corr.organisation(key)
+        if org and org != g["organisation"]:  # a merged guest has one organisation; role_at_episode stays per episode
+            new["organisation"] = org
+        if "organisation" in new:
+            new["linkedin_search_url"] = corrections_lib.linkedin_search_url(g["name"], new["organisation"])
         if new:
             changes.append(("guests", g, new))
     # A merged guest keeps the links the other row had (the link fields are written on every row of a guest_key).
@@ -161,7 +169,9 @@ def main() -> None:
                 log.warning("links sheet already has %s; its %s row is left as it is", new_key, r["guest_key"])
                 continue
             old_key, r["guest_key"] = r["guest_key"], new_key
-            r["organisation"] = corr.fix_text(r["organisation"], guest_key=old_key, field="organisation") or r["organisation"]
+            have.add(new_key)
+            r["organisation"] = (corr.organisation(new_key)
+                                 or corr.fix_text(r["organisation"], guest_key=old_key, field="organisation") or r["organisation"])
             r["google_search_url"] = "https://www.google.com/search?q=" + quote_plus(f"{r['name']} {r['organisation']}".strip())
             r["linkedin_search_url"] = corrections_lib.linkedin_search_url(r["name"], r["organisation"])
             touched += 1

@@ -5,6 +5,7 @@
     CORR.fix_text(text, video_id=vid, field="bio")   # the text with every matching rule applied
     CORR.fix_fields(row, ("organisation", "bio"))    # {field: corrected value} for the fields that change
     CORR.guest_key(key)                              # the guest_key a correction merged this one into
+    CORR.organisation(key)                           # the organisation a merged guest_key is given on every row (or None)
 
 A rule applies to a row when the row's video_id is in the rule's scope.video_ids or its guest_key is the rule's
 scope.guest_key, and, when the rule lists `fields`, only to those fields. Matching is on whole words and ignores case
@@ -37,6 +38,7 @@ class Corrections:
                 "videos": set(r.get("scope", {}).get("video_ids", [])), "key": r.get("scope", {}).get("guest_key"),
             })
         self.keys: dict[str, str] = data.get("guest_keys", {})
+        self.organisations: dict[str, str] = data.get("guest_organisation", {})
 
     def _applies(self, rule: dict, video_id: str | None, guest_key: str | None, field: str | None) -> bool:
         if rule.get("fields") and field not in rule["fields"]:
@@ -65,5 +67,13 @@ class Corrections:
         return self.keys.get(key, key) if key else key
 
 
+def _organisation(self, key: str | None) -> str | None:
+    return self.organisations.get(key) if key else None
+
+
+Corrections.organisation = _organisation
+
+
 def load(path: Path = CORRECTIONS_PATH) -> Corrections:
     return Corrections(json.loads(path.read_text(encoding="utf-8")) if path.exists() else {})
+

@@ -1,5 +1,5 @@
 {
-  "_about": "Fixes for facts the captions got wrong. Each rule replaces `wrong` with `right` in verified text (guest organisation, role and bio, insight text, clip topic and opening line) of the scoped episodes. A rule applies to a row when its video_id is in scope.video_ids, or its guest_key is scope.guest_key. `fields` (optional) limits a rule to some fields. `guest_keys` maps a guest_key that a correction made obsolete to the one it now belongs to. Applied by pipeline/corrections_lib.py: 06_extract.py (before rows are written), site_stats.py (guest count) and 14_apply_corrections.py (rows already in the database), so a re-run keeps them.",
+  "_about": "Fixes for facts the captions got wrong. Each rule replaces `wrong` with `right` in verified text (guest organisation, role and bio, insight text, clip topic and opening line) of the scoped episodes. A rule applies to a row when its video_id is in scope.video_ids, or its guest_key is scope.guest_key. `fields` (optional) limits a rule to some fields. `guest_keys` maps a guest_key that a correction made obsolete to the one it now belongs to. `guest_organisation` gives every row of a (merged) guest_key one organisation; role_at_episode stays per episode. Applied by pipeline/corrections_lib.py: 06_extract.py (before rows are written), site_stats.py (guest count) and 14_apply_corrections.py (rows already in the database), so a re-run keeps them.",
   "corrections": [
     {
       "id": "sisinty-growthschool",
@@ -28,6 +28,13 @@
     }
   ],
   "guest_keys": {
-    "vaibhav-sisinty--roseschool": "vaibhav-sisinty--growthschool"
+    "vaibhav-sisinty--roseschool": "vaibhav-sisinty",
+    "vaibhav-sisinty--growthschool": "vaibhav-sisinty",
+    "vaibhav-sisinty--curahome": "vaibhav-sisinty",
+    "vaibhav-sisinty--": "vaibhav-sisinty",
+    "vaibhav--": "vaibhav-sisinty"
+  },
+  "guest_organisation": {
+    "vaibhav-sisinty": "GrowthSchool"
   }
 }
