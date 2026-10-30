@@ -3,6 +3,9 @@ import type { Cite } from "@/lib/ask/types";
 import type { Brief } from "@/lib/prep/types";
 
 export type ClipRef = { videoId: string; startS: number; endS: number; title: string; guest: string; episode: string; date?: string };
+/** The clip a player is on, as saved: its start and end with guest, episode and date (what /saved shows). */
+export const clipRefOf = (c: { videoId: string; startS: number; endS: number; title: string; guest: string; episode: string; date?: string }): ClipRef =>
+  ({ videoId: c.videoId, startS: c.startS, endS: c.endS, title: c.title, guest: c.guest, episode: c.episode, date: c.date });
 export type AnswerRef = { question: string; answer: string; citations: Cite[] };
 
 /** A Prep brief as saved: the whole brief with the editor's changes in its texts and struck lines in `removed`. */

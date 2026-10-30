@@ -3,9 +3,10 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { fmtTime, youtubeAt } from "@/lib/player-types";
-import { IconExternal, IconPause, IconPlay, IconX } from "@/components/Icons";
+import { IconBookmark, IconExternal, IconPause, IconPlay, IconX } from "@/components/Icons";
 import { PlayerControls } from "./PlayerControls";
 import { player, setPlayerHost, slotFor, usePlayer } from "./store";
+import { useClipSave } from "./useClipSave";
 
 /** The one fixed layer that holds the YouTube iframe. Over the clip's slot on its source page; otherwise
     the mini player at the bottom right (full width under 820px). The iframe's DOM node never moves. */
@@ -15,6 +16,7 @@ export function PlayerLayer() {
   const layerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const { saved, save } = useClipSave(clip);
   const slot = clip ? slotFor(clip.key) : null;
   const mode = !clip ? "off" : slot ? "slot" : "mini";
 
@@ -91,6 +93,9 @@ export function PlayerLayer() {
               <a className="pl__yt" href={youtubeAt(clip.videoId, pos)} target="_blank" rel="noopener noreferrer">
                 Open on YouTube <IconExternal />
               </a>
+              <button type="button" className="pl__save" onClick={save} aria-pressed={saved} disabled={saved}>
+                <IconBookmark />{saved ? "Saved" : "Save"}
+              </button>
             </div>
           </div>
           <button className="ib" type="button" onClick={() => player.close()} aria-label="Close player"><IconX /></button>

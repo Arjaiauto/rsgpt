@@ -39,9 +39,10 @@
 .pl__tx { min-width: 0; font-size: 13px; }
 .pl__title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pl__sub { color: var(--ink-soft); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pl__links { display: flex; gap: 14px; margin-top: 4px; }
-.pl__back, .pl__yt { font: 12px var(--sans); color: var(--violet-text); background: none; border: none; cursor: pointer; padding: 0; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
-.pl__yt svg { width: 11px; height: 11px; }
+.pl__links { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+.pl__back, .pl__yt, .pl__save { font: 12px var(--sans); color: var(--violet-text); background: none; border: none; cursor: pointer; padding: 0; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+.pl__yt svg, .pl__save svg { width: 11px; height: 11px; }
+.pl__save[aria-pressed="true"] { color: var(--ink-soft); cursor: default; }
 .pl__track { grid-column: 1 / -1; height: 3px; }
 
 /* ---------- player controls: Cuepoint's own bar over the iframe (YouTube's controls are off) ---------- */

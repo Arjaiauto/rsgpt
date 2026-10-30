@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { fmtTime, youtubeAt, type Clip } from "@/lib/player-types";
-import { saveWithUndo } from "@/lib/save-client";
 import { toast } from "@/lib/toast";
 import { IconBookmark, IconExternal, IconLink, IconPause, IconPlay } from "@/components/Icons";
 import { ReportButton } from "@/components/report/ReportButton";
 import { loadYouTubeApi, player, registerSlot, usePlayer } from "./store";
+import { useClipSave } from "./useClipSave";
 
 const thumb = (videoId: string, size: "maxresdefault" | "hqdefault") =>
   `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/${size}.jpg`;
@@ -70,17 +70,7 @@ export function ClipPlayer({ clip, label, report = true, canSave = true }: { cli
   const at = isCurrent ? pos : clip.startS;
   const frac = Math.max(0, Math.min(1, (at - clip.startS) / len));
 
-  const [saved, setSaved] = useState(false);
-  const save = async () => {
-    if (saved) return;
-    setSaved(true);
-    const ok = await saveWithUndo(
-      { kind: "clip", ref: { videoId: clip.videoId, startS: clip.startS, endS: clip.endS, title: clip.title, guest: clip.guest, episode: clip.episode, date: clip.date } },
-      "Clip saved",
-      () => setSaved(false),
-    );
-    if (!ok) setSaved(false);
-  };
+  const { saved, save } = useClipSave(clip);
 
   const copyLink = async () => {
     try { await navigator.clipboard.writeText(youtubeAt(clip.videoId, at)); } catch {}

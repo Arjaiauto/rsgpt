@@ -12,6 +12,7 @@ const { createSessionToken, SESSION_COOKIE, VISITOR_COOKIE } = await import("../
 const A = await import("../app/actions/saved.ts");
 const { savedClipsCsv } = await import("../lib/saved-csv.ts");
 const { stashAnswerForAsk } = await import("../lib/ask/reopen.ts");
+const { clipRefOf } = await import("../lib/saved-types.ts");
 const { db } = await import("../lib/db.ts");
 
 const NAME = "test-script";
@@ -128,6 +129,20 @@ try {
   console.log(`  (${lines.length - 1} clip rows in the file besides the header; the multi-line note stays inside one quoted cell)`);
   check(savedClipsCsv([]) === "﻿Title,Guest,Episode,Date,Start (s),End (s),YouTube link,Folder,Note\r\n", "no clips: header only");
 
+  console.log("\nsave from the mini player (a clip as a Prep brief chip plays it)");
+  // The clip below has the shape PrepView builds for a timestamp chip; clipRefOf is what the mini player's Save sends.
+  const chipClip = { key: "prep:w-guest-x:0", itemType: "answer", itemId: "w-guest-x", videoId: "vidMini", startS: 4996, endS: 5026, title: "Mini episode", guest: "Mini Guest", episode: "Mini episode", date: "May 2026", sourcePath: "/prep" };
+  const miniRes = await A.saveItem({ kind: "clip", ref: clipRefOf(chipClip) });
+  check(miniRes.ok, "saveItem accepts the mini player's payload");
+  if (miniRes.ok) made.push(miniRes.id);
+  list = await A.listSaved();
+  const mini = list.clips.find((c) => c.id === miniRes.id);
+  check(mini && mini.videoId === "vidMini" && mini.startS === 4996 && mini.endS === 5026 && mini.guest === "Mini Guest" && mini.episode === "Mini episode" && mini.date === "May 2026", "it shows in the Clips tab list with start, end, guest, episode and date");
+  check(savedClipsCsv([mini]).includes("https://www.youtube.com/watch?v=vidMini&t=4996s") && savedClipsCsv([mini]).includes("Mini Guest"), "and exports to CSV with its YouTube link");
+  as("test-other", V1);
+  check((await A.listSaved()).clips.every((c) => c.id !== miniRes.id), "scoped to the saver like any other save");
+  as(NAME, V1);
+
   console.log("\nspeed with 250 extra clips");
   const bulk = Array.from({ length: 250 }, (_, i) => ({ first_name: NAME, visitor_id: V1, kind: "clip", item_ref: clip(100 + i).ref, folder: i % 7 ? `Folder ${i % 7}` : null, note: i % 3 ? `note ${i}` : null }));
   const { data: ins, error } = await db().from("saved_items").insert(bulk).select("id");
@@ -137,7 +152,7 @@ try {
   list = await A.listSaved();
   const ms = Date.now() - t0;
   const bytes = JSON.stringify(list).length;
-  check(list.clips.length === 253, `all 253 clips come back (${list.clips.length})`);
+  check(list.clips.length === 254, `all 254 clips come back (${list.clips.length})`);
   console.log(`  listSaved: ${ms} ms, ${(bytes / 1024).toFixed(0)} KB of JSON to the page`);
   check(ms < 3000 && bytes < 600_000, "fast enough and small enough");
 } finally {
