@@ -51,6 +51,28 @@ export type BriefReturning = {
   opportunities: BriefOpportunity[];
 };
 
+/** One line of "From the web": written from one public web page found for this request, with that page's address.
+    Not from the archive; the page labels the whole section so. `date` (YYYY-MM-DD) is the page's publish date as the
+    search service gave it, when it gave one. */
+export type WebLine = { id: string; text: string; url: string; date: string | null };
+
+/** "From the web": public, professional facts about the upcoming guest, added on request after the brief is built. */
+export type BriefWeb = {
+  /** ISO time of the search. */
+  checkedAt: string;
+  /** "Name, role at company" as the sources describe them; null when the person could not be identified with
+      confidence (then every list is empty). */
+  matched: string | null;
+  /** A returning guest: the date (ISO) of their latest episode in the archive, for "Since their last episode". */
+  lastEpisode: string | null;
+  background: WebLine[];
+  /** Newest first. */
+  news: WebLine[];
+  appearances: WebLine[];
+  /** Returning guest only: dated items after their last episode, newest first. */
+  since: WebLine[];
+};
+
 /** A sector tag of the similar guests and how many archive episodes have a guest with it. */
 export type BriefTopic = { id: string; tag: string; episodes: number; examples: string[] };
 
@@ -75,6 +97,8 @@ export type Brief = {
   firstAppearance: boolean;
   /** Set when `already` is: the sections from the guest's own episodes, shown first. */
   returning: BriefReturning | null;
+  /** "From the web", once the reader asked for it (shown above everything else). */
+  web: BriefWeb | null;
   similar: BriefGuest[];
   asked: BriefQuestion[];
   topics: BriefTopic[];

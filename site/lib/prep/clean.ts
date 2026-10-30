@@ -1,5 +1,5 @@
 import type { Cite } from "@/lib/ask/types";
-import type { Brief, BriefEpisodeQuestions, BriefGuest, BriefLine, BriefOpportunity, BriefQuestion, BriefReturning, BriefSuggestion, BriefTopic } from "./types";
+import type { Brief, BriefEpisodeQuestions, BriefGuest, BriefLine, BriefOpportunity, BriefQuestion, BriefReturning, BriefSuggestion, BriefTopic, BriefWeb, WebLine } from "./types";
 
 /** Cuts a brief that came from the browser down to the fields the site shows, each limited in size, before it is
     saved. Nothing is stored as it arrived. Rule 2: a line that points at no transcript moment is dropped, and a brief
@@ -59,6 +59,26 @@ function cleanReturning(v: unknown): BriefReturning | null {
   return { name, about, asked, opportunities };
 }
 
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** "From the web": every line keeps an http(s) address (a line without its source is dropped, as on the page). */
+function cleanWeb(v: unknown): BriefWeb | null {
+  if (!v || typeof v !== "object") return null;
+  const w = v as Record<string, unknown>;
+  const webLines = (x: unknown, max: number): WebLine[] => list(x, max).flatMap((l) => {
+    const id = str(l.id, 60), text = str(l.text, 400).trim(), url = str(l.url, 600), date = str(l.date, 10);
+    return id && text && /^https?:\/\//.test(url) ? [{ id, text, url, date: DAY.test(date) ? date : null }] : [];
+  });
+  const matched = str(w.matched, 160).trim() || null;
+  const lastEpisode = str(w.lastEpisode, 40) || null;
+  return {
+    checkedAt: str(w.checkedAt, 40), matched, lastEpisode,
+    // Not identified: no facts, whatever arrived.
+    background: matched ? webLines(w.background, 6) : [], news: matched ? webLines(w.news, 6) : [],
+    appearances: matched ? webLines(w.appearances, 6) : [], since: matched && lastEpisode ? webLines(w.since, 6) : [],
+  };
+}
+
 export function cleanBrief(input: unknown): Brief | null {
   const b = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   const similar: BriefGuest[] = [];
@@ -93,7 +113,7 @@ export function cleanBrief(input: unknown): Brief | null {
   return {
     version: 1, title, description: str(b.description, 300), sector: str(b.sector, 80) || null,
     builtAt: str(b.builtAt, 40), preparedFor: str(b.preparedFor, 80), archiveEpisodes: Math.max(0, Math.round(num(b.archiveEpisodes))),
-    already, firstAppearance: b.firstAppearance === true, returning: already ? cleanReturning(b.returning) : null, similar, asked, topics, suggestions, verify,
+    already, firstAppearance: b.firstAppearance === true, returning: already ? cleanReturning(b.returning) : null, web: cleanWeb(b.web), similar, asked, topics, suggestions, verify,
     removed: (Array.isArray(b.removed) ? b.removed : []).slice(0, 200).map((r) => str(r, 140)).filter(Boolean),
   };
 }

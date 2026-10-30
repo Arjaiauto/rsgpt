@@ -85,6 +85,11 @@
 .prep-eph { margin: 0 0 2px; font-size: 13px; font-weight: 500; color: var(--ink-soft); }
 .prep-eph span { margin-left: 6px; font-weight: 400; color: var(--ink-faint); }
 .prep-none-found { margin: 0; font-size: 14.5px; color: var(--ink-faint); }
+.prep-addweb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 18px 0 0; padding: 12px 14px; border-radius: 14px; border: 1px dashed var(--line-strong); }
+.prep-addweb span { font-size: 13px; color: var(--ink-faint); }
+.prep-matched { margin: 0 0 14px; font-size: 14.5px; color: var(--ink-soft); }
+.prep-matched b { color: var(--ink); font-weight: 600; }
+.prep-cite.prep-web::before { content: none; }
 .prep-already a { color: var(--violet-text); }
 .prep-sec { margin-top: 34px; padding-top: 24px; border-top: 1px solid var(--line); }
 .prep-sec h3 { display: flex; align-items: baseline; gap: 12px; margin: 0 0 14px; font-size: 19px; font-weight: 500; letter-spacing: -0.02em; }
@@ -204,7 +209,10 @@
   .prep-already b { color: #15151c; }
   .prep-first, .prep-eph span, .prep-none-found { color: #5b5b68; }
   .prep-eph { color: #15151c; break-after: avoid; }
-  .prep-ep:not(:has(.prep-li:not(.gone))) { display: none; }
+  .prep-ep:not(:has(.prep-li:not(.gone))):not(:has(.prep-none-found)) { display: none; }
+  .prep-addweb { display: none !important; }
+  .prep-matched, .prep-matched b { color: #15151c; }
+  .prep-cite.prep-web::after { content: " " attr(href); text-decoration: none; overflow-wrap: anywhere; white-space: normal; }
   .prep-already a { color: #15151c; }
   .prep-print-only { display: block; margin: 22px 0 0; font-size: 11px; color: #5b5b68; }
 }

@@ -12,6 +12,7 @@ import { fold, tagLabel } from "@/lib/guest-format";
 import { getDirectory, getGuestVideos } from "@/lib/guests";
 import type { GuestCard } from "@/lib/guest-types";
 import { fmtTime } from "@/lib/player-types";
+import { relocateOpenings } from "./openings";
 import { profileVectors } from "./profiles";
 import type {
   Brief, BriefEpisodeQuestions, BriefGuest, BriefLine, BriefOpportunity, BriefQuestion, BriefReturning, BriefSuggestion, BriefTopic, PrepEvent, PrepInput,
@@ -141,9 +142,7 @@ export async function buildBrief(
   // The upcoming guest may already have been on the show: say so, leave them out of "similar", and add the sections
   // from their own episodes (started now, so they are written while the rest of the brief is).
   const nameTokens = words(name);
-  const same = !sector && nameTokens.length >= 2
-    ? dir.guests.find((g) => { const gt = new Set(words(g.name)); return nameTokens.every((w) => gt.has(w)); })
-    : undefined;
+  const same = sector ? undefined : sameGuest(name, dir.guests);
   const already = same ? { name: same.name, slug: same.slug, episodes: same.episodes } : null;
   const returningJob = same
     ? returningSection({ guest: same, videoIds: [...(videosOfSlug.get(same.slug) ?? [])], rowIds: rowIdsOfSlug.get(same.slug) ?? new Set(), rowsInVideo, vectors: queryVectors, t })
@@ -372,11 +371,24 @@ tags: ${[...matchedTags].join(", ") || "none"}; top by profile: ${byProfile.slic
   const brief: Brief = {
     version: 1, title, description: sector && !description ? `Upcoming guest in ${sector.label.toLowerCase()}` : description,
     sector: sector?.key ?? null, builtAt: new Date().toISOString(), preparedFor: who.firstName,
-    archiveEpisodes: archive.count ?? 0, already, firstAppearance: !sector && !same && nameTokens.length >= 2, returning: back?.section ?? null,
+    archiveEpisodes: archive.count ?? 0, already, firstAppearance: !sector && !same && nameTokens.length >= 2, returning: back?.section ?? null, web: null,
     similar: result.similar, asked, topics, suggestions: result.suggestions.slice(0, PREP.maxSuggestions), verify: result.verify, removed: [],
   };
+  // A moment in an episode's teaser points at where it is said in the conversation instead (see openings.ts).
+  await t.time("openings", () => relocateOpenings([
+    ...brief.similar.flatMap((g) => g.why.cites), ...brief.verify.flatMap((v) => v.cites), ...brief.asked,
+    ...(brief.returning ? [...brief.returning.about.flatMap((a) => a.cites), ...brief.returning.asked.flatMap((e) => e.questions), ...brief.returning.opportunities] : []),
+  ]));
+  for (const e of brief.returning?.asked ?? []) e.questions.sort((a, b) => a.startS - b.startS);
   const citedChunkIds = [...new Set([...brief.similar.flatMap((s) => s.why.cites), ...brief.verify.flatMap((v) => v.cites), ...(brief.returning?.about.flatMap((a) => a.cites) ?? [])].map((c) => c.chunkId))];
   return { brief, citedChunkIds };
+}
+
+/** The past guest an upcoming guest's name points at: every word of the typed name (two or more) is in their name. */
+export function sameGuest(name: string, guests: GuestCard[]): GuestCard | undefined {
+  const tokens = words(name);
+  if (tokens.length < 2) return undefined;
+  return guests.find((g) => { const gt = new Set(words(g.name)); return tokens.every((w) => gt.has(w)); });
 }
 
 /* ---------- the guest's own episodes (a returning guest) ---------- */

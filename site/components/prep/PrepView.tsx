@@ -9,15 +9,17 @@ import type { Cite as CiteT } from "@/lib/ask/types";
 import { fmtTime, youtubeAt, type Clip } from "@/lib/player-types";
 import { briefDocx } from "@/lib/prep/docx";
 import {
-  FIRST_APPEARANCE, NO_OPPORTUNITIES, SECTION_NOTES, UNOFFICIAL, briefToText, sectionCounts, sectionHeading, sectionOrder, type SectionKey,
+  FIRST_APPEARANCE, NOT_IDENTIFIED, NO_OPPORTUNITIES, UNOFFICIAL, WEB_UNAVAILABLE, briefToText, sectionCounts, sectionHeading, sectionNote, sectionOrder,
+  webGroups, webSource, type SectionKey,
 } from "@/lib/prep/export";
-import { PREP_LIMITS, type Brief, type BriefQuestion, type PastBrief, type PrepEvent } from "@/lib/prep/types";
+import { PREP_LIMITS, type Brief, type BriefQuestion, type BriefWeb, type PastBrief, type PrepEvent } from "@/lib/prep/types";
 import { saveWithUndo } from "@/lib/save-client";
 import { toast } from "@/lib/toast";
 import { player } from "@/components/player/store";
 
 type Sector = { key: string; label: string; n: number };
 type Phase = "idle" | "building" | "done" | "notfound" | "error";
+type WebPhase = "idle" | "loading" | "error";
 
 const STEPS = ["Finding similar guests", "Collecting past questions", "Writing the brief"];
 
@@ -116,12 +118,14 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
   const [savedId, setSavedId] = useState<number | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [webPhase, setWebPhase] = useState<WebPhase>("idle");
   const savedRef = useRef<number | null>(null);
   const opened = useRef<number | null>(null);
   const outRef = useRef<HTMLElement>(null);
   const busy = phase === "building";
 
   const show = (b: Brief, id: number | null) => {
+    setWebPhase("idle");
     setBrief(b);
     setSavedId(id);
     savedRef.current = id;
@@ -200,6 +204,13 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
   const change = (fn: (b: Brief) => Brief) => { setBrief((b) => (b ? fn(b) : b)); setDirty(true); };
   const edit = (id: string, text: string) => change((b) => ({
     ...b,
+    web: b.web && {
+      ...b.web,
+      background: b.web.background.map((l) => (l.id === id ? { ...l, text } : l)),
+      news: b.web.news.map((l) => (l.id === id ? { ...l, text } : l)),
+      appearances: b.web.appearances.map((l) => (l.id === id ? { ...l, text } : l)),
+      since: b.web.since.map((l) => (l.id === id ? { ...l, text } : l)),
+    },
     returning: b.returning && {
       ...b.returning,
       about: b.returning.about.map((l) => (l.id === id ? { ...l, text } : l)),
@@ -227,6 +238,30 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
     const restore = () => { document.title = before; window.removeEventListener("afterprint", restore); };
     window.addEventListener("afterprint", restore);
     window.print();
+  };
+  /** "From the web": a separate request after the brief is built, so the brief never waits for it. The section goes
+      in at the top; a brief that is already saved then shows "Save changes". */
+  const addWeb = async () => {
+    if (!brief || webPhase === "loading") return;
+    setWebPhase("loading");
+    try {
+      const res = await fetch("/api/prep/web", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: brief.title, description: brief.description }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { web?: BriefWeb; error?: string };
+      if (!res.ok || !data.web) {
+        setWebPhase("error");
+        if (res.status === 429) toast("Daily limit for web research reached. Try again tomorrow.");
+        return;
+      }
+      const web = data.web;
+      change((b) => ({ ...b, web }));
+      setWebPhase("idle");
+    } catch {
+      setWebPhase("error");
+    }
   };
   const word = () => {
     if (!brief) return;
@@ -340,7 +375,7 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
             </div>
           )}
           {phase === "done" && brief && (
-            <BriefDoc brief={brief} edit={edit} strike={strike} actions={{ copy, pdf, word, save, saved: savedId != null, dirty, saving }} />
+            <BriefDoc brief={brief} edit={edit} strike={strike} web={{ add: addWeb, phase: webPhase }} actions={{ copy, pdf, word, save, saved: savedId != null, dirty, saving }} />
           )}
         </section>
       </div>
@@ -350,10 +385,11 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
 
 /* ---------- the document ---------- */
 
-function BriefDoc({ brief: b, edit, strike, actions }: {
+function BriefDoc({ brief: b, edit, strike, web, actions }: {
   brief: Brief;
   edit: (id: string, text: string) => void;
   strike: (id: string) => void;
+  web: { add: () => void; phase: WebPhase };
   actions: { copy: () => void; pdf: () => void; word: () => void; save: () => void; saved: boolean; dirty: boolean; saving: boolean };
 }) {
   const gone = new Set(b.removed);
@@ -365,7 +401,7 @@ function BriefDoc({ brief: b, edit, strike, actions }: {
   const head = (key: SectionKey) => (
     <>
       <h3>{order.indexOf(key) + 1}. {sectionHeading(key, b)} <i>{counts[key]}</i></h3>
-      <p className="prep-why">{SECTION_NOTES[key]}</p>
+      <p className="prep-why">{sectionNote(key, b)}</p>
     </>
   );
   const row = (id: string, n: number, what: string, body: ReactNode) => (
@@ -386,7 +422,25 @@ function BriefDoc({ brief: b, edit, strike, actions }: {
     </>,
   );
 
+  const w = b.web;
   const sections: Record<SectionKey, ReactNode> = {
+    web: !w ? null : !w.matched ? <p className="prep-none-found">{NOT_IDENTIFIED}</p> : (
+      <>
+        <p className="prep-matched">Matched: <b>{w.matched}</b></p>
+        {webGroups(w).map((g) => (
+          <div className="prep-ep" key={g.key}>
+            <p className="prep-eph">{g.heading}</p>
+            {g.lines.length === 0 && g.empty && <p className="prep-none-found">{g.empty}</p>}
+            {g.lines.map((l, i) => row(l.id, i + 1, "web line",
+              <>
+                <Editable value={l.text} label={g.heading} disabled={gone.has(l.id)} onCommit={(t) => edit(l.id, t)} />
+                <a className="prep-cite prep-web" href={l.url} target="_blank" rel="noopener noreferrer nofollow">{webSource(l)}</a>
+              </>,
+            ))}
+          </div>
+        ))}
+      </>
+    ),
     about: (
       <>
         {r?.about.map((l, i) => row(l.id, i + 1, "sentence",
@@ -498,6 +552,14 @@ function BriefDoc({ brief: b, edit, strike, actions }: {
         </p>
       )}
       {!b.already && b.firstAppearance && <p className="prep-first">{FIRST_APPEARANCE}</p>}
+      {!b.web && !b.sector && (
+        <div className="prep-addweb">
+          <button className="prep-ghost" type="button" onClick={web.add} disabled={web.phase === "loading"} aria-busy={web.phase === "loading"}>
+            {web.phase === "loading" ? "Searching the web…" : web.phase === "error" ? "Try web research again" : "Add web research"}
+          </button>
+          <span role="status">{web.phase === "error" ? WEB_UNAVAILABLE : web.phase === "loading" ? "Background, recent news and other interviews, from public sources. About 15 seconds." : "Background, recent news and other interviews, from public web sources. Not from the archive."}</span>
+        </div>
+      )}
       {order.map((key) => (
         <Fragment key={key}>
           <div className="prep-sec">{head(key)}{sections[key]}</div>

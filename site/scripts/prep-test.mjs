@@ -51,7 +51,11 @@ for (const [n, { label, input, returning }] of INPUTS.entries()) {
   const counts = sectionCounts(b);
   console.log(`sections: ${sectionOrder(b).map((k, i) => `${i + 1}. ${sectionHeading(k, b)} (${counts[k]})`).join(" | ")}`);
   if (b.returning) console.log(`already asked, per episode: ${b.returning.asked.map((e) => `${e.date} ${e.questions.length}`).join(", ")}`);
-  console.log(`banner: ${briefExport(b).already || "(none)"}\n`);
+  console.log(`banner: ${briefExport(b).already || "(none)"}`);
+  // Moments still in an episode's first minute: genuine starts of the conversation, or teasers not said again later.
+  const all = [...b.similar.flatMap((g) => g.why.cites), ...b.verify.flatMap((v) => v.cites), ...b.asked,
+    ...(b.returning ? [...b.returning.about.flatMap((a) => a.cites), ...b.returning.asked.flatMap((e) => e.questions), ...b.returning.opportunities] : [])];
+  console.log(`moments in the first minute: ${all.filter((m) => m.startS < 60).map((m) => `${m.videoId}@${Math.round(m.startS)}s`).join(", ") || "none"}; openings stage ${t.stages.openings ?? "-"} ms\n`);
 
   console.log("checks:");
   check(b.similar.length === 5, `5 similar guests (${b.similar.length})`);
@@ -69,13 +73,20 @@ for (const [n, { label, input, returning }] of INPUTS.entries()) {
   check(new Set(b.asked.map((q) => q.guest)).size <= b.similar.length && b.asked.every((q) => b.similar.some((g) => g.slug === q.slug)), "questions are from the guests shown in section 1");
 
   // Every past question is a verified raj_question row with the same text and time.
+  // A row from an episode's teaser may have moved to where it is said later (lib/prep/openings.ts); then its segments
+  // must be real lines of that episode starting at the new time.
   const sameRows = async (list, type) => {
     const ids = list.map((q) => q.insightId);
     if (!ids.length) return true;
     const { data } = await db().from("insights").select("id,video_id,text,start_s,type,verified").in("id", ids);
+    const movedSegs = list.flatMap((q) => q.segmentIds);
+    const { data: segs } = await db().from("segments").select("id,video_id,start_s").in("id", movedSegs.slice(0, 500));
+    const seg = new Map((segs ?? []).map((x) => [x.id, x]));
     return data?.length === ids.length && data.every((row) => {
       const q = list.find((a) => a.insightId === row.id);
-      return row.type === type && row.verified && q.text === row.text.trim() && q.videoId === row.video_id && q.startS === row.start_s && q.segmentIds.length > 0;
+      const moved = q.startS !== row.start_s && row.start_s < 240 && q.startS > row.start_s
+        && seg.get(q.segmentIds[0])?.video_id === row.video_id && Math.abs(seg.get(q.segmentIds[0]).start_s - q.startS) < 0.01;
+      return row.type === type && row.verified && q.text === row.text.trim() && q.videoId === row.video_id && (q.startS === row.start_s || moved) && q.segmentIds.length > 0;
     });
   };
   check(await sameRows(b.asked, "raj_question"), "past questions match verified raj_question rows exactly");

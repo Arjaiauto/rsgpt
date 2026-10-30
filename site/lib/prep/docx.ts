@@ -70,10 +70,10 @@ const INK = "1B1B24", SOFT = "6B6B78", LINK = "0B7A66", VIOLET = "5B07FB";
 export function briefDocx(b: Brief): Uint8Array<ArrayBuffer> {
   const x = briefExport(b);
   const links: string[] = [];
-  const link = (url: string, label: string) => {
+  const link = (url: string, label: string, showUrl?: boolean) => {
     let i = links.indexOf(url);
     if (i < 0) i = links.push(url) - 1;
-    return `<w:hyperlink r:id="rIdL${i + 1}" w:history="1">${run(`[${label}]`, { color: LINK, underline: true, size: 19 })}</w:hyperlink>`;
+    return `<w:hyperlink r:id="rIdL${i + 1}" w:history="1">${run(showUrl ? `[${label}] ${url}` : `[${label}]`, { color: LINK, underline: true, size: 19 })}</w:hyperlink>`;
   };
 
   const body: string[] = [
@@ -85,6 +85,7 @@ export function briefDocx(b: Brief): Uint8Array<ArrayBuffer> {
   for (const s of x.sections) {
     body.push(para(run(s.heading, { bold: true, size: 30, color: INK }), { before: 320, after: 40, keepNext: true }));
     if (s.note) body.push(para(run(s.note, { size: 19, color: SOFT }), { after: 100, keepNext: true }));
+    if (s.lead) body.push(para(run(s.lead, { bold: true, size: 22, color: INK }), { after: 90, keepNext: true }));
     if (s.empty) body.push(para(run(s.empty, { size: 22, color: SOFT }), { after: 90 }));
     let n = 0;
     for (const item of s.items) {
@@ -92,13 +93,17 @@ export function briefDocx(b: Brief): Uint8Array<ArrayBuffer> {
         body.push(para(run(item.group, { bold: true, size: 20, color: SOFT }), { before: 120, after: 60, keepNext: true }));
         n = 0;
       }
+      if (item.muted) {
+        body.push(para(run(item.text, { size: 22, color: SOFT }), { indent: 360, after: 90 }));
+        continue;
+      }
       const marker = s.numbered ? `${++n}.` : "•";
       body.push(para(
         run(`${marker} `, { size: 22, color: SOFT })
         + (item.badge ? run(`${item.badge.toUpperCase()}  `, { bold: true, size: 17, color: VIOLET }) : "")
         + run(item.text, { size: 22, color: INK })
         + (item.note ? run(`  ${item.note}`, { size: 19, color: SOFT }) : "")
-        + item.cites.map((c) => run("  ") + link(c.url, c.label)).join(""),
+        + item.cites.map((c) => run("  ") + link(c.url, c.label, c.showUrl)).join(""),
         { indent: 360, hanging: 300, after: 90 },
       ));
     }

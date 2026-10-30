@@ -72,8 +72,10 @@ export function gradientOf(name: string): string {
   return `linear-gradient(150deg, hsl(${h} 42% 36%), hsl(${(h + 40) % 360} 48% 16%))`;
 }
 
-/** A sector tag for display: written as it is when it already has capitals (AI, FMCG), else first letter up. */
-export const tagLabel = (raw: string): string => (/[A-Z]/.test(raw) ? raw : raw.charAt(0).toUpperCase() + raw.slice(1));
+/** A sector tag for display: first letter up, the rest as written, so acronyms stay ("enterprise AI" is "Enterprise
+    AI", "FMCG" stays). A first word with capitals inside it (iPhone, eCommerce) is a name and is left as it is. */
+export const tagLabel = (raw: string): string =>
+  (/^\p{Ll}\S*\p{Lu}/u.test(raw) ? raw : raw.charAt(0).toUpperCase() + raw.slice(1));
 
 /** The opportunity categories (insights.category check constraint) as readable headings, in display order. */
 export const CATEGORY_LABELS: Record<string, string> = {
