@@ -1,0 +1,108 @@
+/* Saved (design/07-saved.html, FRONTEND_DESIGN.md page 7): folders on the left, tabs and items on the right; the folder
+   list becomes a row of chips on phones. Every class is prefixed sv- so nothing here clashes with the shared names. */
+
+.app-main:has(.sv-page) { max-width: 1180px; justify-content: flex-start; align-items: stretch; gap: 0; padding-block: 44px 70px; }
+.sv-page { width: 100%; }
+.has-mini .sv-page { padding-bottom: 330px; } /* keep the end of the list clear of the mini player */
+
+.sv-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px 24px; }
+.sv-whose { margin: 10px 0 0; font-size: 14.5px; color: var(--ink-soft); }
+.sv-whose b { color: var(--ink); font-weight: 500; }
+.sv-layout { margin-top: 32px; display: grid; grid-template-columns: minmax(0, 230px) minmax(0, 1fr); gap: clamp(20px, 3vw, 36px); align-items: start; }
+.sv-main { min-width: 0; }
+
+/* folders */
+.sv-folders { position: sticky; top: calc(84px + env(safe-area-inset-top, 0px)); display: flex; flex-direction: column; gap: 4px; }
+.sv-folders h2 { margin: 0 0 8px 12px; font-size: 12px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); }
+.sv-fd {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 42px; padding: 0 12px; border-radius: 12px; border: 0;
+  background: transparent; color: var(--ink-soft); font: 400 14.5px var(--sans); cursor: pointer; text-align: left;
+}
+.sv-fd:hover { background: var(--surface); color: var(--ink); }
+.sv-fd[aria-pressed="true"] { background: var(--raised); color: var(--ink); }
+.sv-fn { display: inline-flex; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+.sv-fn i { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 3px; margin-right: 9px; }
+.sv-n { flex: none; font-size: 12.5px; color: var(--ink-faint); }
+.sv-newf { display: flex; gap: 6px; margin-top: 8px; }
+.sv-newf input {
+  flex: 1; min-width: 0; height: 38px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--raised);
+  color: var(--ink); font: 400 13.5px var(--sans); outline: none;
+}
+.sv-newf input:focus-visible { border-color: var(--violet-text); }
+.sv-newf button { height: 38px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 400 13px var(--sans); cursor: pointer; }
+.sv-newf button:disabled { opacity: 0.5; cursor: default; }
+.sv-newf--row { margin: 2px 0 0; flex-wrap: wrap; }
+.sv-newf--row input { flex: 1 1 160px; }
+
+/* tabs */
+.sv-tabs { display: inline-flex; gap: 4px; padding: 4px; border-radius: var(--radius-pill); background: var(--surface); border: 1px solid var(--line); max-width: 100%; }
+.sv-tab { height: 36px; padding: 0 16px; border-radius: var(--radius-pill); border: 0; background: transparent; color: var(--ink-soft); font: 500 14px var(--sans); cursor: pointer; white-space: nowrap; }
+.sv-tab span { margin-left: 6px; font-size: 12px; color: var(--ink-faint); }
+.sv-tab[aria-selected="true"] { background: var(--raised); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-strong); }
+
+/* items */
+.sv-list { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+.sv-it {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; padding: 14px; border-radius: 18px; border: 1px solid var(--line); background: var(--surface);
+  content-visibility: auto; contain-intrinsic-size: auto 150px; /* long lists only paint what is on screen */
+  transition: border-color 0.2s, opacity 0.28s, transform 0.28s var(--ease);
+}
+.sv-it:hover { border-color: var(--line-strong); }
+.sv-it.out { opacity: 0; transform: translateX(16px); }
+.sv-thumb { position: relative; width: 74px; aspect-ratio: 9 / 16; border-radius: 12px; overflow: hidden; display: grid; place-items: center; flex: none; }
+.sv-thumb--sq { aspect-ratio: 1 / 1; width: 56px; border-radius: 14px; background: var(--raised); color: var(--violet-text); }
+.sv-thumb--sq svg { width: 24px; height: 24px; }
+.sv-pl { width: 30px; height: 30px; border-radius: 50%; background: rgba(255, 255, 255, 0.92); color: #111; display: grid; place-items: center; }
+.sv-pl svg { width: 12px; height: 12px; margin-left: 2px; }
+.sv-len { position: absolute; left: 6px; bottom: 6px; padding: 2px 6px; border-radius: var(--radius-pill); background: rgba(0, 0, 0, 0.5); font-size: 10.5px; font-weight: 500; color: var(--cite); }
+.sv-bd { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.sv-bd b { font-size: 15.5px; font-weight: 500; line-height: 1.4; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.sv-sub { font-size: 14px; line-height: 1.5; color: var(--ink-soft); overflow-wrap: anywhere; }
+.sv-m { font-size: 13px; color: var(--ink-faint); }
+.sv-notewrap { position: relative; }
+.sv-note {
+  display: block; width: 100%; min-height: 34px; padding: 7px 12px; border-radius: 10px; border: 1px dashed var(--line-strong); background: transparent; color: var(--ink);
+  font: 400 13.5px/1.4 var(--sans); resize: none; outline: none; field-sizing: content; max-height: 160px;
+}
+.sv-note::placeholder { color: var(--ink-faint); }
+.sv-note:focus { border-style: solid; border-color: var(--violet-text); background: var(--raised); }
+.sv-tick { display: block; min-height: 16px; margin-top: 3px; padding-left: 4px; font-size: 11.5px; color: var(--ink-faint); }
+.sv-tick--saved { color: var(--cite); }
+.sv-tick--error { color: var(--error); }
+.sv-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sv-mini {
+  display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--raised);
+  color: var(--ink); font: 400 13px var(--sans); cursor: pointer; text-decoration: none; transition: border-color 0.2s;
+}
+.sv-mini:hover { border-color: var(--line-strong); }
+.sv-mini:disabled { opacity: 0.6; cursor: default; }
+.sv-mini--cite { color: var(--cite); border-color: rgba(79, 227, 193, 0.35); background: rgba(79, 227, 193, 0.08); }
+.sv-fsel {
+  height: 32px; max-width: 200px; padding: 0 30px 0 12px; border-radius: var(--radius-pill); border: 1px solid var(--line); background-color: var(--raised); color: var(--ink);
+  font: 400 13px var(--sans); cursor: pointer; appearance: none; -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-soft) 50%), linear-gradient(135deg, var(--ink-soft) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 14px, calc(100% - 11px) 14px; background-size: 5px 5px; background-repeat: no-repeat;
+}
+.sv-fsel option { background: var(--raised); }
+.sv-rm { margin-left: auto; border: 0; background: none; color: var(--ink-faint); font: 400 13px var(--sans); cursor: pointer; padding: 6px 4px; }
+.sv-rm:hover { color: var(--ink); }
+.sv-player { grid-column: 1 / -1; }
+.sv-cap { margin: 14px 0 0; font-size: 12.5px; color: var(--ink-faint); }
+
+.sv-empty { padding: 50px 20px; text-align: center; border: 1px dashed var(--line-strong); border-radius: 20px; color: var(--ink-soft); display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.sv-empty b { color: var(--ink); font-weight: 500; font-size: 16px; }
+.sv-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.sv-row .pill { display: inline-flex; align-items: center; text-decoration: none; }
+
+.sv-folders :focus-visible, .sv-tab:focus-visible, .sv-mini:focus-visible, .sv-fsel:focus-visible, .sv-rm:focus-visible { outline: 2px solid var(--violet-text); outline-offset: 3px; }
+
+@media (max-width: 820px) {
+  .sv-layout { grid-template-columns: minmax(0, 1fr); }
+  .sv-folders { position: static; flex-direction: row; overflow-x: auto; scrollbar-width: none; gap: 6px; }
+  .sv-folders::-webkit-scrollbar { display: none; }
+  .sv-folders h2, .sv-newf { display: none; }
+  .sv-fd { flex: none; height: 36px; min-height: 0; border-radius: var(--radius-pill); border: 1px solid var(--line); gap: 8px; }
+  .sv-tabs { width: 100%; overflow-x: auto; }
+  .sv-tab { flex: 1 0 auto; }
+}
+@media (prefers-reduced-motion: reduce) { .sv-it { transition: none; } }

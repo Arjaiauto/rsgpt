@@ -63,7 +63,7 @@ export function PlayerSlot({ clip, caption }: { clip: Clip; caption?: string }) 
 }
 
 /** Big player card: slot, title, guest, episode, start time, progress, actions. */
-export function ClipPlayer({ clip, label, report = true }: { clip: Clip; label?: string; report?: boolean }) {
+export function ClipPlayer({ clip, label, report = true, canSave = true }: { clip: Clip; label?: string; report?: boolean; canSave?: boolean }) {
   const { clip: current, pos } = usePlayer();
   const isCurrent = current?.key === clip.key;
   const len = clip.endS - clip.startS;
@@ -117,9 +117,11 @@ export function ClipPlayer({ clip, label, report = true }: { clip: Clip; label?:
         </div>
         <div className="prow">
           <span className="ptime num">{fmtTime(at - clip.startS)} / {fmtTime(len)}</span>
-          <button className="pill pill--ghost" type="button" onClick={save} aria-pressed={saved}>
-            <IconBookmark />{saved ? "Saved" : "Save"}
-          </button>
+          {canSave && (
+            <button className="pill pill--ghost" type="button" onClick={save} aria-pressed={saved}>
+              <IconBookmark />{saved ? "Saved" : "Save"}
+            </button>
+          )}
           <button className="pill pill--ghost" type="button" onClick={copyLink}><IconLink />Copy link</button>
           <a className="pill pill--ghost" href={youtubeAt(clip.videoId, at)} target="_blank" rel="noopener noreferrer">
             <IconExternal />Open on YouTube

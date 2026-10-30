@@ -1,5 +1,5 @@
 // toast("Saved", { undo: () => ... }) from any client code; <Toaster /> in the root layout shows them.
-// Bottom centre, at most 3 at once, about 3 s each (5 s with Undo); hovering pauses.
+// Bottom centre, at most 3 at once, about 3 s each (5 s with Undo, or `ms`); hovering pauses.
 
 export type Toast = { id: number; message: string; undo?: () => void; leaving: boolean };
 
@@ -32,14 +32,14 @@ function schedule(id: number, ms: number) {
   timers.set(id, window.setTimeout(() => remove(id), ms));
 }
 
-export function toast(message: string, opts: { undo?: () => void } = {}) {
+export function toast(message: string, opts: { undo?: () => void; ms?: number } = {}) {
   const id = nextId++;
   const live = toasts.filter((t) => !t.leaving);
   // Keep at most 3: the oldest goes first.
   live.slice(0, Math.max(0, live.length - 2)).forEach((t) => remove(t.id));
   toasts = [...toasts, { id, message, undo: opts.undo, leaving: false }];
   emit();
-  schedule(id, opts.undo ? 5000 : 3200);
+  schedule(id, opts.ms ?? (opts.undo ? 5000 : 3200));
   return id;
 }
 

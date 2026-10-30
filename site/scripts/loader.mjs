@@ -10,7 +10,8 @@ const stub = (src) => `data:text/javascript,${encodeURIComponent(src)}`;
 const STUBS = {
   "server-only": stub("export {};"),
   "next/cache": stub("export const cacheLife = () => {}; export const cacheTag = () => {};"),
-  "next/headers": stub("export const cookies = async () => ({ get: () => undefined }); export const headers = async () => new Headers();"),
+  // Cookies come from globalThis.__testCookies ({name: value}) when a script sets it (scripts/saved-test.mjs does).
+  "next/headers": stub("export const cookies = async () => ({ get: (n) => { const v = globalThis.__testCookies?.[n]; return v == null ? undefined : { name: n, value: v }; } }); export const headers = async () => new Headers();"),
   "next/navigation": stub("export const redirect = (to) => { throw new Error('redirect ' + to); };"),
   "next/server": stub("export const connection = async () => {};"),
 };
