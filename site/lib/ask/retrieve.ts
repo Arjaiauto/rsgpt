@@ -94,12 +94,44 @@ export type Retrieved = {
 const parseVector = (v: unknown): number[] => (Array.isArray(v) ? (v as number[]) : JSON.parse(String(v)));
 const DAY_MS = 86_400_000;
 
-async function search(t: Timings, name: string, text: string, vector: number[]): Promise<Hit[]> {
+async function search(t: Timings, name: string, text: string, vector: number[], count: number = ASK.perPhrasing): Promise<Hit[]> {
   return t.time(name, async () => {
-    const { data, error } = await db().rpc("hybrid_search", { query_embedding: vector, query_text: text, match_count: ASK.perPhrasing });
+    const { data, error } = await db().rpc("hybrid_search", { query_embedding: vector, query_text: text, match_count: count });
     if (error) throw new Error(`hybrid_search: ${error.message}`);
     return (data ?? []) as Hit[];
   });
+}
+
+/** hybrid_search for plain texts (no question rewrite), merged like retrieve() does: a chunk found by more of the
+    texts ranks higher. Used by the Prep brief, which searches for a kind of guest rather than answering a question. */
+export async function searchTexts(texts: string[], count: number, t: Timings): Promise<{ chunks: Candidate[]; vectors: number[][] }> {
+  const vectors = await t.time("embed", () => embedQueries(texts));
+  const results = await Promise.all(texts.map((text, i) => search(t, `search_${i}`, text, vectors[i], count)));
+  const byId = new Map<number, Candidate>();
+  for (const hits of results) {
+    for (const h of hits) {
+      const c = byId.get(h.id);
+      if (c) c.score += h.score;
+      else byId.set(h.id, { id: h.id, videoId: h.video_id, startS: h.start_s, endS: h.end_s, publishedAt: h.published_at, score: h.score, similarity: 0 });
+    }
+  }
+  return { chunks: [...byId.values()].sort((a, b) => b.score - a.score || a.id - b.id), vectors };
+}
+
+/** For each group of episodes (a guest's), the chunks closest to any of the vectors: the same scoped search as Ask
+    from a guest page, for several guests with one read of their chunks. Scored like hybrid_search (1 / (60 + rank)). */
+export async function closestChunks(groups: Map<string, string[]>, vectors: number[][], count: number): Promise<Map<string, Candidate[]>> {
+  const all = await loadScoped([...new Set([...groups.values()].flat())]);
+  const out = new Map<string, Candidate[]>();
+  for (const [key, videoIds] of groups) {
+    const mine = new Set(videoIds);
+    out.set(key, all.filter((c) => mine.has(c.video_id))
+      .map((c) => ({ c, sim: Math.max(...vectors.map((q) => cosine(q, c.vector))) }))
+      .sort((a, b) => b.sim - a.sim || a.c.id - b.c.id)
+      .slice(0, count)
+      .map(({ c, sim }, i) => ({ id: c.id, videoId: c.video_id, startS: c.start_s, endS: c.end_s, publishedAt: c.published_at, score: 1 / (60 + i + 1), similarity: sim })));
+  }
+  return out;
 }
 
 /* ---------- 2b. Search limited to some episodes (a guest's), without the hybrid_search function ---------- */
@@ -259,7 +291,7 @@ export type Turn = {
 /** The lines of all the chunks in one query (and their English translations, for Hindi episodes, in one more),
     grouped into turns per chunk. A chunk is about 90 seconds (about 40 lines), so this stays far under the
     1,000-row limit of a Supabase query. */
-async function loadTurns(chunks: Pick<Candidate, "id" | "videoId" | "startS" | "endS">[]): Promise<Map<number, Turn[]>> {
+export async function loadTurns(chunks: Pick<Candidate, "id" | "videoId" | "startS" | "endS">[]): Promise<Map<number, Turn[]>> {
   const out = new Map<number, Turn[]>();
   if (!chunks.length) return out;
   const within = chunks.map((c) => `and(video_id.eq.${c.videoId},start_s.gte.${c.startS},start_s.lt.${c.endS})`).join(",");

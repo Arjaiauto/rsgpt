@@ -237,11 +237,18 @@ export async function followups(question: string, r: Retrieved): Promise<string[
 export async function logQuestion(row: {
   question: string; language: AskLanguage | null; answer: string; citedChunkIds: number[]; found: boolean;
   firstName: string; visitorId: string | null; latencyMs: number; timings: Timings;
+  /** 'brief' for a Prep brief (default: an Ask question, which needs no column). */
+  kind?: "brief";
 }): Promise<number | null> {
   const original = { question: row.question, answer: row.answer, cited_chunk_ids: row.citedChunkIds, visitor_id: row.visitorId };
   const v2 = { ...original, language: row.language, found: row.found, first_name: row.firstName, latency_ms: row.latencyMs };
-  // Newest columns first; until pipeline/sql/qa_log_timings.sql and qa_log_v2.sql have run, fall back to fewer.
-  const attempts = [{ ...v2, timings: row.timings.toJSON() }, v2, original];
+  // Newest columns first; until pipeline/sql/qa_log_timings.sql, qa_log_v2.sql and qa_log_kind.sql have run, fall back
+  // to fewer. A brief without the kind column is logged as an ordinary row whose question says what it is.
+  const attempts = row.kind
+    ? [{ ...v2, kind: row.kind, timings: row.timings.toJSON() }, { ...v2, kind: row.kind },
+        { ...v2, question: `[${row.kind}] ${row.question}`, timings: row.timings.toJSON() }, { ...v2, question: `[${row.kind}] ${row.question}` },
+        { ...original, question: `[${row.kind}] ${row.question}` }]
+    : [{ ...v2, timings: row.timings.toJSON() }, v2, original];
   for (const [i, insert] of attempts.entries()) {
     const { data, error } = await db().from("qa_log").insert(insert).select("id").single();
     if (!error) return data.id as number;

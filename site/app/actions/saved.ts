@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { cleanBrief } from "@/lib/prep/clean";
 import type { SaveInput } from "@/lib/saved-types";
 import { VISITOR_COOKIE } from "@/lib/session";
 
@@ -10,7 +11,7 @@ const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
 /** Only the fields the site shows are stored, cut to size; nothing from the browser goes into the table as it came. */
-function clean(input: SaveInput): { kind: "clip" | "answer"; item_ref: Record<string, unknown> } | null {
+function clean(input: SaveInput): { kind: "clip" | "answer" | "brief"; item_ref: Record<string, unknown> } | null {
   if (input.kind === "clip") {
     const r = input.ref;
     if (!r || !str(r.videoId, 32)) return null;
@@ -39,10 +40,14 @@ function clean(input: SaveInput): { kind: "clip" | "answer"; item_ref: Record<st
       },
     };
   }
+  if (input.kind === "brief") {
+    const brief = cleanBrief(input.ref);
+    return brief ? { kind: "brief", item_ref: brief } : null; // rule 2: a brief with no cited guest is not saved
+  }
   return null;
 }
 
-/** Saves a clip or an answer for this visitor (server only; the table has RLS on and no policies). */
+/** Saves a clip, an answer or a brief for this visitor (server only; the table has RLS on and no policies). */
 export async function saveItem(input: SaveInput): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
   const { firstName } = await requireSession();
   const row = clean(input);

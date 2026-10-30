@@ -253,3 +253,37 @@ export async function getGuestScope(slug: string): Promise<{ name: string; video
     db().from("guests").select("id,video_id").eq("run_id", ARCHIVE_RUN_ID).eq("verified", true).eq("guest_key", card.key).order("id").range(a, b));
   return { name: card.name, videoIds: [...new Set(rows.map((r) => r.video_id))] };
 }
+
+/** Which guest (clean slug) has which verified row in which episode. The Prep brief maps search hits (episodes) to
+    guests with it, and a question's guest_id to the guest it was asked to. */
+export async function getGuestVideos(): Promise<{ id: number; videoId: string; slug: string }[]> {
+  "use cache";
+  cacheLife({ stale: 300, revalidate: 3600, expire: 86400 });
+  const rows = await all<{ id: number; video_id: string; guest_key: string | null }>((a, b) =>
+    db().from("guests").select("id,video_id,guest_key").eq("run_id", ARCHIVE_RUN_ID).eq("verified", true).order("id").range(a, b));
+  return rows.filter((r) => r.guest_key).map((r) => ({ id: r.id, videoId: r.video_id, slug: guestSlug(r.guest_key!) }));
+}
+
+/** One short text per guest (name, organisation, role, sectors, bio) for matching an upcoming guest against past
+    guests by profile. From the newest verified rows, like the profile page. */
+export async function getGuestProfiles(): Promise<{ slug: string; text: string }[]> {
+  "use cache";
+  cacheLife({ stale: 300, revalidate: 3600, expire: 86400 });
+  const [dir, rows] = await Promise.all([
+    getDirectory(),
+    all<{ guest_key: string | null; role_at_episode: string | null; bio: string | null }>((a, b) =>
+      db().from("guests").select("guest_key,role_at_episode,bio").eq("run_id", ARCHIVE_RUN_ID).eq("verified", true).order("id").range(a, b)),
+  ]);
+  const extra = new Map<string, { role: string; bio: string }>();
+  for (const r of rows) {
+    if (!r.guest_key) continue;
+    const slug = guestSlug(r.guest_key);
+    const prev = extra.get(slug);
+    const bio = (r.bio ?? "").replace(/\s+/g, " ").trim();
+    if (!prev || bio.length > prev.bio.length) extra.set(slug, { role: (r.role_at_episode ?? prev?.role ?? "").trim(), bio });
+  }
+  return dir.guests.map((g) => {
+    const e = extra.get(g.slug);
+    return { slug: g.slug, text: [`${g.name}${g.org ? `, ${g.org}` : ""}.`, e?.role ? `${e.role}.` : "", g.tags.length ? `Sectors: ${g.tags.join(", ")}.` : "", e?.bio.slice(0, 400) ?? ""].filter(Boolean).join(" ") };
+  });
+}
