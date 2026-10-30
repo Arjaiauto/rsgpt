@@ -79,7 +79,12 @@
 .prep-title { margin: 10px 0 4px; font-size: clamp(28px, 3.6vw, 40px); font-weight: 500; letter-spacing: -0.045em; line-height: 1.05; }
 .prep-sub { margin: 0; font-size: 14.5px; color: var(--ink-soft); }
 .prep-already { margin: 16px 0 0; padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(165, 139, 255, 0.3); background: rgba(165, 139, 255, 0.08); font-size: 14px; color: var(--ink-soft); }
-.prep-already b { color: var(--ink); font-weight: 500; }
+.prep-already b { color: var(--ink); font-weight: 600; }
+.prep-first { margin: 16px 0 0; font-size: 14px; color: var(--ink-faint); }
+.prep-ep + .prep-ep { margin-top: 14px; }
+.prep-eph { margin: 0 0 2px; font-size: 13px; font-weight: 500; color: var(--ink-soft); }
+.prep-eph span { margin-left: 6px; font-weight: 400; color: var(--ink-faint); }
+.prep-none-found { margin: 0; font-size: 14.5px; color: var(--ink-faint); }
 .prep-already a { color: var(--violet-text); }
 .prep-sec { margin-top: 34px; padding-top: 24px; border-top: 1px solid var(--line); }
 .prep-sec h3 { display: flex; align-items: baseline; gap: 12px; margin: 0 0 14px; font-size: 19px; font-weight: 500; letter-spacing: -0.02em; }
@@ -196,6 +201,10 @@
   .prep-cite { background: none; border: 0; color: #0b7a66; padding: 0; margin-left: 4px; height: auto; text-decoration: underline; }
   .prep-cite::before { content: none; }
   .prep-already { background: #f5f5f8; border-color: #d8d8e0; color: #15151c; }
+  .prep-already b { color: #15151c; }
+  .prep-first, .prep-eph span, .prep-none-found { color: #5b5b68; }
+  .prep-eph { color: #15151c; break-after: avoid; }
+  .prep-ep:not(:has(.prep-li:not(.gone))) { display: none; }
   .prep-already a { color: #15151c; }
   .prep-print-only { display: block; margin: 22px 0 0; font-size: 11px; color: #5b5b68; }
 }

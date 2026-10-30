@@ -8,8 +8,10 @@ import { gradientOf, fmtDay, initialsOf } from "@/lib/guest-format";
 import type { Cite as CiteT } from "@/lib/ask/types";
 import { fmtTime, youtubeAt, type Clip } from "@/lib/player-types";
 import { briefDocx } from "@/lib/prep/docx";
-import { SECTION_HEADINGS, SECTION_NOTES, UNOFFICIAL, briefToText, type SectionKey } from "@/lib/prep/export";
-import { PREP_LIMITS, type Brief, type PastBrief, type PrepEvent } from "@/lib/prep/types";
+import {
+  FIRST_APPEARANCE, NO_OPPORTUNITIES, SECTION_NOTES, UNOFFICIAL, briefToText, sectionCounts, sectionHeading, sectionOrder, type SectionKey,
+} from "@/lib/prep/export";
+import { PREP_LIMITS, type Brief, type BriefQuestion, type PastBrief, type PrepEvent } from "@/lib/prep/types";
 import { saveWithUndo } from "@/lib/save-client";
 import { toast } from "@/lib/toast";
 import { player } from "@/components/player/store";
@@ -198,6 +200,12 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
   const change = (fn: (b: Brief) => Brief) => { setBrief((b) => (b ? fn(b) : b)); setDirty(true); };
   const edit = (id: string, text: string) => change((b) => ({
     ...b,
+    returning: b.returning && {
+      ...b.returning,
+      about: b.returning.about.map((l) => (l.id === id ? { ...l, text } : l)),
+      asked: b.returning.asked.map((e) => ({ ...e, questions: e.questions.map((q) => (q.id === id ? { ...q, text } : q)) })),
+      opportunities: b.returning.opportunities.map((o) => (o.id === id ? { ...o, text } : o)),
+    },
     similar: b.similar.map((g) => (g.why.id === id ? { ...g, why: { ...g.why, text } } : g)),
     asked: b.asked.map((q) => (q.id === id ? { ...q, text } : q)),
     suggestions: b.suggestions.map((s) => (s.id === id ? { ...s, text } : s)),
@@ -349,12 +357,14 @@ function BriefDoc({ brief: b, edit, strike, actions }: {
   actions: { copy: () => void; pdf: () => void; word: () => void; save: () => void; saved: boolean; dirty: boolean; saving: boolean };
 }) {
   const gone = new Set(b.removed);
-  const counts: Record<SectionKey, number> = { similar: b.similar.length, asked: b.asked.length, topics: b.topics.length, suggestions: b.suggestions.length, verify: b.verify.length };
-  // Sections with something in them are numbered 1, 2, 3 ... in order; empty ones are hidden.
-  const order = (Object.keys(SECTION_HEADINGS) as SectionKey[]).filter((k) => counts[k] > 0);
+  const counts = sectionCounts(b);
+  // Sections with something in them are numbered 1, 2, 3 ... in order; empty ones are hidden (except a returning
+  // guest's opportunities, which say none were found).
+  const order = sectionOrder(b);
+  const r = b.returning;
   const head = (key: SectionKey) => (
     <>
-      <h3>{order.indexOf(key) + 1}. {SECTION_HEADINGS[key]} <i>{counts[key]}</i></h3>
+      <h3>{order.indexOf(key) + 1}. {sectionHeading(key, b)} <i>{counts[key]}</i></h3>
       <p className="prep-why">{SECTION_NOTES[key]}</p>
     </>
   );
@@ -366,7 +376,40 @@ function BriefDoc({ brief: b, edit, strike, actions }: {
     </div>
   );
 
+  /** A verified moment of the returning guest's episodes (a question to them, an opportunity they named). */
+  const moment = (q: BriefQuestion, n: number, what: string, note?: string) => row(q.id, n, what,
+    <>
+      <Editable value={q.text} label={what} disabled={gone.has(q.id)} onCommit={(t) => edit(q.id, t)} />
+      {note && <>{" "}<span className="prep-to">{note}</span></>}
+      <Chip clip={{ key: `prep:${q.id}`, itemType: "insight", itemId: String(q.insightId), videoId: q.videoId, startS: q.startS, endS: q.endS, title: q.text, guest: q.guest, episode: q.episode, date: q.date, sourcePath: "/prep" }}
+        label={`${q.date} · ${fmtTime(q.startS)}`} />
+    </>,
+  );
+
   const sections: Record<SectionKey, ReactNode> = {
+    about: (
+      <>
+        {r?.about.map((l, i) => row(l.id, i + 1, "sentence",
+          <>
+            <Editable value={l.text} label={`About ${r.name}`} disabled={gone.has(l.id)} onCommit={(t) => edit(l.id, t)} />
+            <Chips cites={l.cites} id={l.id} short />
+          </>,
+        ))}
+      </>
+    ),
+    askedThem: (
+      <>
+        {r?.asked.map((e) => (
+          <div className="prep-ep" key={e.videoId}>
+            <p className="prep-eph">{e.episode} <span>{e.date}</span></p>
+            {e.questions.map((q, i) => moment(q, i + 1, "question"))}
+          </div>
+        ))}
+      </>
+    ),
+    opportunities: r?.opportunities.length
+      ? <>{r.opportunities.map((o, i) => moment(o, i + 1, "opportunity", o.category))}</>
+      : <p className="prep-none-found">{NO_OPPORTUNITIES}</p>,
     similar: (
       <div className="prep-guests">
         {b.similar.map((g) => (
@@ -454,6 +497,7 @@ function BriefDoc({ brief: b, edit, strike, actions }: {
           <b>{b.already.name}</b> has already been on the show ({b.already.episodes} episode{b.already.episodes === 1 ? "" : "s"}). <Link href={`/guests/${b.already.slug}`}>See their profile</Link>
         </p>
       )}
+      {!b.already && b.firstAppearance && <p className="prep-first">{FIRST_APPEARANCE}</p>}
       {order.map((key) => (
         <Fragment key={key}>
           <div className="prep-sec">{head(key)}{sections[key]}</div>

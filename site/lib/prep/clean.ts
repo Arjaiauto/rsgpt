@@ -1,5 +1,5 @@
 import type { Cite } from "@/lib/ask/types";
-import type { Brief, BriefGuest, BriefLine, BriefQuestion, BriefSuggestion, BriefTopic } from "./types";
+import type { Brief, BriefEpisodeQuestions, BriefGuest, BriefLine, BriefOpportunity, BriefQuestion, BriefReturning, BriefSuggestion, BriefTopic } from "./types";
 
 /** Cuts a brief that came from the browser down to the fields the site shows, each limited in size, before it is
     saved. Nothing is stored as it arrived. Rule 2: a line that points at no transcript moment is dropped, and a brief
@@ -29,6 +29,36 @@ function cleanLine(v: unknown): BriefLine | null {
   return text && cites.length && id ? { id, text, cites } : null;
 }
 
+/** A past question or opportunity: a verified insight row with its episode and time. */
+function cleanMoment(q: Record<string, unknown>): BriefQuestion | null {
+  const text = str(q.text, 600).trim();
+  const videoId = str(q.videoId, 32);
+  const id = str(q.id, 60);
+  if (!text || !videoId || !id) return null;
+  return {
+    id, insightId: num(q.insightId), text, guest: str(q.guest, 160), slug: SLUG.test(str(q.slug, 120)) ? str(q.slug, 120) : null,
+    videoId, episode: str(q.episode, 300), date: str(q.date, 40), startS: num(q.startS), endS: num(q.endS),
+    segmentIds: (Array.isArray(q.segmentIds) ? q.segmentIds : []).slice(0, 200).map(num),
+  };
+}
+
+function cleanReturning(v: unknown): BriefReturning | null {
+  if (!v || typeof v !== "object") return null;
+  const r = v as Record<string, unknown>;
+  const name = str(r.name, 160).trim();
+  if (!name) return null;
+  const about = list(r.about, 6).map(cleanLine).filter((l): l is BriefLine => !!l);
+  const asked: BriefEpisodeQuestions[] = list(r.asked, 30).map((e) => ({
+    videoId: str(e.videoId, 32), episode: str(e.episode, 300), date: str(e.date, 40),
+    questions: list(e.questions, 8).map(cleanMoment).filter((q): q is BriefQuestion => !!q),
+  })).filter((e) => e.videoId && e.questions.length);
+  const opportunities: BriefOpportunity[] = list(r.opportunities, 12).flatMap((o) => {
+    const m = cleanMoment(o);
+    return m ? [{ ...m, category: str(o.category, 40) }] : [];
+  });
+  return { name, about, asked, opportunities };
+}
+
 export function cleanBrief(input: unknown): Brief | null {
   const b = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   const similar: BriefGuest[] = [];
@@ -46,18 +76,7 @@ export function cleanBrief(input: unknown): Brief | null {
   }
   if (!similar.length) return null;
 
-  const asked: BriefQuestion[] = [];
-  for (const q of list(b.asked, 12)) {
-    const text = str(q.text, 600).trim();
-    const videoId = str(q.videoId, 32);
-    const id = str(q.id, 60);
-    if (!text || !videoId || !id) continue;
-    asked.push({
-      id, insightId: num(q.insightId), text, guest: str(q.guest, 160), slug: SLUG.test(str(q.slug, 120)) ? str(q.slug, 120) : null,
-      videoId, episode: str(q.episode, 300), date: str(q.date, 40), startS: num(q.startS), endS: num(q.endS),
-      segmentIds: (Array.isArray(q.segmentIds) ? q.segmentIds : []).slice(0, 200).map(num),
-    });
-  }
+  const asked = list(b.asked, 12).map(cleanMoment).filter((q): q is BriefQuestion => !!q);
   const topics: BriefTopic[] = list(b.topics, 12).map((t) => ({
     id: str(t.id, 80), tag: str(t.tag, 60), episodes: Math.max(0, Math.round(num(t.episodes))),
     examples: (Array.isArray(t.examples) ? t.examples : []).slice(0, 3).map((e) => str(e, 120)).filter(Boolean),
@@ -70,10 +89,11 @@ export function cleanBrief(input: unknown): Brief | null {
   const already = a && SLUG.test(str(a.slug, 120)) ? { name: str(a.name, 160), slug: str(a.slug, 120), episodes: Math.max(0, Math.round(num(a.episodes))) } : null;
   const title = str(b.title, 120).trim();
   if (!title) return null;
+  // Briefs saved before the guest sections existed have neither field: they open as they were.
   return {
     version: 1, title, description: str(b.description, 300), sector: str(b.sector, 80) || null,
     builtAt: str(b.builtAt, 40), preparedFor: str(b.preparedFor, 80), archiveEpisodes: Math.max(0, Math.round(num(b.archiveEpisodes))),
-    already, similar, asked, topics, suggestions, verify,
+    already, firstAppearance: b.firstAppearance === true, returning: already ? cleanReturning(b.returning) : null, similar, asked, topics, suggestions, verify,
     removed: (Array.isArray(b.removed) ? b.removed : []).slice(0, 200).map((r) => str(r, 140)).filter(Boolean),
   };
 }

@@ -81,12 +81,18 @@ export function briefDocx(b: Brief): Uint8Array<ArrayBuffer> {
     para(run(x.title, { bold: true, size: 48, color: INK }), { after: 40 }),
   ];
   if (x.subtitle) body.push(para(run(x.subtitle, { size: 24, color: SOFT }), { after: 80 }));
-  if (x.already) body.push(para(run(x.already, { size: 22, color: INK }), { after: 80 }));
+  if (x.already) body.push(para(run(x.already, { size: 22, color: x.alreadyMuted ? SOFT : INK }), { after: 80 }));
   for (const s of x.sections) {
     body.push(para(run(s.heading, { bold: true, size: 30, color: INK }), { before: 320, after: 40, keepNext: true }));
     if (s.note) body.push(para(run(s.note, { size: 19, color: SOFT }), { after: 100, keepNext: true }));
-    s.items.forEach((item, n) => {
-      const marker = s.numbered ? `${n + 1}.` : "•";
+    if (s.empty) body.push(para(run(s.empty, { size: 22, color: SOFT }), { after: 90 }));
+    let n = 0;
+    for (const item of s.items) {
+      if (item.group) {
+        body.push(para(run(item.group, { bold: true, size: 20, color: SOFT }), { before: 120, after: 60, keepNext: true }));
+        n = 0;
+      }
+      const marker = s.numbered ? `${++n}.` : "•";
       body.push(para(
         run(`${marker} `, { size: 22, color: SOFT })
         + (item.badge ? run(`${item.badge.toUpperCase()}  `, { bold: true, size: 17, color: VIOLET }) : "")
@@ -95,7 +101,7 @@ export function briefDocx(b: Brief): Uint8Array<ArrayBuffer> {
         + item.cites.map((c) => run("  ") + link(c.url, c.label)).join(""),
         { indent: 360, hanging: 300, after: 90 },
       ));
-    });
+    }
   }
   body.push(para("", { before: 240 }));
   for (const line of x.footer) body.push(para(run(line, { size: 17, color: SOFT }), { after: 40 }));

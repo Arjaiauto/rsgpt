@@ -34,6 +34,23 @@ export type BriefQuestion = {
   segmentIds: number[];
 };
 
+/** An opportunity the returning guest named (insights.type = 'opportunity', verified, mostly spoken by the guest),
+    shown as it was extracted. `category` is its label ("Business idea"). */
+export type BriefOpportunity = BriefQuestion & { category: string };
+
+/** The host's questions to the returning guest in one of their past episodes. */
+export type BriefEpisodeQuestions = { videoId: string; episode: string; date: string; questions: BriefQuestion[] };
+
+/** The sections about a guest who has been on the show before, all from their own past episodes. */
+export type BriefReturning = {
+  name: string;
+  /** 3 to 5 cited sentences on who they are and what they built or said. */
+  about: BriefLine[];
+  /** Newest episode first. */
+  asked: BriefEpisodeQuestions[];
+  opportunities: BriefOpportunity[];
+};
+
 /** A sector tag of the similar guests and how many archive episodes have a guest with it. */
 export type BriefTopic = { id: string; tag: string; episodes: number; examples: string[] };
 
@@ -54,6 +71,10 @@ export type Brief = {
   archiveEpisodes: number;
   /** The upcoming guest already appeared on the show. */
   already: { name: string; slug: string; episodes: number } | null;
+  /** A named guest who is not in the archive (the page says it is their first appearance). */
+  firstAppearance: boolean;
+  /** Set when `already` is: the sections from the guest's own episodes, shown first. */
+  returning: BriefReturning | null;
   similar: BriefGuest[];
   asked: BriefQuestion[];
   topics: BriefTopic[];
