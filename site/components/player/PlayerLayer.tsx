@@ -3,7 +3,8 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { fmtTime, youtubeAt } from "@/lib/player-types";
-import { IconBookmark, IconExternal, IconPause, IconPlay, IconX } from "@/components/Icons";
+import { IconBookmark, IconExternal, IconLink, IconPause, IconPlay, IconX } from "@/components/Icons";
+import { toast } from "@/lib/toast";
 import { PlayerControls } from "./PlayerControls";
 import { player, setPlayerHost, slotFor, usePlayer } from "./store";
 import { useClipSave } from "./useClipSave";
@@ -93,6 +94,17 @@ export function PlayerLayer() {
               <a className="pl__yt" href={youtubeAt(clip.videoId, pos)} target="_blank" rel="noopener noreferrer">
                 Open on YouTube <IconExternal />
               </a>
+              <button
+                type="button"
+                className="pl__save"
+                onClick={async () => {
+                  // The clip's start, like the big player's Copy link.
+                  try { await navigator.clipboard.writeText(youtubeAt(clip.videoId, clip.startS)); } catch {}
+                  toast("Timestamp link copied");
+                }}
+              >
+                <IconLink />Copy link
+              </button>
               <button type="button" className="pl__save" onClick={save} aria-pressed={saved} disabled={saved}>
                 <IconBookmark />{saved ? "Saved" : "Save"}
               </button>

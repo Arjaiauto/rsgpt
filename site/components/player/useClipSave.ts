@@ -17,6 +17,9 @@ const mark = (key: string, on: boolean) => {
 };
 const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l); }; };
 
+/** A clip this visitor saved before (the Clips page checks their saved items), so its Save button reads "Saved". */
+export const markClipSaved = (key: string) => { if (!savedKeys.has(key)) mark(key, true); };
+
 export function useClipSave(clip: Clip | null): { saved: boolean; save: () => Promise<void> } {
   const saved = useSyncExternalStore(subscribe, () => !!clip && savedKeys.has(clip.key), () => false);
   const save = useCallback(async () => {

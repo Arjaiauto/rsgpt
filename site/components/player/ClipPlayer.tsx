@@ -73,7 +73,8 @@ export function ClipPlayer({ clip, label, report = true, canSave = true }: { cli
   const { saved, save } = useClipSave(clip);
 
   const copyLink = async () => {
-    try { await navigator.clipboard.writeText(youtubeAt(clip.videoId, at)); } catch {}
+    // Always the clip's start, wherever playback is, so a shared link opens the clip as it was saved or cited.
+    try { await navigator.clipboard.writeText(youtubeAt(clip.videoId, clip.startS)); } catch {}
     toast("Timestamp link copied");
   };
 
