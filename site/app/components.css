@@ -215,3 +215,11 @@ dialog.pal { width: min(640px, calc(100% - 32px)); margin-top: 12vh; }
   .pl--mini, .toast, dialog.sheet[open] { animation: none; }
   .toasts { transition: none; }
 }
+
+/* ---------- reel cover (components/clips/ReelCover.tsx): guest photo or initials, with a dark gradient for text ---------- */
+.rc { position: absolute; inset: 0; display: block; overflow: hidden; }
+.rc img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 22%; } /* faces sit near the top of the portraits */
+.rc-ini { position: absolute; left: 50%; top: 40%; translate: -50% -50%; font-size: clamp(26px, 4vw, 54px); font-weight: 600; letter-spacing: -0.02em; color: rgba(255, 255, 255, 0.82); }
+.rc-shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0, 0, 0, 0.38) 0%, transparent 26%, transparent 42%, rgba(0, 0, 0, 0.84) 100%); }
+.rc--blur img { filter: blur(36px) brightness(0.5) saturate(1.2); transform: scale(1.25); }
+.rc--blur .rc-shade { background: rgba(0, 0, 0, 0.35); }

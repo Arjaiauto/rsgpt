@@ -9,11 +9,11 @@ import { ClipPlayer } from "@/components/player/ClipPlayer";
 import { player, usePlayer } from "@/components/player/store";
 import { markClipSaved } from "@/components/player/useClipSave";
 import { EmptyState } from "@/components/states";
+import { ReelCover } from "./ReelCover";
 import {
   GROUP_PREVIEW, LANGS, LENGTHS, SORTS, clipDetailsFilename, clipDetailsText, clipQuery, effectiveSort,
   type ClipCard, type ClipLine, type ClipOptions, type ClipPage, type ClipParams, type ClipSort,
 } from "@/lib/clip-types";
-import { gradientOf } from "@/lib/guest-format";
 import { fmtTime, type Clip } from "@/lib/player-types";
 import { toast } from "@/lib/toast";
 
@@ -23,6 +23,12 @@ const toClip = (c: ClipCard, sourcePath: string): Clip => ({
   title: c.topic, guest: c.guest, episode: c.episode, date: c.date, sourcePath,
 });
 
+/** The reels feed for the same filters, search and sort (the same query string), optionally from one clip. */
+export const reelsHref = (p: ClipParams, start?: number) => {
+  const qs = clipQuery(p);
+  return `/clips/reels${qs}${start ? `${qs ? "&" : "?"}start=${start}` : ""}`;
+};
+
 /* ---------- one reel card ---------- */
 
 function Reel({ c, active, onOpen, showMore }: { c: ClipCard; active: boolean; onOpen: (c: ClipCard) => void; showMore: boolean }) {
@@ -31,20 +37,22 @@ function Reel({ c, active, onOpen, showMore }: { c: ClipCard; active: boolean; o
       <button
         className="cl-reel"
         type="button"
-        style={{ background: gradientOf(c.guest || c.topic) }}
         onClick={() => onOpen(c)}
         aria-label={`Play clip: ${c.topic}${c.guest ? `, ${c.guest}` : ""}, ${fmtTime(c.endS - c.startS)}`}
         aria-pressed={active}
       >
+        <ReelCover name={c.guest || c.topic} photo={c.photo} />
         <span className="cl-len num">{fmtTime(c.endS - c.startS)}</span>
         <span className="cl-topic">{c.topic}</span>
         <span className="cl-pl" aria-hidden="true"><IconPlay /></span>
-        <span className="cl-open" lang={c.lang === "hi" ? "hi-Latn" : undefined}>“{c.opening}”</span>
+        <span className="cl-cap">
+          <span className="cl-open" lang={c.lang === "hi" ? "hi-Latn" : undefined}>“{c.opening}”</span>
+          <span className="cl-who"><b>{c.guest || "Guest not listed"}</b> · {c.date}</span>
+        </span>
       </button>
       <div className="cl-meta">
-        <b>{c.guest || "Guest not listed"}</b>
-        <span>{c.date}</span>
         {showMore && c.repeat && c.guestSlug && <Link className="cl-more" href={`/clips${clipQuery({ guest: c.guestSlug })}`}>More from this guest</Link>}
+        {c.photo && c.photoLicense && <span className="cl-lic">Photo: {c.photoLicense}</span>}
       </div>
     </article>
   );
@@ -179,7 +187,10 @@ function Results({ params, initial, open, onOpen }: { params: ClipParams; initia
           const shown = all ? g.clips : g.clips.slice(0, GROUP_PREVIEW);
           return (
             <section className="cl-group" key={g.videoId} aria-label={g.episode}>
-              <h3>{g.episode}<span>{g.date} · {plural(g.clips.length, "clip")}</span></h3>
+              <h3>
+                {g.episode}<span>{g.date} · {plural(g.clips.length, "clip")}</span>
+                <Link className="cl-reelsbtn cl-reelsbtn--sm" href={reelsHref(params, g.clips[0].id)}>Watch as reels</Link>
+              </h3>
               <div className="cl-grid">
                 {shown.map((c) => <Reel key={c.id} c={c} active={open === c.id} onOpen={onOpen} showMore={false} />)}
               </div>
@@ -299,9 +310,12 @@ export function ClipsView({ params, initial, options }: { params: ClipParams; in
         {filtered && <Link className="cl-linkbtn" href="/clips">Reset</Link>}
       </div>
 
-      <p className="cl-count" role="status" aria-live="polite">
-        {pending ? "Updating…" : initial.guestView ? "" : `${plural(initial.total, "clip")}${params.q ? ` for “${params.q}”` : ""}${filtered ? "" : " in the archive"}`}
-      </p>
+      <div className="cl-countrow">
+        <p className="cl-count" role="status" aria-live="polite">
+          {pending ? "Updating…" : initial.guestView ? "" : `${plural(initial.total, "clip")}${params.q ? ` for “${params.q}”` : ""}${filtered ? "" : " in the archive"}`}
+        </p>
+        {initial.total > 0 && <Link className="cl-reelsbtn" href={reelsHref(params)}><IconPlay />Watch as reels</Link>}
+      </div>
 
       <div className={`cl-layout${open ? " open" : ""}`}>
         <div className={`cl-results${pending ? " busy" : ""}`} aria-busy={pending}>

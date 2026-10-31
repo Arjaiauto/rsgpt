@@ -5,9 +5,10 @@ import { useRouter } from "next/navigation";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { loadSavedAnswer, moveSaved, noteSaved, removeSaved, restoreSaved } from "@/app/actions/saved";
 import { IconPlay } from "@/components/Icons";
+import { ReelCover } from "@/components/clips/ReelCover";
 import { ClipPlayer } from "@/components/player/ClipPlayer";
 import { stashAnswerForAsk } from "@/lib/ask/reopen";
-import { fmtDay, gradientOf } from "@/lib/guest-format";
+import { fmtDay } from "@/lib/guest-format";
 import { fmtTime, type Clip } from "@/lib/player-types";
 import { folderName } from "@/lib/saved-folder";
 import { savedClipsCsv } from "@/lib/saved-csv";
@@ -124,7 +125,8 @@ const Row = memo(function Row({ item, folders, leaving, playing, opening, onText
   let tile, title, sub: string | null = null, meta: string, action;
   if (item.kind === "clip") {
     tile = (
-      <div className="sv-thumb" style={{ background: gradientOf(item.guest || item.title) }} aria-hidden="true">
+      <div className="sv-thumb" aria-hidden="true">
+        <ReelCover name={item.guest || item.title} photo={item.photo} />
         <span className="sv-pl"><IconPlay /></span>
         <span className="sv-len num">{fmtTime(Math.max(0, (clip?.endS ?? item.endS) - item.startS))}</span>
       </div>

@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { requireSession } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getDirectory } from "@/lib/guests";
 import type { Cite } from "@/lib/ask/types";
 import { cleanBrief } from "@/lib/prep/clean";
 import { sectionOrder } from "@/lib/prep/export";
@@ -114,7 +115,9 @@ export async function listSaved(): Promise<SavedList> {
     return (data ?? []) as Row[];
   };
   const LIM = { clip: 1000, answer: 500, brief: 200 };
-  const [clips, answers, briefs] = await Promise.all([read("clip", LIM.clip), read("answer", LIM.answer), read("brief", LIM.brief)]);
+  const [clips, answers, briefs, dir] = await Promise.all([read("clip", LIM.clip), read("answer", LIM.answer), read("brief", LIM.brief), getDirectory()]);
+  // A saved clip keeps its guest's name; the cover shows that guest's photo (the first guest of "A & B").
+  const photoOf = new Map(dir.guests.filter((g) => g.photoUrl).map((g) => [g.name.toLowerCase(), g.photoUrl!]));
   const meta = (r: Row) => ({ id: r.id, createdAt: r.created_at, folder: r.folder, note: r.note ?? "" });
   const s = (v: unknown) => (typeof v === "string" ? v : "");
   const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -123,6 +126,7 @@ export async function listSaved(): Promise<SavedList> {
     clips: clips.filter((r) => s(r.item_ref.videoId)).map((r) => ({
       ...meta(r), kind: "clip" as const, videoId: s(r.item_ref.videoId), startS: n(r.item_ref.startS), endS: n(r.item_ref.endS),
       title: s(r.item_ref.title), guest: s(r.item_ref.guest), episode: s(r.item_ref.episode), date: s(r.item_ref.date),
+      photo: photoOf.get(s(r.item_ref.guest).split(" & ")[0].trim().toLowerCase()) ?? null,
     })),
     answers: answers.map((r) => {
       const cites = Array.isArray(r.item_ref.citations) ? (r.item_ref.citations as { videoId?: unknown }[]) : [];

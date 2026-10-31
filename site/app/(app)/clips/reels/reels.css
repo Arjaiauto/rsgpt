@@ -1,0 +1,100 @@
+/* Reels mode (/clips/reels): a full-screen vertical feed over the site (above the top bar, under toasts). One reel per
+   screen with scroll-snap; on a laptop the reel is a centred 9:16 column on a blurred copy of its cover. The video is
+   cropped to fill the column (centre crop) or fitted for two-person shots. Classes are prefixed rl-. */
+
+html.rl-lock, html.rl-lock body { overflow: hidden; }
+.rl-root { position: fixed; inset: 0; z-index: 50; background: #000; color: #fff; }
+.rl-loading { background: var(--paper); }
+.rl-feed {
+  position: absolute; inset: 0; overflow-y: auto; overscroll-behavior: contain; scroll-snap-type: y mandatory; scrollbar-width: none;
+  outline: none;
+}
+.rl-feed::-webkit-scrollbar { display: none; }
+.rl-item { position: relative; height: 100%; scroll-snap-align: start; scroll-snap-stop: always; overflow: hidden; contain: layout paint; }
+.rl-bg { position: absolute; inset: 0; }
+.rl-col {
+  position: relative; height: 100%; width: min(100%, calc(100svh * 9 / 16)); margin-inline: auto; overflow: hidden; background: #000;
+  box-shadow: 0 0 80px rgba(0, 0, 0, 0.6);
+}
+.rl-cover { position: absolute; inset: 0; transition: opacity 0.35s; }
+.rl-item.on:has(.rl-video[data-state="playing"]) .rl-cover { opacity: 0; }
+
+/* the video: Fill crops the 16:9 frame to the column's height (centre crop); Fit shows it whole, letterboxed */
+.rl-video { position: absolute; pointer-events: none; }
+.rl-col.fill .rl-video { top: 0; bottom: 0; left: 50%; height: 100%; aspect-ratio: 16 / 9; translate: -50% 0; }
+.rl-col.fit .rl-video { left: 0; right: 0; top: 50%; width: 100%; aspect-ratio: 16 / 9; translate: 0 -50%; }
+.rl-host, .rl-host iframe { width: 100%; height: 100%; border: 0; display: block; }
+.rl-video[data-state="loading"], .rl-video[data-state="ready"] { opacity: 0; }
+.rl-prog { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; height: 3px; background: rgba(255, 255, 255, 0.18); }
+.rl-prog span { display: block; height: 100%; width: 0; background: var(--cite); }
+
+.rl-tap { position: absolute; inset: 0; z-index: 1; border: 0; background: transparent; cursor: pointer; }
+.rl-pausemark {
+  position: absolute; left: 50%; top: 45%; z-index: 2; translate: -50% -50%; width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.45); pointer-events: none;
+}
+.rl-pausemark svg { width: 28px; height: 28px; margin-left: 4px; }
+
+/* text over the reel */
+.rl-info {
+  position: absolute; left: 0; right: 72px; bottom: 0; z-index: 2; padding: 0 16px calc(22px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; gap: 6px; pointer-events: none; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.55);
+}
+.rl-info > * { margin: 0; }
+.rl-who { font-size: 14px; color: rgba(255, 255, 255, 0.85); }
+.rl-who b { color: #fff; font-weight: 600; }
+.rl-topic { font-size: 13px; color: rgba(255, 255, 255, 0.75); }
+.rl-cap { font-size: clamp(19px, 2.6vh, 26px); font-weight: 600; line-height: 1.25; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.rl-more {
+  align-self: flex-start; pointer-events: auto; margin-top: 2px; height: 30px; padding: 0 12px; border-radius: var(--radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.35); background: rgba(0, 0, 0, 0.35); color: #fff; font: 500 12.5px var(--sans); cursor: pointer;
+}
+.rl-more:hover { background: rgba(0, 0, 0, 0.55); }
+.rl-rail { position: absolute; right: 8px; bottom: calc(26px + env(safe-area-inset-bottom, 0px)); z-index: 2; display: flex; flex-direction: column; gap: 14px; }
+.rl-act {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; width: 60px; padding: 0; border: 0; background: none; color: #fff;
+  font: 500 11px var(--sans); text-decoration: none; cursor: pointer; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+.rl-act svg { width: 44px; height: 44px; padding: 11px; border-radius: 50%; background: rgba(0, 0, 0, 0.45); }
+.rl-act[aria-pressed="true"] svg { background: var(--cite); color: #08201a; }
+.rl-act:disabled { cursor: default; }
+
+/* the controls over the feed, lined up with the reel column */
+.rl-top {
+  position: absolute; top: 0; left: 50%; z-index: 4; translate: -50% 0; width: min(100vw, calc(100svh * 9 / 16)); display: flex; align-items: center; gap: 8px;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 12px 12px; background: linear-gradient(180deg, rgba(0, 0, 0, 0.5), transparent); pointer-events: none;
+}
+.rl-top > * { pointer-events: auto; }
+.rl-count { margin-right: auto; font-size: 13px; color: rgba(255, 255, 255, 0.8); }
+.rl-btn {
+  display: inline-grid; place-items: center; min-width: 40px; height: 40px; padding: 0; border-radius: var(--radius-pill); border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.45); color: #fff; font: 500 13px var(--sans); cursor: pointer; text-decoration: none;
+}
+.rl-btn svg { width: 18px; height: 18px; }
+.rl-btn:disabled { opacity: 0.35; cursor: default; }
+.rl-pill { padding: 0 14px; }
+.rl-btn[aria-pressed="true"].rl-pill { border-color: var(--cite); }
+.rl-nav { position: absolute; right: max(16px, calc(50% - 100svh * 9 / 32 - 72px)); top: 50%; z-index: 4; translate: 0 -50%; display: flex; flex-direction: column; gap: 10px; }
+
+/* tap to start */
+.rl-start {
+  position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px;
+  border: 0; background: rgba(0, 0, 0, 0.55); color: #fff; font: 400 15px var(--sans); text-align: center; cursor: pointer;
+}
+.rl-start b { font-size: 24px; font-weight: 600; }
+.rl-start > span:last-child { max-width: 30ch; color: rgba(255, 255, 255, 0.75); }
+.rl-startpl { width: 84px; height: 84px; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, 0.95); color: #111; }
+.rl-startpl svg { width: 30px; height: 30px; margin-left: 4px; }
+.rl-start:focus-visible, .rl-btn:focus-visible, .rl-act:focus-visible, .rl-more:focus-visible { outline: 2px solid var(--violet-text); outline-offset: 3px; }
+
+.rl-empty { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: var(--paper); color: var(--ink); }
+
+/* phones: the reel fills the screen, no blurred sides, no arrow buttons (swipe) */
+@media (max-width: 600px) {
+  .rl-bg, .rl-nav { display: none; }
+  .rl-col { width: 100%; box-shadow: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rl-feed { scroll-behavior: auto; }
+  .rl-cover { transition: none; }
+}

@@ -19,6 +19,10 @@ export type ClipCard = {
   guest: string;
   /** The first guest's profile slug, for "More from this guest". */
   guestSlug: string | null;
+  /** That guest's photo, from the same verified source as the Guests page (Commons or added by hand), and its licence
+      for a Commons photo; null without one (the cover shows initials). Never a YouTube thumbnail. */
+  photo: string | null;
+  photoLicense: string | null;
   /** That guest has clips in more than one episode. */
   repeat: boolean;
   episode: string;

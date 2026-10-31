@@ -22,6 +22,8 @@ export type SaveInput =
 export type SavedMeta = { id: number; createdAt: string; folder: string | null; note: string };
 export type SavedClip = SavedMeta & {
   kind: "clip"; videoId: string; startS: number; endS: number; title: string; guest: string; episode: string; date: string;
+  /** The guest's photo for the tile's cover (the Guests page's own), found by name; null without one. */
+  photo: string | null;
 };
 /** The list holds a preview and a count; the whole answer is read when it is opened (loadSavedAnswer). */
 export type SavedAnswer = SavedMeta & { kind: "answer"; question: string; preview: string; sources: number };

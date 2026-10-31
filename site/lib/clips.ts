@@ -62,6 +62,7 @@ export async function getClipIndex(): Promise<ClipIndex> {
     clips.push({
       id: r.id, videoId: r.video_id, startS: r.start_s, endS: r.end_s, topic: (r.topic ?? "").trim() || "Clip", opening: cleanOpening(r.opening_line ?? ""),
       score: r.score ?? 0, guest: guests.map((g) => g.name).join(" & "), guestSlug: slugs[0] ?? null,
+      photo: guests[0]?.photoUrl ?? null, photoLicense: guests[0]?.photoUrl ? guests[0].photoLicense : null,
       repeat: (episodesWithClips.get(slugs[0] ?? "")?.size ?? 0) > 1,
       episode: ep.title, date: monthYear(ep.published_at), publishedAt: ep.published_at ?? "", views: Number(ep.view_count ?? 0),
       lang: ep.caption_language === "hi" ? "hi" : ep.caption_language === "en" ? "en" : null,
@@ -147,7 +148,7 @@ async function relevance(q: string, clips: IndexClip[]): Promise<Map<number, num
 /** The card without the fields only the filters use. */
 const strip = (c: IndexClip): ClipCard => ({
   id: c.id, videoId: c.videoId, startS: c.startS, endS: c.endS, topic: c.topic, opening: c.opening, score: c.score, guest: c.guest,
-  guestSlug: c.guestSlug, repeat: c.repeat, episode: c.episode, date: c.date, publishedAt: c.publishedAt, views: c.views, lang: c.lang,
+  guestSlug: c.guestSlug, photo: c.photo, photoLicense: c.photoLicense, repeat: c.repeat, episode: c.episode, date: c.date, publishedAt: c.publishedAt, views: c.views, lang: c.lang,
 });
 
 /** One page of the clips these params ask for. In a guest's view, all their clips, grouped by episode. */
