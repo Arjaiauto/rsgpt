@@ -1,8 +1,13 @@
 import type { Metadata } from "next";
-import { Placeholder } from "@/components/app/Placeholder";
+import { FutureDeck } from "@/components/future/FutureDeck";
+import "./future.css";
 
 export const metadata: Metadata = { title: "Future updates · Cuepoint" };
 
 export default function Page() {
-  return <Placeholder title="Future updates" />;
+  return (
+    <div className="fu-page">
+      <FutureDeck />
+    </div>
+  );
 }
