@@ -25,8 +25,11 @@ export function TableToggle({ children }: { children: ReactNode }) {
 }
 
 /** Bars of the median with the middle half of episodes as a whisker and the average as a tick. A row links to the
-    filtered Clips page when href gives one. */
-export function SpreadBars({ groups, label, unit = "views", href }: { groups: Group[]; label: string; unit?: string; href?: (key: string) => string }) {
+    filtered Clips page when href gives one. format writes the values (view counts by default); compact leaves out the
+    legend and the table, for small charts that share one. */
+export function SpreadBars({ groups, label, unit = "views", href, format = fmt, compact = false }: {
+  groups: Group[]; label: string; unit?: string; href?: (key: string) => string; format?: (n: number) => string; compact?: boolean;
+}) {
   const top = niceMax(Math.max(...groups.map((g) => Math.max(g.p75, g.mean))));
   const x = (v: number) => `${(100 * v) / top}%`;
   return (
@@ -41,12 +44,13 @@ export function SpreadBars({ groups, label, unit = "views", href }: { groups: Gr
                 <i className="in-sb-wh" style={{ left: x(g.p25), width: `calc(${x(g.p75)} - ${x(g.p25)})` }} />
                 <i className="in-sb-avg" style={{ left: x(g.mean) }} />
               </span>
-              <span className="in-sb-val">{fmt(g.median)}<span className="sr"> median {unit}, average {fmt(g.mean)}, middle half {fmt(g.p25)} to {fmt(g.p75)}</span></span>
+              <span className="in-sb-val">{format(g.median)}<span className="sr"> median {unit}, average {format(g.mean)}, middle half {format(g.p25)} to {format(g.p75)}</span></span>
             </>
           );
           return <li key={g.key}>{href ? <Link className="in-sb-row" href={href(g.key)} prefetch={false}>{body}</Link> : <span className="in-sb-row">{body}</span>}</li>;
         })}
       </ul>
+      {!compact && <>
       <figcaption className="in-legend">
         <span><i className="sq" /> median {unit}</span><span><i className="wh" /> middle half of episodes</span><span><i className="avg" /> average</span>
       </figcaption>
@@ -54,10 +58,11 @@ export function SpreadBars({ groups, label, unit = "views", href }: { groups: Gr
         <table className="in-dt">
           <thead><tr><th scope="col">Group</th><th scope="col">Episodes</th><th scope="col">Median</th><th scope="col">Average</th><th scope="col">Middle half</th></tr></thead>
           <tbody>{groups.map((g) => (
-            <tr key={g.key}><th scope="row">{g.label}</th><td>{g.n}</td><td>{fmt(g.median)}</td><td>{fmt(g.mean)}</td><td>{fmt(g.p25)} to {fmt(g.p75)}</td></tr>
+            <tr key={g.key}><th scope="row">{g.label}</th><td>{g.n}</td><td>{format(g.median)}</td><td>{format(g.mean)}</td><td>{format(g.p25)} to {format(g.p75)}</td></tr>
           ))}</tbody>
         </table>
       </TableToggle>
+      </>}
     </figure>
   );
 }

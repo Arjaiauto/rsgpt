@@ -133,6 +133,21 @@ a.in-sb-row:focus-visible { box-shadow: 0 0 0 2px var(--violet-text); }
 .in-more { display: inline-block; margin-top: 14px; font-size: 13px; color: var(--violet-text); text-decoration: none; }
 .in-more:hover { text-decoration: underline; }
 
+/* thumbnails */
+.in-badge {
+  display: inline-block; margin: 0 0 14px; padding: 4px 10px; border-radius: var(--radius-pill); font-size: 12px; font-weight: 500;
+  color: var(--avg); border: 1px solid rgba(255, 207, 122, 0.35); background: rgba(255, 207, 122, 0.06);
+}
+.in-legend--top { margin: 0 0 14px; }
+.in-thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr)); gap: 14px; }
+.in-card h3 small { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--ink-faint); }
+.in-thumbs .in-card h3 { color: var(--ink); }
+.in-take--sm { margin: 0 0 10px; font-size: 14px; }
+.in-thumbs .in-note { margin-top: 8px; }
+.in-h3--first { margin-top: 18px; }
+.in-card--mixed .in-take--sm { color: var(--ink-faint); }
+.in-fall { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 15px; line-height: 1.5; color: var(--ink-soft); }
+
 @media (max-width: 700px) {
   .in-two { grid-template-columns: minmax(0, 1fr); }
   .in-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -230,6 +230,7 @@ export const CLOSING = {
   soft: "with your team",
   offer: [
     "Every feature here gets better on Figuring Out's own raw recordings: word-perfect transcripts, real clips cut from the footage, and no YouTube limits.",
+    "With access to your YouTube Analytics, Insights can show watch time and retention: which moments viewers re-watch or drop off, matched to clip timestamps.",
     "I'd start with whichever one saves the team the most hours, ship it in weeks, and measure it. I'm also happy to rebuild this whole demo on Figuring Out's raw files.",
     "This demo stays private, and I'll take it down whenever you ask.",
   ],

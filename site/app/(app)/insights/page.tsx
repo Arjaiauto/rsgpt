@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { InsightsView, UsageView } from "@/components/insights/InsightsView";
+import { InsightsView, ThumbnailsView, UsageView } from "@/components/insights/InsightsView";
 import { IconPage } from "@/components/Icons";
 import { EmptyState, PageSkeleton, Skeleton } from "@/components/states";
 import { requireSession } from "@/lib/auth";
 import { fmtDay } from "@/lib/guest-format";
-import { getInsights, getUsage } from "@/lib/insights";
+import { getInsights, getThumbnailInsights, getUsage } from "@/lib/insights";
 import { MIN_GROUP } from "@/lib/insights-types";
 import "./insights.css";
 
@@ -28,6 +28,13 @@ async function Archive() {
   );
 }
 
+/** Shown once pipeline/17_thumbnail_features.py has loaded public.thumbnail_features; until then, nothing. */
+async function ThumbnailSection() {
+  await requireSession();
+  const t = await getThumbnailInsights();
+  return t ? <ThumbnailsView t={t} /> : null;
+}
+
 async function UsageSection() {
   await requireSession();
   return <UsageView u={await getUsage()} />;
@@ -40,6 +47,9 @@ export default function Page() {
       <div className="in-proof"><b>Patterns, not proof.</b><span>Guest fame, news cycles and the YouTube algorithm move views too. Use these to ask better questions, not as rules.</span></div>
       <Suspense fallback={<PageSkeleton kind="stats" />}>
         <Archive />
+      </Suspense>
+      <Suspense fallback={null}>
+        <ThumbnailSection />
       </Suspense>
       <Suspense fallback={<div className="in-sec"><Skeleton w="40%" h={24} /></div>}>
         <UsageSection />

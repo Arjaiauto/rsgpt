@@ -5,7 +5,8 @@ import { db } from "@/lib/db";
 import { fmtMonth, fmtViews, yearOf } from "@/lib/guest-format";
 import { getDirectory, getGuestVideos } from "@/lib/guests";
 import {
-  MIN_GROUP, type BestClip, type Group, type GuestStat, type Insights, type MonthPoint, type Spread, type TopicRow, type Usage,
+  MIN_GROUP, type BestClip, type Group, type GuestStat, type Insights, type MonthPoint, type Spread, type ThumbInsights, type ThumbPattern,
+  type TopicRow, type Usage,
 } from "@/lib/insights-types";
 
 /** The Insights page counts everything here on the server, from the same cached rows as the Guests and Clips pages plus
@@ -293,6 +294,118 @@ export async function getUsage(): Promise<Usage> {
     },
     topics, cited, since,
     takeaway: topics[0] ? `${topics[0].label} comes up most: ${num(topics[0].n)} of ${num(cited)} answered questions cited an episode with ${aGuest(topics[0].label)}.` : "",
+    countedAt: new Date().toISOString(),
+  };
+}
+
+/* ---------- thumbnails ---------- */
+
+/** What pipeline/17_thumbnail_features.py measured on each thumbnail (public.thumbnail_features.features). */
+type ThumbFeatures = {
+  faces: number; largest_face: number; framing: "close-up" | "wide" | "none"; text_present: boolean; word_count: number;
+  has_number: boolean; has_question: boolean; text_langs: string[]; show_logo: boolean; brightness: number; contrast: number;
+};
+type Cut = { brightness: number; contrast: number };
+
+/** The features compared. The view-count badge the channel stamps on thumbnails is never one: it is the views. */
+const THUMB_FEATURES: { key: string; label: string; short: string; subject: string; phrase: string; test: (f: ThumbFeatures, cut: Cut) => boolean }[] = [
+  { key: "number", label: "A number in the text", short: "Number in the text", subject: "A number in the text", phrase: "thumbnails with a number", test: (f) => f.has_number },
+  { key: "question", label: "A question mark", short: "Question mark", subject: "A question mark", phrase: "thumbnails with a question mark", test: (f) => f.has_question },
+  { key: "short", label: "Five words or fewer", short: "5 words or fewer", subject: "Text of five words or fewer", phrase: "thumbnails with five words or fewer", test: (f) => f.text_present && f.word_count <= 5 },
+  { key: "text", label: "Any headline text", short: "Headline text", subject: "Headline text", phrase: "thumbnails with headline text", test: (f) => f.text_present },
+  { key: "hindi", label: "Hindi text", short: "Hindi text", subject: "Hindi text", phrase: "thumbnails with Hindi text", test: (f) => f.text_langs.includes("hi") },
+  { key: "closeup", label: "Close-up face", short: "Close-up face", subject: "A close-up face", phrase: "thumbnails with a close-up face", test: (f) => f.framing === "close-up" },
+  { key: "faces3", label: "Three or more faces", short: "3+ faces", subject: "Three or more faces", phrase: "thumbnails with three or more faces", test: (f) => f.faces >= 3 },
+  { key: "logo", label: "Show logo on it", short: "Show logo", subject: "The show's logo", phrase: "thumbnails with the show's logo", test: (f) => f.show_logo },
+  { key: "bright", label: "Brighter than most", short: "Brighter than the archive median", subject: "Brighter-than-median images", phrase: "brighter thumbnails", test: (f, cut) => f.brightness > cut.brightness },
+  { key: "contrast", label: "Higher contrast", short: "Higher contrast than the archive median", subject: "Higher-contrast images", phrase: "higher-contrast thumbnails", test: (f, cut) => f.contrast > cut.contrast },
+];
+
+/** A style shift counts when a feature's share moved this many points from the first to the latest year. */
+const SHIFT_POINTS = 10;
+
+const times = (r: number) => `${r.toFixed(1)}x`;
+
+/** Thumbnail features against views, compared within the same year so older episodes' extra time to collect views
+    does not count. Null when public.thumbnail_features is missing or empty. */
+export async function getThumbnailInsights(): Promise<ThumbInsights | null> {
+  "use cache";
+  cacheLife({ stale: 300, revalidate: 3600, expire: 86400 });
+  let rows: { episode_id: string; features: ThumbFeatures }[];
+  try {
+    rows = await all((a, b) => db().from("thumbnail_features").select("episode_id,features").order("episode_id").range(a, b));
+  } catch (e) {
+    console.warn("insights: thumbnail_features unavailable:", e instanceof Error ? e.message : e);
+    cacheLife({ stale: 60, revalidate: 300, expire: 3600 }); // look again soon once the table exists
+    return null;
+  }
+  if (!rows.length) return null;
+  const eps = (await all<{ video_id: string; published_at: string | null; view_count: number | null }>((a, b) =>
+    db().from("episodes").select("video_id,published_at,view_count").eq("status", "transcribed").order("video_id").range(a, b)))
+    .filter((e) => e.published_at).map((e) => ({ id: e.video_id, year: yearOf(e.published_at)!, views: Number(e.view_count ?? 0) }));
+
+  // Year-relative views: an episode's views over the median of every transcribed episode from the same year.
+  const yearMedian = new Map<number, number>();
+  for (const y of new Set(eps.map((e) => e.year))) yearMedian.set(y, spread(eps.filter((e) => e.year === y).map((e) => e.views)).median);
+  const featOf = new Map(rows.map((r) => [r.episode_id, r.features]));
+  const list = eps.filter((e) => featOf.has(e.id))
+    .map((e) => ({ ...e, f: featOf.get(e.id)!, rel: yearMedian.get(e.year) ? e.views / yearMedian.get(e.year)! : 0 }));
+  const cut: Cut = { brightness: spread(list.map((e) => e.f.brightness)).median, contrast: spread(list.map((e) => e.f.contrast)).median };
+  const years = [...new Set(list.map((e) => e.year))].sort((a, b) => a - b);
+
+  const patterns: ThumbPattern[] = [], hidden: string[] = [], shifts: (ThumbInsights["shifts"][number] & { sentence: string })[] = [];
+  for (const d of THUMB_FEATURES) {
+    const yes = list.filter((e) => d.test(e.f, cut)), no = list.filter((e) => !d.test(e.f, cut));
+    const share = years.map((y) => {
+      const inY = list.filter((e) => e.year === y);
+      return { year: y, n: inY.length, pct: pct(inY.filter((e) => d.test(e.f, cut)).length, inY.length) };
+    });
+    // A style shift: the share moved SHIFT_POINTS or more, up or down, from the first to the latest year with
+    // MIN_GROUP analysed episodes. A fact about the thumbnails, not about views.
+    const big = share.filter((s) => s.n >= MIN_GROUP);
+    if (big.length >= 2 && Math.abs(big.at(-1)!.pct - big[0].pct) >= SHIFT_POINTS) {
+      const [a, b] = [big[0], big.at(-1)!];
+      shifts.push({
+        key: d.key, from: a.pct, to: b.pct, fromYear: a.year, toYear: b.year,
+        text: `${d.short}: ${a.pct}% of ${a.year} thumbnails, ${b.pct}% in ${b.year}`,
+        sentence: d.key === "bright" || d.key === "contrast"
+          ? `Thumbnails got ${d.key === "bright" ? (b.pct > a.pct ? "brighter" : "darker") : (b.pct > a.pct ? "higher in contrast" : "lower in contrast")}: ${a.pct}% of ${a.year} thumbnails were above the archive's median ${d.key === "bright" ? "lightness" : "contrast"}, ${b.pct}% in ${b.year}. The biggest change in style.`
+          : `${d.subject} went from ${a.pct}% of ${a.year} thumbnails to ${b.pct}% in ${b.year}, the biggest change in style.`,
+      });
+    }
+    if (yes.length < MIN_GROUP || no.length < MIN_GROUP) {
+      hidden.push(`${d.label} (${yes.length} with, ${no.length} without)`);
+      continue;
+    }
+    const w = spread(yes.map((e) => e.rel)), wo = spread(no.map((e) => e.rel));
+    const perYear = years.map((y) => {
+      const a = yes.filter((e) => e.year === y), b = no.filter((e) => e.year === y);
+      if (a.length < MIN_GROUP || b.length < MIN_GROUP) return null;
+      const ma = spread(a.map((e) => e.views)).median, mb = spread(b.map((e) => e.views)).median;
+      return { year: y, ratio: mb ? ma / mb : 0, nWith: a.length, nWithout: b.length, medWith: ma, medWithout: mb };
+    }).filter((x): x is NonNullable<typeof x> => !!x);
+    const ratio = wo.median ? w.median / wo.median : 0;
+    const both = `${w.median.toFixed(2)}x vs ${wo.median.toFixed(2)}x their year's median`;
+    // Mixed: the years with 20 episodes on each side, and all years together, disagree: some above 1.0x, some below.
+    const dirs = [ratio, ...perYear.map((y) => y.ratio)];
+    const mixed = dirs.some((r) => r > 1) && dirs.some((r) => r < 1);
+    const takeaway = mixed ? `Mixed: no consistent effect on views. All years together: ${both}.`
+      : ratio >= 1.05 ? `Compared within the same year, ${d.phrase} get ${times(ratio)} the median views of those without (${both}).`
+        : ratio <= 0.95 ? `Compared within the same year, ${d.phrase} get fewer views than those without: ${both}, or ${times(ratio)}.`
+          : `Compared within the same year, ${d.phrase} get about the same views as those without (${both}).`;
+    patterns.push({
+      key: d.key, label: d.label, ratio, mixed, years: perYear, share, takeaway,
+      with: { key: "with", label: "With", ...w }, without: { key: "without", label: "Without", ...wo },
+    });
+  }
+  // Consistent patterns first, strongest gap first; mixed ones after.
+  patterns.sort((a, b) => Number(a.mixed) - Number(b.mixed) || Math.abs(Math.log(b.ratio || 1)) - Math.abs(Math.log(a.ratio || 1)));
+  shifts.sort((a, b) => Math.abs(b.to - b.from) - Math.abs(a.to - a.from));
+  const span = years.length ? `${years[0]} to ${years.at(-1)}` : "";
+  return {
+    analysed: list.length, episodes: eps.length, patterns, hidden, brightness: cut.brightness, contrast: cut.contrast,
+    shifts: shifts.map((x) => ({ key: x.key, text: x.text, from: x.from, to: x.to, fromYear: x.fromYear, toYear: x.toYear })),
+    headline: shifts[0]?.sentence ?? `Thumbnail styles stayed steady from ${span}: no feature's share moved ${SHIFT_POINTS} points.`,
     countedAt: new Date().toISOString(),
   };
 }

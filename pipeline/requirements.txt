@@ -10,3 +10,4 @@ rapidfuzz
 streamlit
 tqdm
 yt-dlp
+opencv-python-headless

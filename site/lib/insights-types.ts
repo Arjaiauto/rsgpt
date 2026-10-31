@@ -71,3 +71,38 @@ export type Usage = {
 
 /** Groups with fewer episodes than this are hidden (FRONTEND_DESIGN.md page 8). */
 export const MIN_GROUP = 20;
+
+/** One thumbnail feature: episodes with it against episodes without it. Values are year-relative views: an episode's
+    views divided by the median views of all episodes published the same year, so older episodes' extra time to collect
+    views does not count. */
+export type ThumbPattern = {
+  key: string;
+  label: string;
+  with: Group;
+  without: Group;
+  /** Median year-relative views with the feature over without it, all years together. */
+  ratio: number;
+  /** The years below disagree (some above 1.0x, some below): no consistent effect is claimed. */
+  mixed: boolean;
+  /** Years with at least MIN_GROUP episodes on each side, compared on plain views. */
+  years: { year: number; ratio: number; nWith: number; nWithout: number; medWith: number; medWithout: number }[];
+  /** Share of each year's analysed episodes that have the feature. */
+  share: { year: number; n: number; pct: number }[];
+  takeaway: string;
+};
+
+export type ThumbInsights = {
+  analysed: number;
+  episodes: number;
+  patterns: ThumbPattern[];
+  /** Features left out for having fewer than MIN_GROUP episodes on one side. */
+  hidden: string[];
+  /** Style shifts: features whose share of thumbnails moved 10 points or more from the first to the latest year,
+      biggest first. Facts about the thumbnails, not about views. */
+  shifts: { key: string; text: string; from: number; to: number; fromYear: number; toYear: number }[];
+  headline: string;
+  /** The archive medians used to split "brighter" and "higher contrast". */
+  brightness: number;
+  contrast: number;
+  countedAt: string;
+};

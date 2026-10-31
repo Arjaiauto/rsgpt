@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { CountBars, MixTable, MonthChart, SpreadBars } from "@/components/insights/Charts";
+import { CountBars, MixTable, MonthChart, SpreadBars, TableToggle } from "@/components/insights/Charts";
 import { PlayClip } from "@/components/insights/PlayClip";
 import { clipQuery } from "@/lib/clip-types";
 import { fmtDay, fmtMonth, fmtViews } from "@/lib/guest-format";
-import { MIN_GROUP, type GuestStat, type Insights, type Usage } from "@/lib/insights-types";
+import { MIN_GROUP, type GuestStat, type Insights, type ThumbInsights, type Usage } from "@/lib/insights-types";
 import { fmtTime } from "@/lib/player-types";
 
 /** The Insights page (FRONTEND_DESIGN.md page 8, scope of Ticket 23d): what the archive holds, which topics and guests
@@ -133,6 +133,64 @@ export function InsightsView({ data }: { data: Insights }) {
         </Section>
       )}
     </>
+  );
+}
+
+const rel = (v: number) => `${v.toFixed(2)}x`;
+
+/** Thumbnails (Ticket 23e): how the thumbnails' style changed (facts), then each feature against views, compared
+    within the same year (patterns). No thumbnail image is shown (CLAUDE.md rule 1). */
+export function ThumbnailsView({ t }: { t: ThumbInsights }) {
+  return (
+    <Section id="in-thumbs" eyebrow="Thumbnails" title={t.headline}>
+      <p className="in-sub">
+        What {n(t.analysed)} of {n(t.episodes)} episodes&apos; YouTube thumbnails show (faces, headline text, brightness), measured from the images, which
+        are never shown here.
+      </p>
+      <h3 className="in-h3 in-h3--first">How the thumbnails changed</h3>
+      {t.shifts.length
+        ? <ul className="in-fall">{t.shifts.map((f) => <li key={f.key}>{f.text}</li>)}</ul>
+        : <p className="in-take">No feature&apos;s share of thumbnails moved 10 points from the first year to the latest.</p>}
+      <p className="in-note">Share of each year&apos;s thumbnails with the feature, first year to latest; moves of 10 points or more.</p>
+
+      <h3 className="in-h3">Features and views</h3>
+      <p className="in-sub">
+        Each card compares episodes with a feature to episodes without it, in views relative to the median of the same year (1.00x is a typical
+        episode of that year), so older episodes&apos; extra time to collect views doesn&apos;t count. When the years disagree, the card says
+        so. Only features with at least {MIN_GROUP} episodes on each side are shown.
+      </p>
+      <p className="in-badge">Pattern, not proof</p>
+      <p className="in-legend in-legend--top">
+        <span><i className="sq" /> median, relative to the year</span><span><i className="wh" /> middle half of episodes</span><span><i className="avg" /> average</span>
+      </p>
+      <div className="in-thumbs">
+        {t.patterns.map((p) => (
+          <div className={`in-card${p.mixed ? " in-card--mixed" : ""}`} key={p.key}>
+            <h3>{p.label}<small>{p.with.n} with · {p.without.n} without</small></h3>
+            <p className="in-take in-take--sm">{p.takeaway}</p>
+            <SpreadBars compact groups={[p.with, p.without]} format={rel} unit="views relative to the year" label={`${p.label}: views relative to the year, with and without`} />
+            <p className="in-note">
+              {p.years.length
+                ? <>By year: {p.years.map((y) => `${y.year} ${y.ratio.toFixed(1)}x (${y.nWith} with, ${y.nWithout} without)`).join(" · ")}</>
+                : <>No single year has {MIN_GROUP} episodes on each side.</>}
+            </p>
+          </div>
+        ))}
+      </div>
+      <TableToggle>
+        <table className="in-dt">
+          <thead><tr><th scope="col">Feature</th><th scope="col">With</th><th scope="col">Without</th><th scope="col">Median with</th><th scope="col">Median without</th><th scope="col">Ratio</th><th scope="col">Years agree</th></tr></thead>
+          <tbody>{t.patterns.map((p) => (
+            <tr key={p.key}><th scope="row">{p.label}</th><td>{p.with.n}</td><td>{p.without.n}</td><td>{rel(p.with.median)}</td><td>{rel(p.without.median)}</td><td>{p.ratio.toFixed(2)}x</td><td>{p.mixed ? "No (mixed)" : "Yes"}</td></tr>
+          ))}</tbody>
+        </table>
+      </TableToggle>
+      <p className="in-note">
+        {t.hidden.length > 0 && <>Hidden for having fewer than {MIN_GROUP} episodes on one side: {t.hidden.join(", ")}. </>}
+        &quot;Brighter&quot; and &quot;higher contrast&quot; mean above the archive&apos;s median (lightness {t.brightness.toFixed(0)} of 100, contrast {t.contrast.toFixed(0)}).
+        The view-count badge the channel adds to thumbnails is left out, and who appears is not identified, only faces counted.
+      </p>
+    </Section>
   );
 }
 
