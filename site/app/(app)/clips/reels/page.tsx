@@ -5,6 +5,7 @@ import { requireSession } from "@/lib/auth";
 import { clipQuery, parseClipParams } from "@/lib/clip-types";
 import { queryClips } from "@/lib/clips";
 import "./reels.css";
+import { timed } from "@/lib/data-log";
 
 export const metadata: Metadata = { title: "Reels · Cuepoint" };
 
@@ -15,7 +16,7 @@ async function Loader({ searchParams }: { searchParams: Promise<{ [key: string]:
   const sp = await searchParams;
   const params = parseClipParams(sp);
   const startRaw = Number(Array.isArray(sp.start) ? sp.start[0] : sp.start);
-  const page = await queryClips(params, 0);
+  const page = await timed("page /clips/reels", () => queryClips(params, 0));
   return <ReelsView key={`${clipQuery(params)}|${startRaw}`} params={params} initial={page.items} next={page.next} startId={Number.isInteger(startRaw) ? startRaw : null} />;
 }
 

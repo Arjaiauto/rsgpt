@@ -5,6 +5,7 @@ import { PrepView } from "@/components/prep/PrepView";
 import { PageSkeleton } from "@/components/states";
 import { getDirectory } from "@/lib/guests";
 import "./prep.css";
+import { timed } from "@/lib/data-log";
 
 export const metadata: Metadata = { title: "Prep brief · Cuepoint" };
 
@@ -13,7 +14,7 @@ const CHIPS = 8;
 
 async function Loader({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
   const open = Number((await searchParams).brief);
-  const [dir, past] = await Promise.all([getDirectory(), listBriefs()]);
+  const [dir, past] = await timed("page /prep", () => Promise.all([getDirectory(), listBriefs()]));
   return <PrepView sectors={dir.sectors.slice(0, CHIPS)} past={past} openId={Number.isInteger(open) && open > 0 ? open : null} />;
 }
 

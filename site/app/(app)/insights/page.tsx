@@ -8,12 +8,13 @@ import { fmtDay } from "@/lib/guest-format";
 import { getInsights, getThumbnailInsights, getUsage } from "@/lib/insights";
 import { MIN_GROUP } from "@/lib/insights-types";
 import "./insights.css";
+import { timed } from "@/lib/data-log";
 
 export const metadata: Metadata = { title: "Insights · Cuepoint" };
 
 async function Archive() {
   await requireSession();
-  const data = await getInsights();
+  const data = await timed("page /insights archive", () => getInsights());
   if (!data.overview.episodes) {
     return <EmptyState icon={<IconPage />} title="No episodes to count yet" text="Insights appear once episodes are transcribed." actions={[{ label: "Browse clips", href: "/clips" }]} />;
   }
@@ -31,13 +32,13 @@ async function Archive() {
 /** Shown once pipeline/17_thumbnail_features.py has loaded public.thumbnail_features; until then, nothing. */
 async function ThumbnailSection() {
   await requireSession();
-  const t = await getThumbnailInsights();
+  const t = await timed("page /insights thumbnails", () => getThumbnailInsights());
   return t ? <ThumbnailsView t={t} /> : null;
 }
 
 async function UsageSection() {
   await requireSession();
-  return <UsageView u={await getUsage()} />;
+  return <UsageView u={await timed("page /insights usage", () => getUsage())} />;
 }
 
 export default function Page() {

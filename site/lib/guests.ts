@@ -1,6 +1,7 @@
 import "server-only";
 import { cacheLife } from "next/cache";
-import { ARCHIVE_RUN_ID, db } from "./db";
+import { timed } from "./data-log";
+import { ARCHIVE_RUN_ID, allRows as all, db } from "./db";
 import { fmtMonth, splitDisagreement, tagLabel, yearOf } from "./guest-format";
 import { guestSlug } from "./guest-slug";
 import type {
@@ -9,19 +10,6 @@ import type {
 
 /** Guests directory and profiles. Everything here is read from verified rows of the archive run
     (CLAUDE.md rules 2 and 9) and cached, so a visit does not query the database. */
-
-const PAGE = 1000;
-
-/** All rows of a query, a page at a time (Supabase returns at most 1,000 rows per request). */
-async function all<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
-  const rows: T[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await page(from, from + PAGE - 1);
-    if (error) throw new Error(error.message);
-    rows.push(...(data ?? []));
-    if ((data?.length ?? 0) < PAGE) return rows;
-  }
-}
 
 type GuestRow = {
   id: number; video_id: string; name: string; organisation: string | null; role_at_episode: string | null;
@@ -97,8 +85,12 @@ const isGuestsClip = (c: ClipRow) => c.guest_share == null || c.guest_share >= C
  * their most viewed episode.
  */
 export async function getDirectory(): Promise<Directory> {
-  "use cache";
+  "use cache: remote";
   cacheLife({ stale: 300, revalidate: 3600, expire: 86400 });
+  return timed("getDirectory", () => readDirectory());
+}
+
+async function readDirectory(): Promise<Directory> {
 
   const [rows, eps, clipRows, takes] = await Promise.all([
     all<CardRow>((a, b) => db().from("guests").select(CARD_COLUMNS).eq("run_id", ARCHIVE_RUN_ID).eq("verified", true).order("id").range(a, b)),
@@ -159,8 +151,12 @@ export async function getDirectory(): Promise<Directory> {
 
 /** The guest's page: header, episodes, everything they said (insights and clips) and similar guests. */
 export async function getProfile(slug: string): Promise<Profile | null> {
-  "use cache";
+  "use cache: remote";
   cacheLife({ stale: 300, revalidate: 3600, expire: 86400 });
+  return timed(`getProfile ${slug}`, () => readProfile(slug));
+}
+
+async function readProfile(slug: string): Promise<Profile | null> {
 
   const dir = await getDirectory();
   const card = dir.guests.find((g) => g.slug === slug);
@@ -245,8 +241,12 @@ export async function getProfile(slug: string): Promise<Profile | null> {
 
 /** The episodes of one guest, for limiting an Ask question to them (null when the slug is not a guest). */
 export async function getGuestScope(slug: string): Promise<{ name: string; videoIds: string[] } | null> {
-  "use cache";
+  "use cache: remote";
   cacheLife({ stale: 300, revalidate: 3600, expire: 86400 });
+  return timed(`getGuestScope ${slug}`, () => readGuestScope(slug));
+}
+
+async function readGuestScope(slug: string): Promise<{ name: string; videoIds: string[] } | null> {
   const card = (await getDirectory()).guests.find((g) => g.slug === slug);
   if (!card) return null;
   const rows = await all<{ id: number; video_id: string }>((a, b) =>
@@ -257,8 +257,12 @@ export async function getGuestScope(slug: string): Promise<{ name: string; video
 /** Which guest (clean slug) has which verified row in which episode. The Prep brief maps search hits (episodes) to
     guests with it, and a question's guest_id to the guest it was asked to. */
 export async function getGuestVideos(): Promise<{ id: number; videoId: string; slug: string }[]> {
-  "use cache";
+  "use cache: remote";
   cacheLife({ stale: 300, revalidate: 3600, expire: 86400 });
+  return timed("getGuestVideos", () => readGuestVideos());
+}
+
+async function readGuestVideos(): Promise<{ id: number; videoId: string; slug: string }[]> {
   const rows = await all<{ id: number; video_id: string; guest_key: string | null }>((a, b) =>
     db().from("guests").select("id,video_id,guest_key").eq("run_id", ARCHIVE_RUN_ID).eq("verified", true).order("id").range(a, b));
   return rows.filter((r) => r.guest_key).map((r) => ({ id: r.id, videoId: r.video_id, slug: guestSlug(r.guest_key!) }));
@@ -267,8 +271,12 @@ export async function getGuestVideos(): Promise<{ id: number; videoId: string; s
 /** One short text per guest (name, organisation, role, sectors, bio) for matching an upcoming guest against past
     guests by profile. From the newest verified rows, like the profile page. */
 export async function getGuestProfiles(): Promise<{ slug: string; text: string }[]> {
-  "use cache";
+  "use cache: remote";
   cacheLife({ stale: 300, revalidate: 3600, expire: 86400 });
+  return timed("getGuestProfiles", () => readGuestProfiles());
+}
+
+async function readGuestProfiles(): Promise<{ slug: string; text: string }[]> {
   const [dir, rows] = await Promise.all([
     getDirectory(),
     all<{ guest_key: string | null; role_at_episode: string | null; bio: string | null }>((a, b) =>

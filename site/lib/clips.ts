@@ -7,7 +7,8 @@ import { cosine } from "@/lib/ask/voyage";
 import {
   PAGE_SIZE, cleanOpening, effectiveSort, lengthOf, type ClipCard, type ClipLength, type ClipOptions, type ClipPage, type ClipParams,
 } from "@/lib/clip-types";
-import { ARCHIVE_RUN_ID, db } from "@/lib/db";
+import { timed } from "@/lib/data-log";
+import { ARCHIVE_RUN_ID, allRows as all, db } from "@/lib/db";
 import { fold } from "@/lib/guest-format";
 import { getDirectory, getGuestVideos } from "@/lib/guests";
 
@@ -18,28 +19,26 @@ import { getDirectory, getGuestVideos } from "@/lib/guests";
 type IndexClip = ClipCard & { topics: string[]; guestSlugs: string[]; year: string; len: ClipLength };
 type ClipIndex = { clips: IndexClip[]; options: ClipOptions };
 
-async function all<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
-  const rows: T[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await page(from, from + 999);
-    if (error) throw new Error(error.message);
-    rows.push(...(data ?? []));
-    if ((data?.length ?? 0) < 1000) return rows;
-  }
-}
-
+/** Kept in each server's memory ("use cache"), not in the shared remote cache: the index is about 1.7 MB, close to
+    Vercel's 2 MB limit per cached item. Rebuilding it on a miss is cheap, because the directory and guest videos it
+    starts from come from the shared cache and the clip and episode rows are read in parallel. */
 export async function getClipIndex(): Promise<ClipIndex> {
   "use cache";
   cacheLife({ stale: 300, revalidate: 3600, expire: 86400 });
-  const [dir, guestVideos, rows] = await Promise.all([
+  return timed("getClipIndex", () => readClipIndex());
+}
+
+async function readClipIndex(): Promise<ClipIndex> {
+  // Every episode (about 500 rows) is read alongside the clips rather than after them, saving a round trip; only the
+  // episodes that have clips are used.
+  const [dir, guestVideos, rows, eps] = await Promise.all([
     getDirectory(),
     getGuestVideos(),
     all<{ id: number; video_id: string; start_s: number; end_s: number; opening_line: string | null; topic: string | null; score: number | null }>((a, b) =>
       db().from("clips").select("id,video_id,start_s,end_s,opening_line,topic,score").eq("run_id", ARCHIVE_RUN_ID).eq("verified", true).order("id").range(a, b)),
+    all<{ video_id: string; title: string; published_at: string | null; view_count: number | null; caption_language: string | null }>((a, b) =>
+      db().from("episodes").select("video_id,title,published_at,view_count,caption_language").order("video_id").range(a, b)),
   ]);
-  const vids = [...new Set(rows.map((r) => r.video_id))];
-  const eps = await all<{ video_id: string; title: string; published_at: string | null; view_count: number | null; caption_language: string | null }>((a, b) =>
-    db().from("episodes").select("video_id,title,published_at,view_count,caption_language").in("video_id", vids).order("video_id").range(a, b));
   const epOf = new Map(eps.map((e) => [e.video_id, e]));
   const guestBySlug = new Map(dir.guests.map((g) => [g.slug, g]));
   const slugsOf = new Map<string, string[]>();

@@ -1,7 +1,8 @@
 import "server-only";
 import { cacheLife } from "next/cache";
 import { getClipIndex } from "@/lib/clips";
-import { db } from "@/lib/db";
+import { timed } from "@/lib/data-log";
+import { allRows as all, db } from "@/lib/db";
 import { fmtMonth, fmtViews, yearOf } from "@/lib/guest-format";
 import { getDirectory, getGuestVideos } from "@/lib/guests";
 import {
@@ -17,16 +18,6 @@ type EpisodeRow = {
   video_id: string; title: string; published_at: string | null; duration_seconds: number | null;
   view_count: number | null; like_count: number | null; caption_language: string | null;
 };
-
-async function all<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
-  const rows: T[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await page(from, from + 999);
-    if (error) throw new Error(error.message);
-    rows.push(...(data ?? []));
-    if ((data?.length ?? 0) < 1000) return rows;
-  }
-}
 
 /* ---------- statistics ---------- */
 
@@ -75,8 +66,12 @@ const bare = (g: Banded): Group => ({ key: g.key, label: g.label, n: g.n, median
 /* ---------- the archive ---------- */
 
 export async function getInsights(): Promise<Insights> {
-  "use cache";
+  "use cache: remote";
   cacheLife({ stale: 300, revalidate: 3600, expire: 86400 });
+  return timed("getInsights", () => readInsights());
+}
+
+async function readInsights(): Promise<Insights> {
   const [dir, guestVideos, { clips, options }, rows] = await Promise.all([
     getDirectory(),
     getGuestVideos(),
@@ -247,6 +242,10 @@ export const isWebRow = (r: { kind: string | null; question: string | null }) =>
 export async function getUsage(): Promise<Usage> {
   "use cache";
   cacheLife({ stale: 60, revalidate: 600, expire: 86400 });
+  return timed("getUsage", () => readUsage());
+}
+
+async function readUsage(): Promise<Usage> {
   const [log, saved, dir, guestVideos] = await Promise.all([
     all<{ kind: string | null; question: string | null; first_name: string | null; cited_chunk_ids: number[] | null; created_at: string }>((a, b) =>
       db().from("qa_log").select("kind,question,first_name,cited_chunk_ids,created_at").order("id").range(a, b)),
@@ -329,8 +328,12 @@ const times = (r: number) => `${r.toFixed(1)}x`;
 /** Thumbnail features against views, compared within the same year so older episodes' extra time to collect views
     does not count. Null when public.thumbnail_features is missing or empty. */
 export async function getThumbnailInsights(): Promise<ThumbInsights | null> {
-  "use cache";
+  "use cache: remote";
   cacheLife({ stale: 300, revalidate: 3600, expire: 86400 });
+  return timed("getThumbnailInsights", () => readThumbnailInsights());
+}
+
+async function readThumbnailInsights(): Promise<ThumbInsights | null> {
   let rows: { episode_id: string; features: ThumbFeatures }[];
   try {
     rows = await all((a, b) => db().from("thumbnail_features").select("episode_id,features").order("episode_id").range(a, b));

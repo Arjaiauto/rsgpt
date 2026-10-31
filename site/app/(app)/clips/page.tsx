@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/auth";
 import { parseClipParams } from "@/lib/clip-types";
 import { getClipIndex, queryClips } from "@/lib/clips";
 import "./clips.css";
+import { timed } from "@/lib/data-log";
 
 export const metadata: Metadata = { title: "Clips · Cuepoint" };
 
@@ -14,7 +15,7 @@ export const metadata: Metadata = { title: "Clips · Cuepoint" };
 async function Loader({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
   await requireSession();
   const params = parseClipParams(await searchParams);
-  const [{ options }, first] = await Promise.all([getClipIndex(), queryClips(params, 0)]);
+  const [{ options }, first] = await timed("page /clips", () => Promise.all([getClipIndex(), queryClips(params, 0)]));
   return <ClipsView params={params} initial={first} options={options} />;
 }
 

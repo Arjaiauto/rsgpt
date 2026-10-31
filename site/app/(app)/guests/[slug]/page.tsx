@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { GuestProfile } from "@/components/guests/GuestProfile";
 import { PageSkeleton } from "@/components/states";
 import { getProfile } from "@/lib/guests";
+import { timed } from "@/lib/data-log";
 
 type Props = PageProps<"/guests/[slug]">;
 
@@ -21,7 +22,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 async function Profile({ params }: { params: Props["params"] }) {
-  const profile = await profileOf(params);
+  const profile = await timed("page /guests/[slug]", () => profileOf(params));
   if (!profile) notFound();
   return <GuestProfile profile={profile} />;
 }
