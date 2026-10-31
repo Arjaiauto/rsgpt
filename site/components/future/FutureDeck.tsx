@@ -71,25 +71,28 @@ function FeatureSlide({ f, n }: { f: Feature; n: number }) {
           ))}
         </ol>
         {f.compare && (
-          <div className="fu-vs">
-            {f.compare.map((c) => (
-              <div className="fu-vsrow" key={c.label}>
-                <p className="fu-vslab">{c.label}</p>
-                <div className="fu-vspair">
-                  <div className="fu-vsdemo"><i>In this demo</i>{c.demo}</div>
-                  <div className="fu-vsteam"><i>With raw files</i>{c.team}</div>
-                </div>
-              </div>
-            ))}
-          </div>
+          <table className="fu-table">
+            <thead>
+              <tr><td /><th scope="col" className="fu-th-demo">In this demo</th><th scope="col" className="fu-th-team">With raw files</th></tr>
+            </thead>
+            <tbody>
+              {f.compare.map((c) => (
+                <tr key={c.label}>
+                  <th scope="row">{c.label}</th>
+                  <td>{c.demo}</td>
+                  <td>{c.team}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
         {f.illustration && (
           <>
             <div className="fu-cmp">
-              <div className="fu-bad"><i>Example: the reposted clip</i>{f.illustration.clip}</div>
-              <div className="fu-good"><i>Example: the full moment</i>{f.illustration.full}</div>
+              <div className="fu-bad"><i>Illustration: the reposted clip</i>{f.illustration.clip}</div>
+              <div className="fu-good"><i>Illustration: the full moment</i>{f.illustration.full}</div>
             </div>
-            <p className="fu-fine">An illustration, not a real quote.</p>
+            <p className="fu-fine">An invented example, not a real quote.</p>
             <div className="fu-note">
               This worry is in the archive: a guest raises it and the host agrees it is a valid fear.{" "}
               <a
@@ -112,9 +115,11 @@ function FeatureSlide({ f, n }: { f: Feature; n: number }) {
         {f.built && (
           <div className="fu-built">
             <p className="fu-builtk"><Svg><path d="M5 12l4 4L19 7" /></Svg>Already in this demo</p>
-            <p>{f.built.text}</p>
-            <div className="fu-links">
-              {f.built.links.map((l) => <Link key={l.label} href={l.href}>{l.label}</Link>)}
+            <div className="fu-builtbody">
+              <p>{f.built.text}</p>
+              <div className="fu-links">
+                {f.built.links.map((l) => <Link key={l.label} href={l.href}>{l.label}</Link>)}
+              </div>
             </div>
           </div>
         )}
@@ -181,13 +186,16 @@ export function FutureDeck() {
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
+      <div className="fu-stage">
       <div className="fu-prog" style={{ width: `${((cur + 1) / N) * 100}%` }} aria-hidden="true" />
       <div className="fu-track" style={{ transform: `translateX(${-cur * 100}%)` }}>
         {SLIDES.map((s, i) => (
           <section
             key={s.title}
             ref={(el) => { slideRefs.current[i] = el; }}
-            id={`slide-${i + 1}`}
+            // Not an id: an element called slide-4 would make the browser scroll to it when the URL says #slide-4,
+            // sliding the stage sideways and the page down. The deck places itself from the hash instead.
+            data-slide={i + 1}
             className={`fu-slide${i === cur ? " on" : ""}${s.kind === "feature" ? "" : ` fu-slide--${s.kind}`}`}
             role="group"
             aria-roledescription="slide"
@@ -235,6 +243,7 @@ export function FutureDeck() {
           </section>
         ))}
       </div>
+      </div>
 
       <div className="fu-ctrl">
         <button className="fu-nav" type="button" onClick={() => go(cur - 1)} disabled={cur === 0} aria-label="Previous slide">
@@ -249,8 +258,8 @@ export function FutureDeck() {
         <button className="fu-nav" type="button" onClick={() => go(cur + 1)} disabled={cur === N - 1} aria-label="Next slide">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>
         </button>
+        <p className="fu-num num" aria-hidden="true">{cur + 1} / {N}</p>
       </div>
-      <p className="fu-num num" aria-hidden="true">{cur + 1} / {N}</p>
       <p className="sr" role="status" aria-live="polite">Slide {cur + 1} of {N}: {SLIDES[cur].title}</p>
     </div>
   );

@@ -1,149 +1,162 @@
 /* Future updates (design/09-future-updates.html, FRONTEND_DESIGN.md page 9): a slide deck that fills the screen under the
-   top bar. Each slide is text on the left and a flow on the right; on phones they stack and the slide scrolls inside
-   itself. Every class is prefixed fu- so nothing here clashes with the shared names. */
+   top bar. The deck is two rows: the stage (the slides) and, below it and never over it, the controls row. A slide is text
+   on the left and a flow card on the right; its content is centred when it fits and, when it does not (short screens,
+   phones), the slide scrolls inside itself from its top. Sizes follow the screen's height as well as its width so every
+   slide fits a 1366 x 768 laptop. Every class is prefixed fu- so nothing here clashes with the shared names. */
 
 .app-main:has(.fu-page) { max-width: none; padding: 0; gap: 0; justify-content: flex-start; align-items: stretch; }
 .fu-page { width: 100%; }
 
 .fu-deck {
-  position: relative; overflow: hidden;
-  height: calc(100svh - 60px - env(safe-area-inset-top, 0px) - var(--foot-h)); min-height: 560px;
+  position: relative; display: flex; flex-direction: column; overflow: hidden;
+  height: calc(100svh - 60px - env(safe-area-inset-top, 0px)); min-height: 420px;
 }
+.has-mini .fu-deck { height: calc(100svh - 60px - 340px - env(safe-area-inset-top, 0px)); min-height: 300px; } /* clear of the floating mini player */
+.fu-stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; overflow: clip; } /* clip: nothing, not even a link to an anchor, can scroll the stage sideways */
 .fu-prog { position: absolute; left: 0; top: 0; z-index: 2; height: 2px; background: linear-gradient(90deg, var(--violet), var(--cite)); transition: width 0.6s var(--ease); }
 .fu-track { display: flex; height: 100%; transition: transform 0.6s var(--ease); will-change: transform; }
 .fu-still .fu-track, .fu-still .fu-prog { transition: none; }
 .fu-slide {
-  flex: 0 0 100%; height: 100%; overflow-y: auto; display: flex; align-items: center;
-  padding-block: clamp(24px, 5vh, 56px) 110px;
+  flex: 0 0 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column;
+  padding-block: clamp(10px, 2.4vh, 30px);
   padding-left: max(16px, var(--gutter), env(safe-area-inset-left, 0px));
   padding-right: max(16px, var(--gutter), env(safe-area-inset-right, 0px));
 }
 .fu-slide:focus-visible { outline-offset: -4px; }
-.fu-in { width: 100%; max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: clamp(24px, 5vw, 72px); align-items: center; }
+/* margin: auto centres the content in the slide when it fits, and lets it start at the top and scroll when it does not */
+.fu-in { width: 100%; max-width: 1180px; margin: auto; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: clamp(20px, 4vw, 64px); align-items: center; }
 .fu-slide--intro .fu-in, .fu-slide--close .fu-in { grid-template-columns: minmax(0, 1fr); }
 
 /* text side */
-.fu-k { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; font-size: 13px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--violet-text); }
+.fu-k { display: flex; align-items: center; gap: 12px; margin: 0 0 clamp(8px, 1.8vh, 16px); font-size: 12.5px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--violet-text); }
 .fu-k b {
-  display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: rgba(91, 7, 251, 0.18);
+  display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: rgba(91, 7, 251, 0.18);
   border: 1px solid rgba(165, 139, 255, 0.35); color: var(--ink); font-size: 14px; letter-spacing: 0;
 }
-.fu-t { margin: 0; font-size: clamp(32px, 4.6vw, 60px); font-weight: 500; line-height: 1.02; letter-spacing: -0.05em; text-wrap: balance; }
-.fu-big { margin: 0; font-size: clamp(44px, 7.4vw, 108px); font-weight: 500; line-height: 0.98; letter-spacing: -0.06em; }
+.fu-t { margin: 0; font-size: clamp(26px, min(3.8vw, 6.2vh), 54px); font-weight: 500; line-height: 1.04; letter-spacing: -0.05em; text-wrap: balance; }
+.fu-big { margin: 0; font-size: clamp(38px, min(7vw, 11.5vh), 104px); font-weight: 500; line-height: 0.98; letter-spacing: -0.06em; }
 .fu-big span { display: block; color: var(--ink-soft); }
-.fu-tag { margin: 14px 0 0; font-size: clamp(16px, 1.6vw, 19px); line-height: 1.5; color: var(--ink-soft); max-width: 40ch; }
-.fu-tag--wide { max-width: 56ch; }
-.fu-facts { margin: 26px 0 0; display: flex; flex-direction: column; gap: 14px; max-width: 48ch; }
-.fu-f { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 14px; font-size: 15px; line-height: 1.55; }
-.fu-f span { font-size: 12px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); padding-top: 3px; }
-.fu-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
-.fu-chip { display: inline-flex; align-items: center; height: 34px; padding: 0 14px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--raised); font-size: 13.5px; color: var(--ink-soft); }
+.fu-tag { margin: clamp(8px, 1.6vh, 14px) 0 0; font-size: clamp(14px, min(1.5vw, 2.5vh), 18px); line-height: 1.45; color: var(--ink-soft); max-width: 42ch; }
+.fu-tag--wide { max-width: 58ch; }
+.fu-facts { margin: clamp(12px, 2.4vh, 22px) 0 0; display: flex; flex-direction: column; gap: clamp(7px, 1.4vh, 12px); max-width: 50ch; }
+.fu-f { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 12px; font-size: clamp(13.5px, 2.1vh, 15px); line-height: 1.5; }
+.fu-f span { font-size: 11.5px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); padding-top: 3px; }
+.fu-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: clamp(12px, 2.2vh, 20px); }
+.fu-chip { display: inline-flex; align-items: center; height: 32px; padding: 0 13px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--raised); font-size: 13px; color: var(--ink-soft); }
 .fu-chip--time { color: var(--cite); border-color: rgba(79, 227, 193, 0.35); background: rgba(79, 227, 193, 0.08); }
 
-/* flow side */
+/* flow card */
 .fu-viz {
-  position: relative; min-width: 0; padding: clamp(18px, 3vw, 32px); border-radius: 26px; border: 1px solid var(--line);
+  position: relative; min-width: 0; padding: clamp(10px, 2vh, 20px) clamp(14px, 2vw, 24px); border-radius: 22px; border: 1px solid var(--line);
   background: radial-gradient(120% 90% at 20% 0%, rgba(91, 7, 251, 0.16), transparent 60%), var(--surface);
 }
-.fu-flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.fu-step { position: relative; display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 16px; align-items: center; padding: 14px 0; }
-.fu-step + .fu-step::before { content: ""; position: absolute; left: 23px; top: -14px; height: 28px; width: 2px; background: linear-gradient(var(--violet), var(--violet-text)); }
-.fu-ic { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: var(--raised); border: 1px solid var(--line-strong); color: var(--violet-text); }
-.fu-ic svg { width: 22px; height: 22px; }
+.fu-flow { --sp: clamp(4px, 0.9vh, 8px); list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.fu-step { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: center; padding: var(--sp) 0; }
+.fu-step + .fu-step::before { content: ""; position: absolute; left: 19px; top: calc(var(--sp) * -1); height: calc(var(--sp) * 2); width: 2px; background: linear-gradient(var(--violet), var(--violet-text)); }
+.fu-ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--raised); border: 1px solid var(--line-strong); color: var(--violet-text); }
+.fu-ic svg { width: 19px; height: 19px; }
 .fu-step:last-child .fu-ic { background: rgba(79, 227, 193, 0.1); border-color: rgba(79, 227, 193, 0.4); color: var(--cite); }
-.fu-step b { display: block; font-size: 15.5px; font-weight: 500; letter-spacing: -0.01em; }
-.fu-step small { display: block; margin-top: 2px; font-size: 13px; color: var(--ink-soft); line-height: 1.45; }
+.fu-step b { display: block; font-size: 14.5px; font-weight: 500; letter-spacing: -0.01em; line-height: 1.3; }
+.fu-step small { display: block; margin-top: 1px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.4; }
 .fu-slide.on .fu-step { animation: fu-step-in 0.5s var(--ease) both; }
 .fu-slide.on .fu-step:nth-child(2) { animation-delay: 0.12s; }
 .fu-slide.on .fu-step:nth-child(3) { animation-delay: 0.24s; }
 .fu-slide.on .fu-step:nth-child(4) { animation-delay: 0.36s; }
 @keyframes fu-step-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
 
-.fu-note { margin-top: 18px; padding: 14px 16px; border-radius: 16px; border: 1px dashed var(--line-strong); font-size: 13.5px; line-height: 1.7; color: var(--ink-soft); }
-.fu-fine { margin: 8px 0 0; font-size: 12.5px; color: var(--ink-faint); }
+.fu-note { margin-top: clamp(8px, 1.4vh, 12px); padding: 8px 12px; border-radius: 14px; border: 1px dashed var(--line-strong); font-size: 12.5px; line-height: 1.6; color: var(--ink-soft); }
+.fu-fine { margin: 5px 0 0; font-size: 12px; color: var(--ink-faint); }
 .fu-cite {
-  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: var(--radius-pill); border: 1px solid rgba(79, 227, 193, 0.3);
-  background: rgba(79, 227, 193, 0.09); color: var(--cite); font: 500 12.5px/1 var(--sans); vertical-align: 1px; white-space: nowrap; text-decoration: none;
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: var(--radius-pill); border: 1px solid rgba(79, 227, 193, 0.3);
+  background: rgba(79, 227, 193, 0.09); color: var(--cite); font: 500 12px/1 var(--sans); vertical-align: 1px; white-space: nowrap; text-decoration: none;
 }
 .fu-cite::before { content: ""; border-left: 6px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; }
 .fu-cite:hover { background: rgba(79, 227, 193, 0.18); }
 
-/* "this demo" against "with raw files" (slide 2), and the clip against the full moment (slide 4) */
-.fu-vs { display: flex; flex-direction: column; gap: 14px; margin-top: 18px; }
-.fu-vslab { margin: 0 0 6px; font-size: 12px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
-.fu-vspair, .fu-cmp { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
-.fu-cmp { margin-top: 14px; }
-.fu-vspair > div, .fu-cmp > div { padding: 12px; border-radius: 12px; background: var(--raised); font-size: 13px; line-height: 1.45; }
-.fu-vspair i, .fu-cmp i { display: block; font-style: normal; font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 4px; }
-.fu-vsdemo i, .fu-bad i { color: var(--error); }
-.fu-vsteam i, .fu-good i { color: var(--cite); }
-.fu-vsdemo { opacity: 0.85; }
+/* "this demo" against "with raw files" (slide 2): a table, and the clip against the full moment (slide 4) */
+.fu-table { width: calc(100% + 12px); margin: clamp(6px, 1.2vh, 10px) -6px 0; table-layout: fixed; border-collapse: separate; border-spacing: 6px; font-size: 12.5px; line-height: 1.4; }
+.fu-table th, .fu-table td { padding: 7px 9px; border-radius: 10px; text-align: left; font-weight: 400; vertical-align: top; }
+.fu-table tbody td { background: var(--raised); }
+.fu-table thead td { width: 62px; padding: 0; } /* a fixed-layout table takes its column widths from its first row */
+.fu-table thead th { padding: 0 9px 1px; font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; }
+.fu-table tbody th { width: 62px; padding-left: 2px; font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); vertical-align: middle; }
+.fu-th-demo { color: var(--error); }
+.fu-th-team { color: var(--cite); }
+.fu-table tbody td:nth-child(2) { opacity: 0.85; }
+.fu-cmp { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin-top: clamp(8px, 1.4vh, 12px); }
+.fu-cmp > div { padding: 8px 10px; border-radius: 10px; background: var(--raised); font-size: 12.5px; line-height: 1.4; }
+.fu-cmp i { display: block; font-style: normal; font-size: 10.5px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 2px; }
+.fu-bad i { color: var(--error); }
+.fu-good i { color: var(--cite); }
 
 /* what already works */
-.fu-built, .fu-live { margin-top: 18px; padding: 14px 16px; border-radius: 16px; border: 1px solid rgba(79, 227, 193, 0.3); background: rgba(79, 227, 193, 0.06); }
-.fu-live { margin-top: 28px; max-width: 62ch; }
+.fu-built, .fu-live { margin-top: clamp(8px, 1.4vh, 12px); padding: 9px 12px; border-radius: 14px; border: 1px solid rgba(79, 227, 193, 0.3); background: rgba(79, 227, 193, 0.06); }
+.fu-live { margin-top: clamp(14px, 2.6vh, 26px); max-width: 62ch; }
 .fu-built p, .fu-live p { margin: 0; }
-.fu-built > p:not(.fu-builtk) { font-size: 13.5px; line-height: 1.55; color: var(--ink-soft); }
-.fu-builtk, .fu-livek { display: flex; align-items: center; gap: 8px; margin-bottom: 8px !important; font-size: 12px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--cite); }
-.fu-builtk svg, .fu-livek svg { width: 14px; height: 14px; }
-.fu-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.fu-live .fu-links { margin-top: 0; }
+.fu-builtbody { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.fu-builtbody p { flex: 1 1 220px; font-size: 12.5px; line-height: 1.5; color: var(--ink-soft); }
+.fu-builtk, .fu-livek { display: flex; align-items: center; gap: 8px; margin-bottom: 4px !important; font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--cite); }
+.fu-builtk svg, .fu-livek svg { width: 13px; height: 13px; }
+.fu-links { display: flex; flex-wrap: wrap; gap: 6px; }
+.fu-livek + .fu-links { margin-top: 6px; }
 .fu-links a {
-  display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--raised);
-  color: var(--ink); font-size: 13px; text-decoration: none; transition: border-color 0.2s;
+  display: inline-flex; align-items: center; height: 28px; padding: 0 12px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--raised);
+  color: var(--ink); font-size: 12.5px; text-decoration: none; white-space: nowrap; transition: border-color 0.2s;
 }
 .fu-links a:hover { border-color: var(--line-strong); }
 
 /* intro tiles and the closing offer */
-.fu-sub { margin: 30px 0 10px; font-size: 12px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); }
-.fu-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.fu-sub { margin: clamp(12px, 2.6vh, 24px) 0 8px; font-size: 11.5px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); }
+.fu-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .fu-tile {
-  padding: 14px; border-radius: 16px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 400 14px/1.35 var(--sans);
+  padding: clamp(8px, 1.6vh, 13px) 13px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 400 clamp(12.5px, 2vh, 14px)/1.3 var(--sans);
   cursor: pointer; text-align: left; transition: border-color 0.2s, transform 0.25s var(--ease);
 }
 .fu-tile:hover { border-color: var(--line-strong); transform: translateY(-2px); }
-.fu-tile b { display: block; font-size: 12px; color: var(--violet-text); font-weight: 500; margin-bottom: 6px; }
-.fu-offer { margin-top: 28px; display: flex; flex-direction: column; gap: 12px; max-width: 62ch; font-size: 17px; line-height: 1.6; color: var(--ink-soft); }
+.fu-tile b { display: block; font-size: 11.5px; color: var(--violet-text); font-weight: 500; margin-bottom: 4px; }
+.fu-offer { margin-top: clamp(14px, 3vh, 26px); display: flex; flex-direction: column; gap: clamp(8px, 1.6vh, 12px); max-width: 62ch; font-size: clamp(15px, 2.4vh, 17px); line-height: 1.55; color: var(--ink-soft); }
 .fu-offer p { margin: 0; }
-.fu-offer .fu-fine { margin-top: 8px; font-size: 13px; }
+.fu-offer .fu-fine { margin-top: 6px; font-size: 13px; }
 
-/* controls */
-.fu-ctrl {
-  position: absolute; left: 0; right: 0; bottom: 22px; z-index: 3; display: flex; align-items: center; justify-content: center; gap: 16px; pointer-events: none;
-}
-.fu-ctrl > * { pointer-events: auto; }
+/* controls: their own row under the stage, never over a slide */
+.fu-ctrl { position: relative; flex: none; display: flex; align-items: center; justify-content: center; gap: 14px; padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px)); }
 .fu-nav {
-  width: 46px; height: 46px; border-radius: 50%; border: 1px solid var(--line-strong); background: rgba(29, 30, 40, 0.9); color: var(--ink);
+  width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line-strong); background: rgba(29, 30, 40, 0.9); color: var(--ink);
   display: grid; place-items: center; cursor: pointer; padding: 0; transition: transform 0.2s, opacity 0.2s;
 }
 .fu-nav:hover:not(:disabled) { transform: scale(1.06); }
 .fu-nav:disabled { opacity: 0.3; cursor: default; }
-.fu-nav svg { width: 18px; height: 18px; }
+.fu-nav svg { width: 17px; height: 17px; }
 .fu-dots { display: flex; gap: 6px; padding: 8px 12px; border-radius: var(--radius-pill); background: rgba(29, 30, 40, 0.85); border: 1px solid var(--line); }
 .fu-dot { position: relative; width: 8px; height: 8px; border-radius: var(--radius-pill); border: 0; padding: 0; background: rgba(255, 255, 255, 0.22); cursor: pointer; transition: width 0.3s var(--ease), background-color 0.3s; }
 .fu-dot::after { content: ""; position: absolute; inset: -8px -3px; } /* a bigger target than the dot */
 .fu-dot[aria-current="true"] { width: 24px; background: var(--violet-text); }
-.fu-num { position: absolute; right: max(16px, var(--gutter), env(safe-area-inset-right, 0px)); bottom: 34px; z-index: 3; margin: 0; font-size: 13px; color: var(--ink-faint); }
+.fu-num { position: absolute; right: max(16px, var(--gutter), env(safe-area-inset-right, 0px)); top: 50%; translate: 0 -50%; margin: 0; font-size: 13px; color: var(--ink-faint); }
 .fu-count { display: none; margin: 0; font-size: 14px; color: var(--ink-soft); min-width: 64px; text-align: center; }
 .fu-deck :focus-visible { outline: 2px solid var(--violet-text); outline-offset: 3px; }
 
-/* the floating mini player sits at the bottom right: keep the counter and controls clear of it */
-.has-mini .fu-num { display: none; }
-
 @media (max-width: 1100px) { .fu-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 900px) {
-  .fu-in { grid-template-columns: minmax(0, 1fr); gap: 24px; }
-  .fu-slide { align-items: flex-start; }
+  .fu-in { grid-template-columns: minmax(0, 1fr); gap: 18px; }
   .fu-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 820px) { .fu-num { display: none; } .has-mini .fu-ctrl { bottom: 340px; } }
+@media (max-width: 820px) { .fu-num { display: none; } }
 @media (max-width: 520px) {
-  .fu-ctrl { bottom: 0; padding-block: 12px calc(12px + env(safe-area-inset-bottom, 0px)); background: linear-gradient(180deg, rgba(16, 17, 23, 0), var(--paper) 40%); }
   .fu-dots { display: none; }
   .fu-count { display: block; }
+  .fu-nav { width: 44px; height: 44px; }
   .fu-f { grid-template-columns: minmax(0, 1fr); gap: 2px; }
-  .fu-vspair, .fu-cmp { grid-template-columns: minmax(0, 1fr); }
-  .has-mini .fu-ctrl { bottom: 340px; }
+  .fu-cmp { grid-template-columns: minmax(0, 1fr); }
+  /* the table becomes a list: each row's name, then the two cells one under the other */
+  .fu-table, .fu-table thead, .fu-table tbody, .fu-table tr, .fu-table th, .fu-table td { display: block; width: auto; }
+  .fu-table { margin: 8px 0 0; }
+  .fu-table thead { display: none; }
+  .fu-table tbody tr { margin-bottom: 8px; }
+  .fu-table tbody th { padding: 0 0 4px; width: auto; }
+  .fu-table tbody td { margin-bottom: 4px; }
+  .fu-table tbody td::before { display: block; margin-bottom: 2px; font-size: 10.5px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; }
+  .fu-table tbody td:nth-child(2)::before { content: "In this demo"; color: var(--error); }
+  .fu-table tbody td:nth-child(3)::before { content: "With raw files"; color: var(--cite); }
 }
 @media (prefers-reduced-motion: reduce) {
   .fu-track, .fu-prog { transition: none; }
