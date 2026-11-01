@@ -27,6 +27,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${inter.variable} ${deva.variable}`} data-scroll-behavior="smooth">
       <body>
+        <a className="skip" href="#main">Skip to content</a>
         {/* The Cuepoint mark, drawn once and reused by <use href="#cp-mark"> */}
         <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden="true" focusable="false">
           <defs>

@@ -12,7 +12,7 @@
   flex: 1; min-width: 0; height: 46px; padding: 0 44px 0 18px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--raised);
   color: var(--ink); font: 400 15px var(--sans); outline: none;
 }
-.cl-search input:focus-visible { border-color: var(--violet-text); }
+.cl-search input:focus-visible { border-color: var(--violet-text); outline: 2px solid var(--violet-text); outline-offset: 2px; }
 .cl-search .pill { height: 46px; }
 .cl-clear { position: absolute; right: 110px; width: 30px; height: 30px; }
 

@@ -136,17 +136,17 @@ function Composer({ docked, busy, onAsk, autoFocus, lineMode, onLineMode }: {
 }
 
 /** The names of the stages, each ticked when the server finishes it. */
-function stagesOf(turn: Turn): string[] {
+function stagesOf(turn: Turn, episodes: number): string[] {
   return [
-    turn.scope ? `Searching ${turn.scope}’s episodes` : "Searching 500 episodes",
+    turn.scope ? `Searching ${turn.scope}’s episodes` : `Searching ${episodes} episodes`,
     turn.moments != null ? `Found ${turn.moments} moments in ${turn.episodes} episodes` : "Finding the moments",
     "Writing the answer",
     "Checking citations",
   ];
 }
 
-function Thinking({ turn, onCancel }: { turn: Turn; onCancel: () => void }) {
-  const stages = stagesOf(turn);
+function Thinking({ turn, episodes, onCancel }: { turn: Turn; episodes: number; onCancel: () => void }) {
+  const stages = stagesOf(turn, episodes);
   const cls = (n: number) => (turn.step > n ? "done" : turn.step === n ? "on" : "");
   return (
     <div className="think think--run">
@@ -161,7 +161,7 @@ function Thinking({ turn, onCancel }: { turn: Turn; onCancel: () => void }) {
   );
 }
 
-export function AskView() {
+export function AskView({ episodes }: { episodes: number }) {
   const router = useRouter();
   const params = useSearchParams();
   const [turns, setTurns] = useState<Turn[]>(load);
@@ -308,7 +308,7 @@ export function AskView() {
         {scope ? (
           <h1 className="ask-h rise">Ask about {scope.name}<span>using only their episodes</span></h1>
         ) : (
-          <h1 className="ask-h rise">Ask anything from 500 episodes<span>in English, Hindi or Hinglish</span></h1>
+          <h1 className="ask-h rise">Ask anything from {episodes} episodes<span>in English, Hindi or Hinglish</span></h1>
         )}
         <div className="rise d1">
           {scope && <ScopeBar scope={scope} onClear={() => setScope(null)} disabled={busy} />}
@@ -340,7 +340,7 @@ export function AskView() {
               </div>
             )}
             {t.kind === "line" && t.status === "done" && t.line && <LineAnswer turnId={t.id} match={t.line} busy={busy} onAsk={ask} />}
-            {t.kind !== "line" && (t.status === "thinking" || (t.status === "answering" && !t.blocks.length)) && !t.ref && <Thinking turn={t} onCancel={() => cancel(t.id)} />}
+            {t.kind !== "line" && (t.status === "thinking" || (t.status === "answering" && !t.blocks.length)) && !t.ref && <Thinking turn={t} episodes={episodes} onCancel={() => cancel(t.id)} />}
             {t.status === "error" && (
               <div className="nf">
                 <b>Couldn&apos;t reach the archive.</b>
@@ -357,9 +357,9 @@ export function AskView() {
                 </div>
               </div>
             )}
-            {t.kind !== "line" && (t.status === "thinking" || t.status === "answering" || t.status === "done") && (t.blocks.length > 0 || t.ref) && <Answer turn={t} busy={busy} onAsk={ask} onCancel={() => cancel(t.id)} onToggle={(k) => patch(t.id, (x) => ({ ...x, open: x.open === k ? undefined : k }))} />}
+            {t.kind !== "line" && (t.status === "thinking" || t.status === "answering" || t.status === "done") && (t.blocks.length > 0 || t.ref) && <Answer turn={t} episodes={episodes} busy={busy} onAsk={ask} onCancel={() => cancel(t.id)} onToggle={(k) => patch(t.id, (x) => ({ ...x, open: x.open === k ? undefined : k }))} />}
             {t.kind !== "line" && (t.status === "thinking" || t.status === "answering") && t.blocks.length > 0 && (
-              <RunMeta etaMs={t.eta ?? null} startedAt={t.t0} stage={stagesOf(t)[t.step - 1]} label onCancel={() => cancel(t.id)} />
+              <RunMeta etaMs={t.eta ?? null} startedAt={t.t0} stage={stagesOf(t, episodes)[t.step - 1]} label onCancel={() => cancel(t.id)} />
             )}
           </article>
         ))}
@@ -373,7 +373,7 @@ export function AskView() {
   );
 }
 
-function Answer({ turn: t, busy, onAsk, onToggle, onCancel }: { turn: Turn; busy: boolean; onAsk: (q: string) => void; onToggle: (key: string) => void; onCancel: () => void }) {
+function Answer({ turn: t, episodes, busy, onAsk, onToggle, onCancel }: { turn: Turn; episodes: number; busy: boolean; onAsk: (q: string) => void; onToggle: (key: string) => void; onCancel: () => void }) {
   const lang = t.language === "hi" ? "hi" : undefined;
 
   // Paragraphs from the streamed text blocks: a blank line starts a new paragraph; chips follow their block.
@@ -412,7 +412,7 @@ function Answer({ turn: t, busy, onAsk, onToggle, onCancel }: { turn: Turn; busy
       {t.ref && (
         <ClipPlayer clip={clipOf(`ask:${t.id}:ref`, t.ref, 45)} label="Best matching moment" report={false} />
       )}
-      {!t.blocks.length && <Thinking turn={t} onCancel={onCancel} />}
+      {!t.blocks.length && <Thinking turn={t} episodes={episodes} onCancel={onCancel} />}
       <div className="ans" lang={lang}>
         {visible.map((para, pi) => {
           const openHere = para.find((x) => x.last && t.open?.startsWith(`${x.block}:`));

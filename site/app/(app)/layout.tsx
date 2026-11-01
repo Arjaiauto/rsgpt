@@ -30,7 +30,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </Suspense>
         <LogoutButton />
       </header>
-      <main className="app-main">{children}</main>
+      <main id="main" className="app-main" tabIndex={-1}>{children}</main>
     </div>
   );
 }

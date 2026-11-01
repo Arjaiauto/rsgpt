@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "Page not found" };
 /** Any address that isn't a page (and an unknown guest): the real 404 status is sent by Next.js. */
 export default function NotFound() {
   return (
-    <section className="nf-page" aria-labelledby="nf-h">
+    <main id="main" className="nf-page" aria-labelledby="nf-h" tabIndex={-1}>
       <header className="nf-nav"><Logo href="/" /></header>
       <div className="nf-box">
         <p className="nf-code">404</p>
@@ -18,6 +18,6 @@ export default function NotFound() {
           <Link className="pill pill--ghost" href="/guests">Browse guests</Link>
         </div>
       </div>
-    </section>
+    </main>
   );
 }

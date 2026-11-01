@@ -57,9 +57,9 @@ export default async function Home() {
   // Counted from verified rows in Supabase, cached for 24 hours (lib/site-stats.ts).
   const [stats, explorer] = await Promise.all([getSiteStats(), getHomeExplorer()]);
   return (
-    <div className="home">
+    <main id="main" className="home" tabIndex={-1}>
       <Hero />
-      <main className="story">
+      <div className="story">
         <section id="built" aria-labelledby="built-h">
           <div className="wrap">
             <p className="eyebrow">How it was built</p>
@@ -156,8 +156,8 @@ export default async function Home() {
             <LoginButton className="pill pill--primary" />
           </div>
         </section>
-      </main>
+      </div>
       <StoryEffects />
-    </div>
+    </main>
   );
 }
