@@ -5,7 +5,7 @@ import { PageSkeleton } from "@/components/states";
 import { getDirectory } from "@/lib/guests";
 import { timed } from "@/lib/data-log";
 
-export const metadata: Metadata = { title: "Guests · Cuepoint" };
+export const metadata: Metadata = { title: "Guests" };
 
 /** The list comes from a cached read of the verified guests, so a visit does not query the database. */
 async function Directory() {

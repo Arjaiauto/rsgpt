@@ -4,7 +4,7 @@ import { Logo } from "@/components/Logo";
 import { LoginForm } from "./LoginForm";
 import "./login.css";
 
-export const metadata: Metadata = { title: "Log in · Cuepoint" };
+export const metadata: Metadata = { title: "Log in" };
 
 export default function LoginPage() {
   return (

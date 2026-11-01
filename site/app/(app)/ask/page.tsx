@@ -4,7 +4,7 @@ import { AskClient } from "@/components/ask/AskClient";
 import { PageSkeleton } from "@/components/states";
 import "./ask.css";
 
-export const metadata: Metadata = { title: "Ask · Cuepoint" };
+export const metadata: Metadata = { title: "Ask" };
 
 export default function AskPage() {
   return (

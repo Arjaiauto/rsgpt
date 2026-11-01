@@ -7,7 +7,7 @@ import { getDirectory } from "@/lib/guests";
 import "./prep.css";
 import { timed } from "@/lib/data-log";
 
-export const metadata: Metadata = { title: "Prep brief · Cuepoint" };
+export const metadata: Metadata = { title: "Prep brief" };
 
 /** Sector chips on the form: the sectors most guests have (all from verified guest rows). */
 const CHIPS = 8;

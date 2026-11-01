@@ -7,7 +7,7 @@ import { queryClips } from "@/lib/clips";
 import "./reels.css";
 import { timed } from "@/lib/data-log";
 
-export const metadata: Metadata = { title: "Reels · Cuepoint" };
+export const metadata: Metadata = { title: "Reels" };
 
 /** /clips/reels takes the same query string as /clips (filters, search, sort), plus start=<clip id> to open at one clip
     (a guest group's "Watch as reels"). The first page of clips is built here; the feed loads the rest as it nears the end. */

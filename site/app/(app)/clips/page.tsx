@@ -8,7 +8,7 @@ import { getClipIndex, queryClips } from "@/lib/clips";
 import "./clips.css";
 import { timed } from "@/lib/data-log";
 
-export const metadata: Metadata = { title: "Clips · Cuepoint" };
+export const metadata: Metadata = { title: "Clips" };
 
 /** Filters, sort and search live in the URL (/clips?q=&topic=&guest=&len=&year=&lang=&sort=), so a view can be shared
     or reloaded; the first page of results is built here, the rest with "Load more". */

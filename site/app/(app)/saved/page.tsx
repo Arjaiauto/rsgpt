@@ -6,7 +6,7 @@ import { PageSkeleton } from "@/components/states";
 import "./saved.css";
 import { timed } from "@/lib/data-log";
 
-export const metadata: Metadata = { title: "Saved · Cuepoint" };
+export const metadata: Metadata = { title: "Saved" };
 
 async function Loader() {
   return <SavedView initial={await timed("page /saved", () => listSaved())} />;

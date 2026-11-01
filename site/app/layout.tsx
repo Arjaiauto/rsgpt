@@ -8,9 +8,14 @@ import "./components.css";
 const inter = Inter({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-inter" });
 const deva = Noto_Sans_Devanagari({ subsets: ["devanagari"], weight: ["400", "500"], variable: "--font-deva" });
 
+const DESCRIPTION = "The searchable brain of the Figuring Out podcast: ask questions, get cited answers with timestamps, clips and guest prep briefs.";
+
 export const metadata: Metadata = {
-  title: "Cuepoint",
-  description: "Cuepoint: 500 episodes. One search. How it was built and checked.",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://cuepoint-two.vercel.app"),
+  title: { default: "Cuepoint", template: "%s · Cuepoint" },
+  description: DESCRIPTION,
+  openGraph: { type: "website", siteName: "Cuepoint", locale: "en_IN", url: "/", title: "Cuepoint", description: DESCRIPTION },
+  twitter: { card: "summary_large_image", title: "Cuepoint", description: DESCRIPTION },
   robots: { index: false, follow: false, nocache: true, googleBot: { index: false, follow: false } },
 };
 

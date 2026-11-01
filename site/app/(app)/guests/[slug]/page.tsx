@@ -18,7 +18,7 @@ const profileOf = async (params: Props["params"]) => {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const profile = await profileOf(params);
-  return { title: profile ? `${profile.name} · Cuepoint` : "Guest · Cuepoint" };
+  return { title: profile ? profile.name : "Guest" };
 }
 
 async function Profile({ params }: { params: Props["params"] }) {

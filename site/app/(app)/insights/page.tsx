@@ -10,7 +10,7 @@ import { MIN_GROUP } from "@/lib/insights-types";
 import "./insights.css";
 import { timed } from "@/lib/data-log";
 
-export const metadata: Metadata = { title: "Insights · Cuepoint" };
+export const metadata: Metadata = { title: "Insights" };
 
 async function Archive() {
   await requireSession();
