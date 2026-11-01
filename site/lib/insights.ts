@@ -50,6 +50,14 @@ function compare(a: { phrase: string; median: number }, b: { phrase: string; med
   return `${A} and ${b.phrase} get about the same median ${unit} (${both}).`;
 }
 
+/** The episode-length groups of the Insights page, also the groups of the home page's chart (lib/home-explorer.ts). */
+export const LENGTH_BANDS: { key: string; label: string; phrase: string; test: (e: { minutes: number }) => boolean }[] = [
+  { key: "u60", label: "Under 1 hour", phrase: "episodes under 1 hour", test: (e) => e.minutes < 60 },
+  { key: "60-90", label: "1 to 1.5 hours", phrase: "episodes of 1 to 1.5 hours", test: (e) => e.minutes >= 60 && e.minutes < 90 },
+  { key: "90-120", label: "1.5 to 2 hours", phrase: "episodes of 1.5 to 2 hours", test: (e) => e.minutes >= 90 && e.minutes < 120 },
+  { key: "o120", label: "Over 2 hours", phrase: "episodes over 2 hours", test: (e) => e.minutes >= 120 },
+];
+
 type Banded = Group & { phrase: string };
 /** Groups of episodes with their views spread; groups under MIN_GROUP are returned as hidden labels. */
 function groups<E>(eps: E[], defs: { key: string; label: string; phrase: string; test: (e: E) => boolean }[], value: (e: E) => number) {
@@ -178,12 +186,7 @@ async function readInsights(): Promise<Insights> {
     likesTakeaway = `Episodes from ${span(recent)} get a median of ${r1.toFixed(1)} likes per 1,000 views, against ${r0.toFixed(1)} in the 12 months before.`;
   }
 
-  const len = groups(eps, [
-    { key: "u60", label: "Under 1 hour", phrase: "episodes under 1 hour", test: (e) => e.minutes < 60 },
-    { key: "60-90", label: "1 to 1.5 hours", phrase: "episodes of 1 to 1.5 hours", test: (e) => e.minutes >= 60 && e.minutes < 90 },
-    { key: "90-120", label: "1.5 to 2 hours", phrase: "episodes of 1.5 to 2 hours", test: (e) => e.minutes >= 90 && e.minutes < 120 },
-    { key: "o120", label: "Over 2 hours", phrase: "episodes over 2 hours", test: (e) => e.minutes >= 120 },
-  ], (e) => e.views);
+  const len = groups(eps, LENGTH_BANDS, (e) => e.views);
   const lengthTakeaway = len.shown.length >= 2 ? compare(len.shown.at(-1)!, len.shown[0]) : "";
   const lang = groups(eps, [
     { key: "hi", label: "Hindi", phrase: "Hindi episodes", test: (e) => e.lang === "hi" },

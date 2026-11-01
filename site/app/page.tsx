@@ -2,6 +2,7 @@ import { Hero } from "@/components/home/Hero";
 import { Explorer } from "@/components/home/Explorer";
 import { StoryEffects } from "@/components/home/StoryEffects";
 import { LoginButton } from "@/components/home/LoginButton";
+import { getHomeExplorer } from "@/lib/home-explorer";
 import { getSiteStats, type SiteStats } from "@/lib/site-stats";
 import "./home.css";
 
@@ -54,7 +55,7 @@ function tiles(s: SiteStats) {
 
 export default async function Home() {
   // Counted from verified rows in Supabase, cached for 24 hours (lib/site-stats.ts).
-  const stats = await getSiteStats();
+  const [stats, explorer] = await Promise.all([getSiteStats(), getHomeExplorer()]);
   return (
     <div className="home">
       <Hero />
@@ -130,7 +131,12 @@ export default async function Home() {
               news and the algorithm move views too.
             </p>
             <div className="ins" id="ins">
-              <Explorer />
+              {explorer ? <Explorer data={explorer} /> : (
+                <div className="card explorer">
+                  <div className="ex__head"><h3>Explore the patterns</h3></div>
+                  <p className="sub">Data unavailable right now. Try again in a few minutes.</p>
+                </div>
+              )}
               <div className="card answer">
                 <h3>One question, answered<span className="tag">SAMPLE ANSWER</span></h3>
                 <div className="q"><i aria-hidden="true">Q</i>What have founders said about raising their first round?</div>
