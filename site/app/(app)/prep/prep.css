@@ -216,3 +216,13 @@
   .prep-already a { color: #15151c; }
   .prep-print-only { display: block; margin: 22px 0 0; font-size: 11px; color: #5b5b68; }
 }
+
+/* Progress: stages, time left, Cancel (components/progress/RunMeta.tsx) */
+.prep-build { flex-direction: column; align-items: flex-start; gap: 14px; }
+.prep-build-row { display: flex; align-items: center; gap: 16px; }
+.prep-addweb .rm { flex-basis: 100%; }
+.prep-web-steps { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 14px; flex-basis: 100%; }
+.prep-web-steps span { color: var(--ink-faint); }
+.prep-web-steps span.on { color: var(--ink); }
+.prep-web-steps span.done { color: var(--ink-soft); }
+.prep-web-steps span.done::after { content: "  \2713"; color: var(--cite); }

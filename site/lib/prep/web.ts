@@ -64,8 +64,11 @@ export async function webResearch(
   input: { name: string; description: string; lastEpisode: string | null },
   /** For the test script: every page address the searches returned, before any filtering. */
   onResults?: (urls: string[]) => void,
+  /** For the progress shown to the reader: 1 searching, 2 writing the lines, 3 checking them against their pages. */
+  onStage?: (stage: 1 | 2 | 3) => void,
 ): Promise<BriefWeb> {
   const { name, description, lastEpisode } = input;
+  onStage?.(1);
   const checkedAt = new Date().toISOString();
   const empty: BriefWeb = { checkedAt, matched: null, lastEpisode, background: [], news: [], appearances: [], since: [] };
   const yearAgo = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10);
@@ -107,7 +110,9 @@ export async function webResearch(
   if (sources.length < WEB.minSources) return empty;
 
   if (DEBUG) console.log(sources.map((s) => `[${s.n}] ${[...s.kinds].join(",")} ${s.date ?? "-"} ${s.url} | ${s.title}`).join("\n"));
+  onStage?.(2);
   const reply = await groq(sources, name, description);
+  onStage?.(3);
   if (DEBUG) console.log(JSON.stringify(reply, null, 1));
   const matched = typeof reply.matched === "string" ? reply.matched.replace(/\s+/g, " ").trim().slice(0, 160) : "";
   // The match has to be the person asked about: the model said so, and the matched name carries every word of theirs.

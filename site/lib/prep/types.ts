@@ -112,7 +112,9 @@ export type PrepInput = { name: string; description: string; sector: string | nu
 
 /** Events on the NDJSON stream from POST /api/prep, one JSON object per line. */
 export type PrepEvent =
-  | { type: "step"; step: 1 | 2 | 3 }
+  | { type: "step"; step: 1 | 2 | 3 | 4 | 5 }
+  /** Median duration (ms) of the last 20 briefs, for the time-left estimate. Sent once, if known. */
+  | { type: "eta"; ms: number }
   | { type: "brief"; brief: Brief }
   | { type: "notfound"; message: string }
   | { type: "error"; message: string }
@@ -122,3 +124,11 @@ export type PrepEvent =
 export type PastBrief = { id: number; title: string; description: string; createdAt: string };
 
 export const PREP_LIMITS = { name: 80, description: 200 } as const;
+
+/** Events on the NDJSON stream from POST /api/prep/web. Failures before the stream starts (not logged in, daily limit)
+    are plain JSON with a status code. */
+export type WebEvent =
+  | { type: "step"; step: 1 | 2 | 3 }
+  | { type: "eta"; ms: number }
+  | { type: "web"; web: BriefWeb }
+  | { type: "error"; error: "unavailable" };

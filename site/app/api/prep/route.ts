@@ -1,6 +1,7 @@
 import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { logQuestion } from "@/lib/ask/answer";
+import { etaMs } from "@/lib/eta";
 import { Timings } from "@/lib/ask/timing";
 import { getDirectory } from "@/lib/guests";
 import { buildBrief } from "@/lib/prep/build";
@@ -39,9 +40,16 @@ export async function POST(request: Request) {
 
   const t = new Timings();
   const encoder = new TextEncoder();
+  /** The reader pressed Cancel (or left): nothing more is sent. */
+  let aborted = request.signal.aborted;
+  request.signal.addEventListener("abort", () => { aborted = true; });
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const emit = (e: PrepEvent) => controller.enqueue(encoder.encode(JSON.stringify(e) + "\n"));
+      const emit = (e: PrepEvent) => {
+        if (aborted) return;
+        try { controller.enqueue(encoder.encode(JSON.stringify(e) + "\n")); } catch { aborted = true; }
+      };
+      void etaMs("prep").then((ms) => { if (ms != null) emit({ type: "eta", ms }); });
       const question = sector ? `Sector: ${sector}${description ? ` - ${description}` : ""}` : `${name}${description ? ` - ${description}` : ""}`;
       const log = (answer: string, citedChunkIds: number[], found: boolean) => {
         t.mark("done");
@@ -58,11 +66,12 @@ export async function POST(request: Request) {
           emit({ type: "done", logId: await log(briefToText(r.brief), r.citedChunkIds, true) });
         }
       } catch (e) {
+        if (aborted) { try { controller.close(); } catch {} return; }
         console.error("prep failed:", e instanceof Error ? e.message : e);
         emit({ type: "error", message: "Couldn't build the brief. Try again." });
         await log("", [], false).catch(() => null);
       }
-      controller.close();
+      try { controller.close(); } catch {}
     },
   });
 

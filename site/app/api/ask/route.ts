@@ -1,5 +1,6 @@
 import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { etaMs } from "@/lib/eta";
 import { followups, logQuestion, sourceCards, streamAnswer } from "@/lib/ask/answer";
 import { ASK, COVERED_QUESTIONS } from "@/lib/ask/config";
 import { retrieve, sourceOf } from "@/lib/ask/retrieve";
@@ -40,9 +41,17 @@ export async function POST(request: Request) {
   const t = new Timings();
   const debug = process.env.NODE_ENV !== "production" && request.headers.get("x-ask-debug") === "1";
   const encoder = new TextEncoder();
+  /** The reader pressed Cancel (or left): nothing more is sent, and no more of the work is started. */
+  let aborted = request.signal.aborted;
+  request.signal.addEventListener("abort", () => { aborted = true; });
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const emit = (e: AskEvent) => controller.enqueue(encoder.encode(JSON.stringify(e) + "\n"));
+      const emit = (e: AskEvent) => {
+        if (aborted) return;
+        try { controller.enqueue(encoder.encode(JSON.stringify(e) + "\n")); } catch { aborted = true; }
+      };
+      // The time estimate (median of recent runs) goes out as soon as it is read; it never delays the work.
+      void etaMs("ask").then((ms) => { if (ms != null) emit({ type: "eta", ms }); });
       let language: AskLanguage | null = null;
       /** Logs the timing line and the qa_log row. */
       const finish = (answer: string, citedChunkIds: number[], found: boolean) => {
@@ -78,6 +87,7 @@ export async function POST(request: Request) {
         emit({ type: "ref", ref: { ...sourceOf(r.episodes.get(best.videoId)!, best.startS, best.endS), chunkId: best.id } });
         t.mark("found");
         emit({ type: "step", step: 3 });
+        if (aborted) { controller.close(); return; }
         const next = t.time("followups", () => followups(question, r));
         let a = await streamAnswer(question, r, emit, t);
         if ((a.notFound || a.thin) && r.bestSimilarity >= ASK.retrySimilarity) {
@@ -87,6 +97,8 @@ export async function POST(request: Request) {
           a = await streamAnswer(question, r, emit, t, "medium");
         }
 
+        if (aborted) { controller.close(); return; }
+        emit({ type: "step", step: 4 });
         if (a.notFound || a.thin) {
           // Rule 2: nothing shown without citations.
           emit({ type: "notfound", suggestions, language, thin: a.thin });
@@ -101,11 +113,12 @@ export async function POST(request: Request) {
           emit({ type: "done", answerId, followups: followupList, cited: a.cited.length });
         }
       } catch (e) {
+        if (aborted) { try { controller.close(); } catch {} return; }
         console.error("ask failed:", e instanceof Error ? e.message : e);
         emit({ type: "error", message: "Couldn't reach the archive. Try again." });
         await finish("", [], false).catch(() => null);
       }
-      controller.close();
+      try { controller.close(); } catch {}
     },
   });
 

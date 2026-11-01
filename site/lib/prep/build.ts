@@ -112,7 +112,7 @@ export async function buildBrief(
   const title = sector?.label ?? name;
   if (!title) return { notFound: "Add a name or pick a sector." };
 
-  /* ---------- 1. Finding similar guests ---------- */
+  /* ---------- 1. Finding past episodes ---------- */
   emit({ type: "step", step: 1 });
   const texts = [...new Set([
     ...(sector ? [sector.label, `guests who work in ${sector.label}`] : []),
@@ -125,6 +125,7 @@ export async function buildBrief(
     t.time("profiles", () => profileVectors()),
   ]);
   const { chunks: hits, vectors: queryVectors } = search;
+  emit({ type: "step", step: 2 });
 
   const guestBySlug = new Map(dir.guests.map((g) => [g.slug, g]));
   const slugsOfVideo = new Map<string, Set<string>>();
@@ -194,8 +195,8 @@ tags: ${[...matchedTags].join(", ") || "none"}; top by profile: ${byProfile.slic
   }).filter((c) => c.chunks.length > 0);
   if (cands.length < 2) return { notFound: "I couldn't find similar past guests in the episodes." };
 
-  /* ---------- 2. Collecting past questions ---------- */
-  emit({ type: "step", step: 2 });
+  /* ---------- 3. Collecting host questions ---------- */
+  emit({ type: "step", step: 3 });
   const candVideos = [...new Set(cands.flatMap((c) => [...(videosOfSlug.get(c.g.slug) ?? [])]))];
   const [epRows, qRows] = await Promise.all([
     t.time("episodes", async () => db().from("episodes").select("video_id,title,published_at").in("video_id", candVideos).eq("status", "transcribed")),
@@ -231,8 +232,8 @@ tags: ${[...matchedTags].join(", ") || "none"}; top by profile: ${byProfile.slic
 
   const topicsFor = (slugs: string[]) => topicsOf(slugs, dir.guests, videosOfSlug, matchedTags, tagForms);
 
-  /* ---------- 3. Writing the brief ---------- */
-  emit({ type: "step", step: 3 });
+  /* ---------- 4. Writing the brief ---------- */
+  emit({ type: "step", step: 4 });
   const prepared: Prepared[] = [];
   const turnsOf = await t.time("lines", () => loadTurns(cands.flatMap((c) => c.chunks)));
   for (const cand of cands) {
@@ -327,7 +328,10 @@ tags: ${[...matchedTags].join(", ") || "none"}; top by profile: ${byProfile.slic
   };
 
   const main = makeCiter(prepared, withPassages);
-  const result = compose(main, await ask(t, `claude_${ASK.answerEffort}`, ASK.answerEffort, systemPrompt("full"), [...searchResults(prepared), { type: "text", text: userText }], main));
+  const written = await ask(t, `claude_${ASK.answerEffort}`, ASK.answerEffort, systemPrompt("full"), [...searchResults(prepared), { type: "text", text: userText }], main);
+  // 5. Checking citations: every line is checked against the transcript before it is kept (the sentence gate).
+  emit({ type: "step", step: 5 });
+  const result = compose(main, written);
   // Five similar guests whenever five candidates have passages. The model skips a guest now and then, and the sentence
   // gate drops a line that copies the transcript or names someone silent in what it cites; either used to leave 2 to
   // 4 guests at random. One more call, thinking harder, writes lines only for the guests still missing (those

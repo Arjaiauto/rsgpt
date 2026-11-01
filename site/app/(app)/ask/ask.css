@@ -166,3 +166,8 @@
   .inline { animation: none; }
   .askpage .chip, .src, .send { transition: none; }
 }
+
+/* Progress: stages, time left, Cancel (components/progress/RunMeta.tsx) */
+.think--run { flex-direction: column; align-items: flex-start; gap: 12px; }
+.think-row { display: flex; align-items: center; gap: 16px; }
+.turn > .rm { margin-top: 10px; }

@@ -3,10 +3,11 @@ import { NextResponse } from "next/server";
 import { logQuestion } from "@/lib/ask/answer";
 import { Timings } from "@/lib/ask/timing";
 import { db } from "@/lib/db";
+import { etaMs } from "@/lib/eta";
 import { getDirectory } from "@/lib/guests";
 import { sameGuest } from "@/lib/prep/build";
 import { briefToText } from "@/lib/prep/export";
-import { PREP_LIMITS, type Brief, type BriefWeb } from "@/lib/prep/types";
+import { PREP_LIMITS, type Brief, type BriefWeb, type WebEvent } from "@/lib/prep/types";
 import { WEB, WebError, webResearch } from "@/lib/prep/web";
 import { takeTry } from "@/lib/rate-limit";
 import { SESSION_COOKIE, VISITOR_COOKIE, readSessionToken } from "@/lib/session";
@@ -16,7 +17,7 @@ export const maxDuration = 60;
 
 const tidy = (v: unknown, max: number) => (typeof v === "string" ? v.replace(/[\u0000-\u001F\u007F]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max) : "");
 
-/** POST /api/prep/web {name, description} -> {web: BriefWeb} or {error}. "From the web" for a brief already built:
+/** POST /api/prep/web {name, description} -> NDJSON stream of WebEvent (or JSON {error} with a status before it starts). "From the web" for a brief already built:
     a separate request, so the brief itself never waits for the web. Every call is a qa_log row (question
     "[web] name - line"), which is also how the daily limit per session is counted, across server instances. */
 export async function POST(request: Request) {
@@ -40,25 +41,43 @@ export async function POST(request: Request) {
   if ((count ?? 0) >= WEB.perDay) return NextResponse.json({ error: "limit" }, { status: 429 });
 
   const t = new Timings();
-  // A guest who has been on the show: "Since their last episode" counts from their newest episode in the archive.
-  const same = sameGuest(name, (await getDirectory()).guests);
-  let web: BriefWeb | null = null;
-  try {
-    web = await t.time("web", () => webResearch({ name, description, lastEpisode: same?.latest ?? null }));
-    return NextResponse.json({ web });
-  } catch (e) {
-    console.error("prep web failed:", e instanceof WebError || e instanceof Error ? e.message : "unknown");
-    return NextResponse.json({ error: "unavailable" }, { status: 502 });
-  } finally {
-    t.mark("done");
-    console.log(t.line(`prep web ${name}`));
-    // The row the limit counts, with the section as text (no keys or raw pages).
-    const asText = web ? briefToText({ ...EMPTY, title: name, description, web }).split("\n\n").slice(1, 2).join("") : "";
-    await logQuestion({
-      question: `[web] ${name}${description ? ` - ${description}` : ""}`, language: "en", answer: asText, citedChunkIds: [], found: !!web?.matched,
-      firstName: session.firstName, visitorId, latencyMs: t.at.done, timings: t, kind: "brief",
-    }).catch(() => null);
-  }
+  const encoder = new TextEncoder();
+  /** The reader pressed Cancel (or left): nothing more is sent. The search still finishes and is logged, because it
+      was paid for and counts toward the daily limit. */
+  let aborted = request.signal.aborted;
+  request.signal.addEventListener("abort", () => { aborted = true; });
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const emit = (e: WebEvent) => {
+        if (aborted) return;
+        try { controller.enqueue(encoder.encode(JSON.stringify(e) + "\n")); } catch { aborted = true; }
+      };
+      void etaMs("web").then((ms) => { if (ms != null) emit({ type: "eta", ms }); });
+      let web: BriefWeb | null = null;
+      try {
+        // A guest who has been on the show: "Since their last episode" counts from their newest episode in the archive.
+        const same = sameGuest(name, (await getDirectory()).guests);
+        web = await t.time("web", () => webResearch({ name, description, lastEpisode: same?.latest ?? null }, undefined, (step) => emit({ type: "step", step })));
+        emit({ type: "web", web });
+      } catch (e) {
+        console.error("prep web failed:", e instanceof WebError || e instanceof Error ? e.message : "unknown");
+        emit({ type: "error", error: "unavailable" });
+      } finally {
+        t.mark("done");
+        console.log(t.line(`prep web ${name}`));
+        // The row the limit counts, with the section as text (no keys or raw pages).
+        const asText = web ? briefToText({ ...EMPTY, title: name, description, web }).split("\n\n").slice(1, 2).join("") : "";
+        await logQuestion({
+          question: `[web] ${name}${description ? ` - ${description}` : ""}`, language: "en", answer: asText, citedChunkIds: [], found: !!web?.matched,
+          firstName: session.firstName, visitorId, latencyMs: t.at.done, timings: t, kind: "brief",
+        }).catch(() => null);
+        try { controller.close(); } catch {}
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no" },
+  });
 }
 
 /** A brief with nothing in it but the web section, to write that section as text with the shared exporter. */

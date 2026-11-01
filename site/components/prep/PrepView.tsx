@@ -12,7 +12,8 @@ import {
   FIRST_APPEARANCE, NOT_IDENTIFIED, NO_OPPORTUNITIES, UNOFFICIAL, WEB_UNAVAILABLE, briefToText, sectionCounts, sectionHeading, sectionNote, sectionOrder,
   webGroups, webSource, type SectionKey,
 } from "@/lib/prep/export";
-import { PREP_LIMITS, type Brief, type BriefQuestion, type BriefWeb, type PastBrief, type PrepEvent } from "@/lib/prep/types";
+import { PREP_LIMITS, type Brief, type BriefQuestion, type BriefWeb, type PastBrief, type PrepEvent, type WebEvent } from "@/lib/prep/types";
+import { RunMeta } from "@/components/progress/RunMeta";
 import { saveWithUndo } from "@/lib/save-client";
 import { toast } from "@/lib/toast";
 import { player } from "@/components/player/store";
@@ -21,7 +22,10 @@ type Sector = { key: string; label: string; n: number };
 type Phase = "idle" | "building" | "done" | "notfound" | "error";
 type WebPhase = "idle" | "loading" | "error";
 
-const STEPS = ["Finding similar guests", "Collecting past questions", "Writing the brief"];
+/** Each is ticked when the server finishes it (events from POST /api/prep). */
+const STEPS = ["Finding past episodes", "Finding similar guests", "Collecting host questions", "Writing the brief", "Checking citations"];
+/** The stages of "Add web research" (events from POST /api/prep/web). */
+const WEB_STEPS = ["Searching the web", "Writing the summary", "Checking against sources"];
 
 /* ---------- small pieces ---------- */
 
@@ -111,7 +115,12 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
   const [desc, setDesc] = useState("");
   const [sector, setSector] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>(openId ? "building" : "idle");
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [run, setRun] = useState<{ t0: number; eta: number | null }>({ t0: 0, eta: null });
+  const [webStep, setWebStep] = useState<1 | 2 | 3>(1);
+  const [webRun, setWebRun] = useState<{ t0: number; eta: number | null }>({ t0: 0, eta: null });
+  const abortRef = useRef<AbortController | null>(null);
+  const webAbortRef = useRef<AbortController | null>(null);
   const [message, setMessage] = useState("");
   const [brief, setBrief] = useState<Brief | null>(null);
   const [past, setPast] = useState(pastIn);
@@ -151,6 +160,9 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
     if (!name.trim() && !sector) { toast("Add a name or pick a sector"); return; }
     setPhase("building");
     setStep(1);
+    setRun({ t0: Date.now(), eta: null });
+    const abort = new AbortController();
+    abortRef.current = abort;
     setBrief(null);
     setSavedId(null);
     savedRef.current = null;
@@ -158,6 +170,7 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
     try {
       const res = await fetch("/api/prep", {
         method: "POST",
+        signal: abort.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name.trim(), description: desc.trim(), ...(sector ? { sector } : {}) }),
       });
@@ -182,6 +195,7 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
           if (!line) continue;
           const ev = JSON.parse(line) as PrepEvent;
           if (ev.type === "step") setStep(ev.step);
+          else if (ev.type === "eta") setRun((r) => ({ ...r, eta: ev.ms }));
           else if (ev.type === "brief") { show(ev.brief, null); finished = true; }
           else if (ev.type === "notfound") { setMessage(ev.message); setPhase("notfound"); finished = true; }
           else if (ev.type === "error") { setMessage("Nothing was lost. Try the brief again."); setPhase("error"); finished = true; }
@@ -189,9 +203,15 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
       }
       if (!finished) { setMessage("Nothing was lost. Try the brief again."); setPhase("error"); }
     } catch {
+      if (abort.signal.aborted) return;
       setMessage("Nothing was lost. Try the brief again.");
       setPhase("error");
     }
+  };
+  const cancelBuild = () => {
+    abortRef.current?.abort();
+    setPhase("idle");
+    toast("Cancelled");
   };
 
   const pickSector = (key: string) => {
@@ -244,24 +264,53 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
   const addWeb = async () => {
     if (!brief || webPhase === "loading") return;
     setWebPhase("loading");
+    setWebStep(1);
+    setWebRun({ t0: Date.now(), eta: null });
+    const abort = new AbortController();
+    webAbortRef.current = abort;
     try {
       const res = await fetch("/api/prep/web", {
         method: "POST",
+        signal: abort.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: brief.title, description: brief.description }),
       });
-      const data = (await res.json().catch(() => ({}))) as { web?: BriefWeb; error?: string };
-      if (!res.ok || !data.web) {
+      if (!res.ok || !res.body) {
         setWebPhase("error");
         if (res.status === 429) toast("Daily limit for web research reached. Try again tomorrow.");
         return;
       }
-      const web = data.web;
-      change((b) => ({ ...b, web }));
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      let web: BriefWeb | null = null;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          const ev = JSON.parse(line) as WebEvent;
+          if (ev.type === "step") setWebStep(ev.step);
+          else if (ev.type === "eta") setWebRun((r) => ({ ...r, eta: ev.ms }));
+          else if (ev.type === "web") web = ev.web;
+        }
+      }
+      if (!web) { setWebPhase("error"); return; }
+      const got = web;
+      change((b) => ({ ...b, web: got }));
       setWebPhase("idle");
     } catch {
-      setWebPhase("error");
+      if (!abort.signal.aborted) setWebPhase("error");
     }
+  };
+  const cancelWeb = () => {
+    webAbortRef.current?.abort();
+    setWebPhase("idle");
+    toast("Cancelled");
   };
   const word = () => {
     if (!brief) return;
@@ -361,11 +410,14 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
             </div>
           )}
           {phase === "building" && (
-            <div className="prep-build" role="status">
-              <div className="prep-wave" aria-hidden="true">{Array.from({ length: 14 }, (_, i) => <i key={i} />)}</div>
-              <div className="prep-steps">
-                {STEPS.map((s, i) => <span key={s} className={step > i + 1 ? "done" : step === i + 1 ? "on" : ""}>{s}</span>)}
+            <div className="prep-build">
+              <div className="prep-build-row">
+                <div className="prep-wave" aria-hidden="true">{Array.from({ length: 14 }, (_, i) => <i key={i} />)}</div>
+                <div className="prep-steps">
+                  {STEPS.map((s, i) => <span key={s} className={step > i + 1 ? "done" : step === i + 1 ? "on" : ""}>{s}</span>)}
+                </div>
               </div>
+              <RunMeta etaMs={run.eta} startedAt={run.t0} stage={STEPS[step - 1]} onCancel={cancelBuild} />
             </div>
           )}
           {(phase === "notfound" || phase === "error") && (
@@ -375,7 +427,7 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
             </div>
           )}
           {phase === "done" && brief && (
-            <BriefDoc brief={brief} edit={edit} strike={strike} web={{ add: addWeb, phase: webPhase }} actions={{ copy, pdf, word, save, saved: savedId != null, dirty, saving }} />
+            <BriefDoc brief={brief} edit={edit} strike={strike} web={{ add: addWeb, phase: webPhase, step: webStep, run: webRun, cancel: cancelWeb }} actions={{ copy, pdf, word, save, saved: savedId != null, dirty, saving }} />
           )}
         </section>
       </div>
@@ -389,7 +441,7 @@ function BriefDoc({ brief: b, edit, strike, web, actions }: {
   brief: Brief;
   edit: (id: string, text: string) => void;
   strike: (id: string) => void;
-  web: { add: () => void; phase: WebPhase };
+  web: { add: () => void; phase: WebPhase; step: 1 | 2 | 3; run: { t0: number; eta: number | null }; cancel: () => void };
   actions: { copy: () => void; pdf: () => void; word: () => void; save: () => void; saved: boolean; dirty: boolean; saving: boolean };
 }) {
   const gone = new Set(b.removed);
@@ -557,7 +609,14 @@ function BriefDoc({ brief: b, edit, strike, web, actions }: {
           <button className="prep-ghost" type="button" onClick={web.add} disabled={web.phase === "loading"} aria-busy={web.phase === "loading"}>
             {web.phase === "loading" ? "Searching the web…" : web.phase === "error" ? "Try web research again" : "Add web research"}
           </button>
-          <span role="status">{web.phase === "error" ? WEB_UNAVAILABLE : web.phase === "loading" ? "Background, recent news and other interviews, from public sources. About 15 seconds." : "Background, recent news and other interviews, from public web sources. Not from the archive."}</span>
+          {web.phase === "loading" ? (
+            <>
+              <span className="prep-web-steps">{WEB_STEPS.map((s, i) => <span key={s} className={web.step > i + 1 ? "done" : web.step === i + 1 ? "on" : ""}>{s}</span>)}</span>
+              <RunMeta etaMs={web.run.eta} startedAt={web.run.t0} stage={WEB_STEPS[web.step - 1]} onCancel={web.cancel} />
+            </>
+          ) : (
+            <span role="status">{web.phase === "error" ? WEB_UNAVAILABLE : "Background, recent news and other interviews, from public web sources. Not from the archive."}</span>
+          )}
         </div>
       )}
       {order.map((key) => (

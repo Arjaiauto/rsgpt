@@ -1,0 +1,8 @@
+.rm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 13px; color: var(--ink-soft); }
+.rm-sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.rm-stage { color: var(--ink); }
+.rm-eta { font-variant-numeric: tabular-nums; }
+.rm-cancel { min-height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+.rm-cancel:hover { background: var(--surface); }
+.rm-cancel:focus-visible { outline: 2px solid var(--violet-text); outline-offset: 2px; }
+@media (max-width: 480px) { .rm-cancel { min-height: 44px; padding: 0 16px; } }

@@ -11,6 +11,7 @@ import { toast } from "@/lib/toast";
 import { ClipPlayer } from "@/components/player/ClipPlayer";
 import { getPlayer, player } from "@/components/player/store";
 import { ReportButton } from "@/components/report/ReportButton";
+import { RunMeta } from "@/components/progress/RunMeta";
 import { LineAnswer, LineThinking } from "./LineAnswer";
 
 type Block = { text: string; cites: Cite[] };
@@ -23,7 +24,10 @@ type Turn = {
   status: "thinking" | "answering" | "done" | "notfound" | "error";
   /** Name of the guest whose episodes this question was limited to (asked from a guest page). */
   scope?: string;
-  step: 1 | 2 | 3;
+  step: 1 | 2 | 3 | 4;
+  /** Median duration of recent answers in ms (from the server) and when this one started, for the time left. */
+  eta?: number;
+  t0: number;
   moments?: number;
   episodes?: number;
   language?: AskLanguage;
@@ -131,16 +135,28 @@ function Composer({ docked, busy, onAsk, autoFocus, lineMode, onLineMode }: {
   );
 }
 
-function Thinking({ turn }: { turn: Turn }) {
-  const cls = (n: 1 | 2 | 3) => (turn.step > n ? "done" : turn.step === n ? "on" : "");
+/** The names of the stages, each ticked when the server finishes it. */
+function stagesOf(turn: Turn): string[] {
+  return [
+    turn.scope ? `Searching ${turn.scope}’s episodes` : "Searching 500 episodes",
+    turn.moments != null ? `Found ${turn.moments} moments in ${turn.episodes} episodes` : "Finding the moments",
+    "Writing the answer",
+    "Checking citations",
+  ];
+}
+
+function Thinking({ turn, onCancel }: { turn: Turn; onCancel: () => void }) {
+  const stages = stagesOf(turn);
+  const cls = (n: number) => (turn.step > n ? "done" : turn.step === n ? "on" : "");
   return (
-    <div className="think" role="status">
-      <div className="wave" aria-hidden="true">{Array.from({ length: 14 }, (_, i) => <i key={i} />)}</div>
-      <div className="steps">
-        <span className={cls(1)}>{turn.scope ? `Searching ${turn.scope}’s episodes` : "Searching 500 episodes"}</span>
-        <span className={cls(2)}>{turn.moments != null ? `Found ${turn.moments} moments in ${turn.episodes} episodes` : "Finding the moments"}</span>
-        <span className={cls(3)}>Writing the answer</span>
+    <div className="think think--run">
+      <div className="think-row">
+        <div className="wave" aria-hidden="true">{Array.from({ length: 14 }, (_, i) => <i key={i} />)}</div>
+        <div className="steps">
+          {stages.map((s, i) => <span key={i} className={cls(i + 1)}>{s}</span>)}
+        </div>
       </div>
+      <RunMeta etaMs={turn.eta ?? null} startedAt={turn.t0} stage={stages[turn.step - 1]} onCancel={onCancel} />
     </div>
   );
 }
@@ -165,10 +181,20 @@ export function AskView() {
     } catch {}
   }, [scope]);
 
+  /** The request of each running question, so Cancel can stop it. */
+  const running = useRef(new Map<string, AbortController>());
+  const cancel = (id: string) => {
+    running.current.get(id)?.abort();
+    running.current.delete(id);
+    setTurns((all) => all.filter((t) => t.id !== id));
+    toast("Cancelled");
+  };
+
   const patch = (id: string, fn: (t: Turn) => Turn) => setTurns((all) => all.map((t) => (t.id === id ? fn(t) : t)));
 
   const apply = (t: Turn, e: AskEvent): Turn => {
     switch (e.type) {
+      case "eta": return { ...t, eta: e.ms };
       case "step": return { ...t, step: e.step, moments: e.moments ?? t.moments, episodes: e.episodes ?? t.episodes };
       case "found": return { ...t, sources: e.sources, language: e.language };
       // The best-matching moment arrives with the search results; the first cited moment replaces it, unless the
@@ -216,12 +242,14 @@ export function AskView() {
     const asLine = line || isQuoted(q);
     const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const earlier = fresh ? [] : turns.map((t) => t.q).slice(-3);
-    const turn: Turn = { id, q: asLine ? unquote(q) : q, kind: asLine ? "line" : undefined, scope: !asLine ? inScope?.name : undefined, status: "thinking", step: 1, blocks: [], sources: [], followups: [], suggestions: [], answerId: null };
+    const turn: Turn = { id, q: asLine ? unquote(q) : q, kind: asLine ? "line" : undefined, scope: !asLine ? inScope?.name : undefined, status: "thinking", step: 1, t0: Date.now(), blocks: [], sources: [], followups: [], suggestions: [], answerId: null };
     setTurns((all) => (fresh ? [turn] : [...all, turn]));
     window.setTimeout(() => document.getElementById(`turn-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" }), 50);
     if (asLine) return findLine(id, q);
+    const abort = new AbortController();
+    running.current.set(id, abort);
     try {
-      const res = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q, earlier, ...(inScope ? { guest: inScope.slug } : {}) }) });
+      const res = await fetch("/api/ask", { method: "POST", signal: abort.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q, earlier, ...(inScope ? { guest: inScope.slug } : {}) }) });
       if (!res.ok || !res.body) {
         const msg = res.status === 429 ? "Too many questions. Wait a few minutes and try again." : "Couldn't reach the archive. Try again.";
         toast(msg);
@@ -247,7 +275,9 @@ export function AskView() {
       }
       patch(id, (t) => (t.status === "thinking" || t.status === "answering" ? { ...t, status: t.blocks.length ? "done" : "error" } : t));
     } catch {
-      patch(id, (t) => ({ ...t, status: "error" }));
+      if (!abort.signal.aborted) patch(id, (t) => ({ ...t, status: "error" }));
+    } finally {
+      running.current.delete(id);
     }
   };
 
@@ -310,7 +340,7 @@ export function AskView() {
               </div>
             )}
             {t.kind === "line" && t.status === "done" && t.line && <LineAnswer turnId={t.id} match={t.line} busy={busy} onAsk={ask} />}
-            {t.kind !== "line" && (t.status === "thinking" || (t.status === "answering" && !t.blocks.length)) && !t.ref && <Thinking turn={t} />}
+            {t.kind !== "line" && (t.status === "thinking" || (t.status === "answering" && !t.blocks.length)) && !t.ref && <Thinking turn={t} onCancel={() => cancel(t.id)} />}
             {t.status === "error" && (
               <div className="nf">
                 <b>Couldn&apos;t reach the archive.</b>
@@ -327,7 +357,10 @@ export function AskView() {
                 </div>
               </div>
             )}
-            {t.kind !== "line" && (t.status === "thinking" || t.status === "answering" || t.status === "done") && (t.blocks.length > 0 || t.ref) && <Answer turn={t} busy={busy} onAsk={ask} onToggle={(k) => patch(t.id, (x) => ({ ...x, open: x.open === k ? undefined : k }))} />}
+            {t.kind !== "line" && (t.status === "thinking" || t.status === "answering" || t.status === "done") && (t.blocks.length > 0 || t.ref) && <Answer turn={t} busy={busy} onAsk={ask} onCancel={() => cancel(t.id)} onToggle={(k) => patch(t.id, (x) => ({ ...x, open: x.open === k ? undefined : k }))} />}
+            {t.kind !== "line" && (t.status === "thinking" || t.status === "answering") && t.blocks.length > 0 && (
+              <RunMeta etaMs={t.eta ?? null} startedAt={t.t0} stage={stagesOf(t)[t.step - 1]} label onCancel={() => cancel(t.id)} />
+            )}
           </article>
         ))}
         <button className="linkbtn ask-new" type="button" onClick={reset} disabled={busy}>Start a new question</button>
@@ -340,7 +373,7 @@ export function AskView() {
   );
 }
 
-function Answer({ turn: t, busy, onAsk, onToggle }: { turn: Turn; busy: boolean; onAsk: (q: string) => void; onToggle: (key: string) => void }) {
+function Answer({ turn: t, busy, onAsk, onToggle, onCancel }: { turn: Turn; busy: boolean; onAsk: (q: string) => void; onToggle: (key: string) => void; onCancel: () => void }) {
   const lang = t.language === "hi" ? "hi" : undefined;
 
   // Paragraphs from the streamed text blocks: a blank line starts a new paragraph; chips follow their block.
@@ -379,7 +412,7 @@ function Answer({ turn: t, busy, onAsk, onToggle }: { turn: Turn; busy: boolean;
       {t.ref && (
         <ClipPlayer clip={clipOf(`ask:${t.id}:ref`, t.ref, 45)} label="Best matching moment" report={false} />
       )}
-      {!t.blocks.length && <Thinking turn={t} />}
+      {!t.blocks.length && <Thinking turn={t} onCancel={onCancel} />}
       <div className="ans" lang={lang}>
         {visible.map((para, pi) => {
           const openHere = para.find((x) => x.last && t.open?.startsWith(`${x.block}:`));

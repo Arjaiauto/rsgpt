@@ -33,7 +33,9 @@ export type RefMoment = Source & { chunkId: number };
 
 /** Events on the NDJSON stream from POST /api/ask, one JSON object per line. */
 export type AskEvent =
-  | { type: "step"; step: 1 | 2 | 3; moments?: number; episodes?: number }
+  | { type: "step"; step: 1 | 2 | 3 | 4; moments?: number; episodes?: number }
+  /** Median duration (ms) of the last 20 runs of this kind, for the time-left estimate. Sent once, if known. */
+  | { type: "eta"; ms: number }
   | { type: "found"; sources: Source[]; language: AskLanguage }
   /** The reference player: the first moment the answer cites. */
   | { type: "ref"; ref: RefMoment }
