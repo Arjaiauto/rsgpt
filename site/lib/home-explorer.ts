@@ -41,17 +41,22 @@ export function titleStyles(title: string): string[] {
   if (/\?/.test(t)) out.push("Asks a question");
   return out.length ? out : ["No hook"];
 }
-export const TITLE_STYLE_ORDER = ["Money amount", "Has a number", "Asks a question", "No hook"];
+/** The four title styles in the order shown, with the short name used under the bars. */
+export const TITLE_STYLE_GROUPS: [label: string, short: string][] = [
+  ["Money amount", "Money"], ["Has a number", "Number"], ["Asks a question", "Question"], ["No hook", "No hook"],
+];
+/** The short names of the episode-length groups (by LENGTH_BANDS key), used under the bars. */
+export const LENGTH_SHORT: Record<string, string> = { u60: "< 1 h", "60-90": "1-1.5 h", "90-120": "1.5-2 h", o120: "2 h +" };
 
 /** Guest types, from the guest's role description (guests.role_at_episode, as extracted for that episode) by keyword.
     A role can match more than one; one that matches none leaves its episode out of the Guest type tab. */
-export const ROLE_BUCKETS: [label: string, test: RegExp][] = [
-  ["Founder / CEO / investor", /founder|ceo|entrepreneur|investor|co-founder|chairman|managing director|businessman|business/i],
-  ["Doctor / health expert", /doctor|dr\.|physician|surgeon|dermatolog|psychiatr|psycholog|nutrition|dietitian|neuro|medicine|health|therap/i],
-  ["Actor / singer / comedian / creator", /actor|actress|singer|comedian|musician|artist|filmmaker|director|youtuber|creator|influencer|rapper|composer|podcaster|storyteller/i],
-  ["Politician / official", /politician|minister|\bmp\b|mla|bureaucrat|\bias\b|\bips\b|diplomat|ambassador|government|general|officer|commander|army|military|police/i],
-  ["Athlete / sportsperson", /athlete|cricketer|olympi|player|swimmer|wrestler|boxer|sportsperson|coach|footballer|shooter|runner/i],
-  ["Author / educator / speaker", /author|writer|professor|teacher|educator|speaker|coach|historian|journalist|scientist|researcher/i],
+export const ROLE_BUCKETS: [label: string, test: RegExp, short: string][] = [
+  ["Founder / CEO / investor", /founder|ceo|entrepreneur|investor|co-founder|chairman|managing director|businessman|business/i, "Founders"],
+  ["Doctor / health expert", /doctor|dr\.|physician|surgeon|dermatolog|psychiatr|psycholog|nutrition|dietitian|neuro|medicine|health|therap/i, "Doctors"],
+  ["Actor / singer / comedian / creator", /actor|actress|singer|comedian|musician|artist|filmmaker|director|youtuber|creator|influencer|rapper|composer|podcaster|storyteller/i, "Creators"],
+  ["Politician / official", /politician|minister|\bmp\b|mla|bureaucrat|\bias\b|\bips\b|diplomat|ambassador|government|general|officer|commander|army|military|police/i, "Politicians"],
+  ["Athlete / sportsperson", /athlete|cricketer|olympi|player|swimmer|wrestler|boxer|sportsperson|coach|footballer|shooter|runner/i, "Athletes"],
+  ["Author / educator / speaker", /author|writer|professor|teacher|educator|speaker|coach|historian|journalist|scientist|researcher/i, "Authors"],
 ];
 export function roleBuckets(role: string | null | undefined): string[] {
   const r = role ?? "";
@@ -62,7 +67,10 @@ export function roleBuckets(role: string | null | undefined): string[] {
 
 export type ExplorerPoint = { year: number; value: number; n: number; small: boolean };
 export type ExplorerGroup = {
+  /** The full name: the selected-group heading and the tooltip. */
   label: string;
+  /** The short name under the bar. */
+  short: string;
   episodes: number;
   /** Median of the group's year-relative views, all years together. */
   typical: number;
@@ -90,9 +98,9 @@ export async function getHomeExplorer(): Promise<ExplorerData | null> {
 type Ep = { id: string; title: string; year: number; minutes: number; rel: number };
 
 /** Groups from (label, episodes) pairs: hides small groups, adds the per-year points. */
-function build(groups: { label: string; eps: Ep[] }[], years: number[]): ExplorerGroup[] {
-  return groups.filter((g) => g.eps.length >= MIN_TOTAL).map(({ label, eps }) => ({
-    label, episodes: eps.length, typical: spread(eps.map((e) => e.rel)).median,
+function build(groups: { label: string; short?: string; eps: Ep[] }[], years: number[]): ExplorerGroup[] {
+  return groups.filter((g) => g.eps.length >= MIN_TOTAL).map(({ label, short, eps }) => ({
+    label, short: short ?? label, episodes: eps.length, typical: spread(eps.map((e) => e.rel)).median,
     byYear: years.map((year) => {
       const g = eps.filter((e) => e.year === year);
       return g.length >= MIN_POINT ? { year, value: spread(g.map((e) => e.rel)).median, n: g.length, small: g.length < SMALL_BELOW } : null;
@@ -119,10 +127,10 @@ async function read(): Promise<ExplorerData | null> {
   const eps: Ep[] = base.map((e) => ({ id: e.id, title: e.title, year: e.year, minutes: e.minutes, rel: yearMedian.get(e.year) ? e.views / yearMedian.get(e.year)! : 0 }));
 
   // Length
-  const length = build(LENGTH_BANDS.map((b) => ({ label: b.label, eps: eps.filter(b.test) })), years);
+  const length = build(LENGTH_BANDS.map((b) => ({ label: b.label, short: LENGTH_SHORT[b.key], eps: eps.filter(b.test) })), years);
 
   // Title style
-  const style = build(TITLE_STYLE_ORDER.map((label) => ({ label, eps: eps.filter((e) => titleStyles(e.title).includes(label)) })), years);
+  const style = build(TITLE_STYLE_GROUPS.map(([label, short]) => ({ label, short, eps: eps.filter((e) => titleStyles(e.title).includes(label)) })), years);
 
   // Topic: the sector tags of an episode's guests, as the site's filters know them; the 8 with the most episodes.
   const guestBySlug = new Map(dir.guests.map((g) => [g.slug, g]));
@@ -135,7 +143,7 @@ async function read(): Promise<ExplorerData | null> {
   // Guest type: from the guests' role descriptions.
   const bucketsOf = new Map<string, Set<string>>();
   for (const r of guestRows) for (const label of roleBuckets(r.role_at_episode)) (bucketsOf.get(r.video_id) ?? bucketsOf.set(r.video_id, new Set()).get(r.video_id)!).add(label);
-  const guestType = build(ROLE_BUCKETS.map(([label]) => ({ label, eps: eps.filter((e) => bucketsOf.get(e.id)?.has(label)) })), years);
+  const guestType = build(ROLE_BUCKETS.map(([label, , short]) => ({ label, short, eps: eps.filter((e) => bucketsOf.get(e.id)?.has(label)) })), years);
 
   const sets: ExplorerSet[] = [
     { key: "length", label: "Episode length", groups: length },

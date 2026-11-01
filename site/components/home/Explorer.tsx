@@ -18,6 +18,9 @@ export function Explorer({ data }: { data: ExplorerData }) {
   const [draw, setDraw] = useState(0); // bumps to replay the line animation
   const cardRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const vbRef = useRef<HTMLDivElement>(null);
+  /** How the bar labels are laid out: one row, two staggered rows (when each label fits in two columns), or tilted. */
+  const [mode, setMode] = useState<"row" | "stagger" | "tilt">("row");
   const reduceRef = useRef(false);
 
   useEffect(() => {
@@ -58,9 +61,26 @@ export function Explorer({ data }: { data: ExplorerData }) {
     return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); clearTimeout(t); };
   }, [draw]);
 
+  // Lays the bar labels out: on one row if the longest short name fits in a column, else staggered over two rows if it
+  // fits in two columns, else tilted. Measured, so it follows the width of the screen and the number of bars.
+  useLayoutEffect(() => {
+    const vb = vbRef.current;
+    if (!vb) return;
+    const measure = () => {
+      const n = vb.querySelectorAll(".vbar").length;
+      const gap = parseFloat(getComputedStyle(vb).columnGap) || 0;
+      const col = (vb.clientWidth - gap * (n - 1)) / n;
+      const need = Math.max(0, ...[...vb.querySelectorAll<HTMLElement>(".vbar__t")].map((e) => e.offsetWidth));
+      setMode(need <= col + 4 ? "row" : need <= 2 * col + gap - 6 ? "stagger" : "tilt");
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(vb);
+    return () => ro.disconnect();
+  }, [set, grow]);
+
   const active = data.sets.find((x) => x.key === set) ?? data.sets[0];
   const rows = active.groups;
-  const tilt = rows.length > 5; // many bars: the labels are tilted so they never run into each other
   const group = rows[Math.min(sel, rows.length - 1)];
   const name = group.label, episodes = group.episodes, v = group.typical;
   const series = group.byYear; // only the years with enough episodes
@@ -93,7 +113,7 @@ export function Explorer({ data }: { data: ExplorerData }) {
       <p className="sub">Views compared with a typical episode of the same age; the dashed line is typical (1.0×). Tap a bar to see how it changed by year.</p>
       <div className="ex__body">
         <div className="ex__bars">
-          <div key={`${set}-${grow}`} className={`vb${grow ? " grow" : ""}${tilt ? " vb--tilt" : ""}`} style={{ "--n": rows.length } as CSSProperties} role="group" aria-label="Average performance by group">
+          <div key={`${set}-${grow}`} ref={vbRef} className={`vb${grow ? " grow" : ""}${mode !== "row" ? ` vb--${mode}` : ""}`} style={{ "--n": rows.length } as CSSProperties} role="group" aria-label="Average performance by group">
             <div className="vb__ref" style={{ "--r": 1 / MAXV } as CSSProperties} />
             {rows.map((r, i) => {
               const val = r.typical;
@@ -109,7 +129,7 @@ export function Explorer({ data }: { data: ExplorerData }) {
                   <span className="vbar__col" style={{ "--h": (val / MAXV).toFixed(3) } as CSSProperties}>
                     <span className="vbar__val num">{x2(val)}</span>
                   </span>
-                  <span className="vbar__lab" title={r.label}>{r.label}<span className="vbar__n">n = {r.episodes}</span></span>
+                  <span className="vbar__lab" title={r.label}><span className="vbar__t">{r.short}</span><span className="vbar__n">n = {r.episodes}</span></span>
                 </button>
               );
             })}
@@ -151,9 +171,9 @@ export function Explorer({ data }: { data: ExplorerData }) {
                 {/* First label starts at its point and last one ends at it, so neither reaches the axis labels or the edge. */}
                 <text
                   className="lbl"
-                  x={i === 0 ? p[0] - 4 : i === pts.length - 1 ? p[0] + 4 : p[0]}
+                  x={p[0] < W * 0.25 ? p[0] + 9 : p[0] > W * 0.75 ? p[0] + 3 : p[0]}
                   y={p[1] - 11}
-                  textAnchor={i === 0 ? "start" : i === pts.length - 1 ? "end" : "middle"}
+                  textAnchor={p[0] < W * 0.25 ? "start" : p[0] > W * 0.75 ? "end" : "middle"}
                 >
                   {x2(series[i].value)}
                 </text>
