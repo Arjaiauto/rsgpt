@@ -1,17 +1,22 @@
-# RSGPT
+# RSGPT (Cuepoint)
 
-A private, unofficial research tool over the Figuring Out podcast archive, built as a demo for the Figuring Out team.
+A private, unofficial research tool over the Figuring Out podcast archive, built as a demo for the Figuring Out team. It answers questions from the transcripts, with every claim traced to a timestamped source, and includes guest profiles, clips and an insights page.
 
-> Unofficial project, not affiliated with Figuring Out.
+Live site: https://cuepoint-two.vercel.app
+
+> Unofficial project, not affiliated with Figuring Out. Every answer links to its source.
 
 ## Layout
 
-| Folder      | Purpose                                   |
-|-------------|-------------------------------------------|
-| `pipeline/` | Python data scripts                       |
-| `site/`     | Website (built later)                     |
-| `data/`     | Working data (not committed)              |
-| `audio/`    | Downloaded audio (not committed)          |
+| Folder      | Purpose                                                              |
+|-------------|----------------------------------------------------------------------|
+| `site/`     | Next.js app (the website). See `site/README.md`.                     |
+| `pipeline/` | Python data pipeline that builds the database. SQL files in `pipeline/sql/`. |
+| `design/`   | Page designs (`FRONTEND_DESIGN.md` wins where they disagree).         |
+| `data/`     | Working data (not committed)                                         |
+| `audio/`    | Downloaded audio (not committed)                                     |
+
+Environment variables are listed in `.env.example`.
 
 ## Setup (Windows / PowerShell)
 
