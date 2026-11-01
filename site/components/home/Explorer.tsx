@@ -44,7 +44,7 @@ export function Explorer({ data }: { data: ExplorerData }) {
     if (!draw || reduceRef.current) return;
     const svg = svgRef.current!, path = svg.querySelector<SVGPathElement>(".ln")!;
     const len = path.getTotalLength();
-    const extras = [...svg.querySelectorAll<SVGElement>(".pt,.lbl,.area")];
+    const extras = [...svg.querySelectorAll<SVGElement>(".pt,.lbl,.area,.ln-gap")];
     path.style.transition = "none";
     path.style.strokeDasharray = String(len);
     path.style.strokeDashoffset = String(len);
@@ -85,11 +85,28 @@ export function Explorer({ data }: { data: ExplorerData }) {
   const name = group.label, episodes = group.episodes, v = group.typical;
   const series = group.byYear; // only the years with enough episodes
 
-  const W = width, H = Math.round(W * 0.52), L = 34, R = 18, T = 18, B = 28, lo = 0.5, hi = 2.5;
+  const W = width, H = Math.round(W * 0.52), L = 34, R = 18, T = 18, B = 40, lo = 0.5, hi = 2.5;
   const X = (i: number) => L + (i * (W - L - R)) / Math.max(1, YEARS.length - 1);
   const Y = (val: number) => T + ((hi - Math.min(hi, Math.max(lo, val))) / (hi - lo)) * (H - T - B);
   const pts = series.map((p) => [X(YEARS.indexOf(p.year)), Y(p.value)]);
-  const d = pts.length < 2 ? "" : pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  // A solid line and a filled area join only consecutive years that both have a point. Where years in between are
+  // missing (too few episodes) the two points are joined by a faint dashed segment instead, with no area under it.
+  const yi = series.map((p) => YEARS.indexOf(p.year));
+  const runs: number[][] = [];
+  series.forEach((_, i) => { if (i > 0 && yi[i] === yi[i - 1] + 1) runs[runs.length - 1].push(i); else runs.push([i]); });
+  const joined = runs.filter((r) => r.length >= 2);
+  const runPath = (r: number[]) => r.map((i, k) => (k ? "L" : "M") + pts[i][0].toFixed(1) + " " + pts[i][1].toFixed(1)).join(" ");
+  const d = joined.map(runPath).join(" ");
+  const areaD = joined.map((r) => `${runPath(r)} L${pts[r[r.length - 1]][0].toFixed(1)} ${Y(lo)} L${pts[r[0]][0].toFixed(1)} ${Y(lo)} Z`).join(" ");
+  const gapD = pts.map((p, i) => (i > 0 && yi[i] !== yi[i - 1] + 1 ? `M${pts[i - 1][0].toFixed(1)} ${pts[i - 1][1].toFixed(1)} L${p[0].toFixed(1)} ${p[1].toFixed(1)}` : "")).filter(Boolean).join(" ");
+  // A value label goes above its point when the line arrives from below (or it is a peak) and below it when the line
+  // arrives from above (or it is a valley), so it never sits on the line. The first point has no arrival: it goes
+  // opposite to the way the line leaves. The bottom margin is tall enough for a label below the lowest point.
+  const labelY = (i: number) => {
+    const v = series[i].value;
+    const below = i > 0 ? series[i - 1].value > v : i < series.length - 1 ? series[i + 1].value > v : false;
+    return below ? pts[i][1] + 17 : pts[i][1] - 11;
+  };
 
   return (
     <div className="card explorer" ref={cardRef}>
@@ -137,7 +154,7 @@ export function Explorer({ data }: { data: ExplorerData }) {
         </div>
         <div className="ex__line">
           <div className="ex__sel"><span>{name}</span><b className="num">{x2(v)}</b></div>
-          <p className="ex__meta">{episodes} episodes · {series.length >= 2 ? `range ${x2(Math.min(...series.map((p) => p.value)))} to ${x2(Math.max(...series.map((p) => p.value)))} by year` : "too few episodes in a year to show a by-year line"}{series.some((p) => p.small) ? " · hollow points: small sample (10 to 19 episodes)" : ""}</p>
+          <p className="ex__meta">{episodes} episodes · {series.length >= 2 ? `range ${x2(Math.min(...series.map((p) => p.value)))} to ${x2(Math.max(...series.map((p) => p.value)))} by year` : "too few episodes in a year to show a by-year line"}{series.some((p) => p.small) ? " · hollow points: small sample (10 to 19 episodes)" : ""}{gapD ? " · dashed: year with too few episodes" : ""}</p>
           <svg
             className="lc"
             ref={svgRef}
@@ -159,9 +176,12 @@ export function Explorer({ data }: { data: ExplorerData }) {
                 </g>
               ))}
             </g>
-            {YEARS.map((yr, i) => <text key={yr} x={X(i)} y={H - 6} textAnchor="middle">{yr}</text>)}
+            {YEARS.map((yr, i) => (
+              <text key={yr} x={X(i)} y={H - 6} textAnchor="middle">{series.some((p) => p.year === yr) ? null : <title>too few episodes this year</title>}{yr}</text>
+            ))}
             <line className="ref" x1={L} x2={W - R} y1={Y(1)} y2={Y(1)} />
-            <path className="area" d={d ? `${d} L${pts[pts.length - 1][0].toFixed(1)} ${Y(lo)} L${pts[0][0].toFixed(1)} ${Y(lo)} Z` : ""} />
+            <path className="area" d={areaD} />
+            <path className="ln-gap" d={gapD} />
             <path className="ln" d={d} />
             {pts.map((p, i) => (
               <g key={i}>
@@ -172,7 +192,7 @@ export function Explorer({ data }: { data: ExplorerData }) {
                 <text
                   className="lbl"
                   x={p[0] < W * 0.25 ? p[0] + 9 : p[0] > W * 0.75 ? p[0] + 3 : p[0]}
-                  y={p[1] - 11}
+                  y={labelY(i)}
                   textAnchor={p[0] < W * 0.25 ? "start" : p[0] > W * 0.75 ? "end" : "middle"}
                 >
                   {x2(series[i].value)}
