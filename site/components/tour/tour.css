@@ -1,0 +1,106 @@
+/* The welcome tour (Ticket 25b): a full-screen modal <dialog> in the style of the Future deck (app/(app)/future/future.css),
+   with a screenshot of the page on one side and numbered callouts on the other. Every class is prefixed tr- . The
+   screenshot's dots are placed in percent of the picture, so they stay on the right spot at any size. */
+
+dialog.tr {
+  width: 100vw; max-width: none; height: 100vh; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; overflow: hidden;
+  background: radial-gradient(120% 80% at 50% 0%, var(--paper-lit) 0%, var(--paper) 50%, var(--paper-edge) 100%); color: var(--ink);
+}
+dialog.tr[open] { display: flex; flex-direction: column; }
+dialog.tr::backdrop { background: rgba(8, 8, 12, 0.85); }
+.tr :focus-visible { outline: 2px solid var(--violet-text); outline-offset: 3px; }
+
+.tr-top {
+  position: relative; flex: none; display: flex; align-items: center; justify-content: space-between; min-height: 52px;
+  padding: calc(8px + env(safe-area-inset-top, 0px)) max(16px, var(--gutter), env(safe-area-inset-right, 0px)) 8px max(16px, var(--gutter), env(safe-area-inset-left, 0px));
+}
+.tr-count { margin: 0; font-size: 13px; color: var(--ink-faint); }
+.tr-skip {
+  height: 36px; padding: 0 16px; border-radius: var(--radius-pill); border: 1px solid var(--line-strong); background: var(--raised); color: var(--ink);
+  font: 400 14px/1 var(--sans); cursor: pointer; transition: background-color 0.2s;
+}
+.tr-skip:hover { background: var(--raised-hover); }
+
+.tr-stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; overflow: clip; }
+.tr-prog { position: absolute; left: 0; top: 0; z-index: 2; height: 2px; background: linear-gradient(90deg, var(--violet), var(--cite)); transition: width 0.6s var(--ease); }
+.tr-track { display: flex; height: 100%; transition: transform 0.6s var(--ease); will-change: transform; }
+.tr-slide {
+  flex: 0 0 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column;
+  padding-block: clamp(8px, 2vh, 24px);
+  padding-left: max(16px, var(--gutter), env(safe-area-inset-left, 0px));
+  padding-right: max(16px, var(--gutter), env(safe-area-inset-right, 0px));
+}
+/* margin: auto centres the content when it fits and lets a tall slide start at the top and scroll */
+.tr-in { width: 100%; max-width: 1220px; margin: auto; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(20px, 4vw, 56px); align-items: center; }
+
+/* text side */
+.tr-k { display: flex; align-items: center; gap: 12px; margin: 0 0 clamp(8px, 1.8vh, 16px); font-size: 12.5px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--violet-text); }
+.tr-k b {
+  display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: rgba(91, 7, 251, 0.18);
+  border: 1px solid rgba(165, 139, 255, 0.35); color: var(--ink); font-size: 14px; letter-spacing: 0;
+}
+.tr-t { margin: 0; font-size: clamp(28px, min(3.8vw, 6vh), 52px); font-weight: 500; line-height: 1.04; letter-spacing: -0.05em; text-wrap: balance; }
+.tr-tag { margin: clamp(8px, 1.6vh, 14px) 0 0; font-size: clamp(14.5px, min(1.5vw, 2.5vh), 18px); line-height: 1.45; color: var(--ink-soft); max-width: 44ch; }
+.tr-calls { list-style: none; margin: clamp(14px, 2.6vh, 24px) 0 0; padding: 0; display: flex; flex-direction: column; gap: clamp(8px, 1.5vh, 12px); max-width: 48ch; }
+.tr-calls li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; align-items: start; font-size: clamp(14px, 2.1vh, 15.5px); line-height: 1.45; }
+.tr-calls b, .tr-pins i {
+  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--violet); color: #fff;
+  font: 600 13px/1 var(--sans); font-style: normal; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+.tr-calls span { padding-top: 3px; }
+.tr-act { margin-top: clamp(16px, 3vh, 26px); }
+.tr-fine { margin: 14px 0 0; max-width: 46ch; font-size: 12.5px; line-height: 1.5; color: var(--ink-faint); }
+
+/* the screenshot, and the dots on it */
+.tr-shot {
+  position: relative; min-width: 0; aspect-ratio: var(--ard); overflow: hidden; border-radius: 16px; border: 1px solid var(--line-strong);
+  background: var(--surface); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+.tr-shot picture, .tr-shot img { display: block; width: 100%; height: 100%; }
+.tr-shot img { object-fit: cover; user-select: none; }
+.tr-pins { position: absolute; inset: 0; pointer-events: none; }
+.tr-pins--p { display: none; }
+.tr-pins i { position: absolute; width: clamp(22px, 2.2vw, 28px); height: clamp(22px, 2.2vw, 28px); translate: -50% -50%; font-size: clamp(11px, 1.1vw, 14px); }
+.tr-slide.on .tr-pins i { animation: tr-pop 0.45s var(--ease) both; }
+.tr-slide.on .tr-pins i:nth-child(2) { animation-delay: 0.12s; }
+.tr-slide.on .tr-pins i:nth-child(3) { animation-delay: 0.24s; }
+@keyframes tr-pop { from { opacity: 0; scale: 0.4; } to { opacity: 1; scale: 1; } }
+.tr-slide.on .tr-text > * { animation: tr-in 0.5s var(--ease) both; }
+.tr-slide.on .tr-text > :nth-child(2) { animation-delay: 0.05s; }
+.tr-slide.on .tr-text > :nth-child(3) { animation-delay: 0.1s; }
+.tr-slide.on .tr-text > :nth-child(4) { animation-delay: 0.15s; }
+@keyframes tr-in { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+
+/* controls: their own row under the stage */
+.tr-ctrl { position: relative; flex: none; display: flex; align-items: center; justify-content: center; gap: 14px; padding: 8px 16px calc(10px + env(safe-area-inset-bottom, 0px)); }
+.tr-nav {
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line-strong); background: rgba(29, 30, 40, 0.9); color: var(--ink);
+  display: grid; place-items: center; cursor: pointer; padding: 0; transition: transform 0.2s, opacity 0.2s;
+}
+.tr-nav:hover:not(:disabled) { transform: scale(1.06); }
+.tr-nav:disabled { opacity: 0.3; cursor: default; }
+.tr-nav svg { width: 18px; height: 18px; }
+.tr-done { min-width: 96px; justify-content: center; }
+.tr-dots { display: flex; gap: 6px; padding: 8px 12px; border-radius: var(--radius-pill); background: rgba(29, 30, 40, 0.85); border: 1px solid var(--line); }
+.tr-dot { position: relative; width: 8px; height: 8px; border-radius: var(--radius-pill); border: 0; padding: 0; background: rgba(255, 255, 255, 0.22); cursor: pointer; transition: width 0.3s var(--ease), background-color 0.3s; }
+.tr-dot::after { content: ""; position: absolute; inset: -9px -3px; } /* a bigger target than the dot */
+.tr-dot[aria-current="true"] { width: 24px; background: var(--violet-text); }
+
+@media (max-width: 900px) {
+  .tr-in { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+}
+/* phones: the phone screenshot and its dots, text first */
+@media (max-width: 700px) {
+  .tr-shot { aspect-ratio: var(--arp); max-width: 420px; margin-inline: auto; width: 100%; }
+  .tr-pins--d { display: none; }
+  .tr-pins--p { display: block; }
+  .tr-pins i { width: 24px; height: 24px; font-size: 12px; }
+}
+@media (max-width: 520px) {
+  .tr-dots { padding: 7px 10px; gap: 5px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tr-track, .tr-prog { transition: none; }
+  .tr-slide.on .tr-pins i, .tr-slide.on .tr-text > * { animation: none; }
+  .tr-nav, .tr-dot, .tr-skip { transition: none; }
+}

@@ -10,6 +10,7 @@ import { markClipSaved, useClipSave } from "@/components/player/useClipSave";
 import { clipQuery, type ClipCard, type ClipParams } from "@/lib/clip-types";
 import { fmtTime, youtubeAt, type Clip } from "@/lib/player-types";
 import { toast } from "@/lib/toast";
+import { TOUR_OPENED_EVENT } from "@/lib/tour";
 import { ReelCover } from "./ReelCover";
 
 /** Reels mode (/clips/reels): the clips of the current filters as a full-screen vertical feed, one reel per screen with
@@ -322,7 +323,7 @@ export function ReelsView({ params, initial, next: nextIn, prev: prevIn, startId
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement | null)?.closest?.("input, textarea, select")) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement | null)?.closest?.("input, textarea, select, dialog")) return;
       const k = e.key.toLowerCase();
       if (k === "arrowdown" || k === "j" || k === "pagedown") goTo(cur + 1);
       else if (k === "arrowup" || k === "k" || k === "pageup") goTo(cur - 1);
@@ -335,6 +336,13 @@ export function ReelsView({ params, initial, next: nextIn, prev: prevIn, startId
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [cur, goTo, started, start, router, back]);
+
+  // The welcome tour opened over the reels: stop playing until the reader taps to go on.
+  useEffect(() => {
+    const pause = () => setPaused(true);
+    window.addEventListener(TOUR_OPENED_EVENT, pause);
+    return () => window.removeEventListener(TOUR_OPENED_EVENT, pause);
+  }, []);
 
   const onEnded = useCallback((i: number) => { if (i + 1 < items.length) goTo(i + 1); }, [goTo, items.length]);
   const onBlocked = useCallback(() => setMuted(true), []);

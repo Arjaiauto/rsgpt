@@ -4,6 +4,8 @@ import { NavLinks, NavLinksView } from "@/components/app/NavLinks";
 import { LogoutButton } from "@/components/app/LogoutButton";
 import { PageViewBeacon } from "@/components/app/PageViewBeacon";
 import { QuickSearch } from "@/components/app/QuickSearch";
+import { TourButton } from "@/components/tour/TourButton";
+import { TourGate } from "@/components/tour/TourGate";
 import { requireSession } from "@/lib/auth";
 import "./app.css";
 
@@ -29,11 +31,15 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <Suspense fallback={<span className="hello" />}>
           <Hello />
         </Suspense>
+        <TourButton />
         <LogoutButton />
       </header>
       <main id="main" className="app-main" tabIndex={-1}>{children}</main>
       <Suspense fallback={null}>
         <PageViewBeacon />
+      </Suspense>
+      <Suspense fallback={null}>
+        <TourGate />
       </Suspense>
     </div>
   );

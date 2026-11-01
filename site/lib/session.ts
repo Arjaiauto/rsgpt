@@ -20,6 +20,9 @@ const sign = (payload: string) => createHmac("sha256", secret()).update(payload)
     callers apart without a raw IP ever being written to the database. */
 export const hashIp = (ip: string) => sign(`ip:${ip}`).slice(0, 22);
 
+/** The value of the tour cookie for a first name: a keyed hash, so it is only good for that name and can't be forged. */
+export const tourHash = (firstName: string) => sign(`tour:${firstName.trim().toLowerCase()}`).slice(0, 22);
+
 export function createSessionToken(firstName: string): string {
   const exp = Math.floor(Date.now() / 1000) + COOKIE_MAX_AGE;
   const payload = Buffer.from(JSON.stringify({ n: firstName, exp })).toString("base64url");

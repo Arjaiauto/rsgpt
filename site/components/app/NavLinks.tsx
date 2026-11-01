@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { IconMenu } from "@/components/Icons";
+import { TOUR_OPEN_EVENT } from "@/lib/tour";
 
 export const PAGES: [href: string, label: string][] = [
   ["/ask", "Ask"],
@@ -32,7 +33,16 @@ export function NavLinksView({ path }: { path: string }) {
       <nav className="links" aria-label="Main">{links}</nav>
       <details className="menu" ref={menuRef}>
         <summary aria-label="Menu"><IconMenu /></summary>
-        <nav className="menu__list" aria-label="Main">{links}</nav>
+        <nav className="menu__list" aria-label="Main">
+          {links}
+          <button
+            className="menu__tour"
+            type="button"
+            onClick={() => { if (menuRef.current) menuRef.current.open = false; window.dispatchEvent(new Event(TOUR_OPEN_EVENT)); }}
+          >
+            Take the tour
+          </button>
+        </nav>
       </details>
     </>
   );
