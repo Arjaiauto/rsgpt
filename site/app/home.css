@@ -152,8 +152,8 @@
 .tab[aria-selected="true"] { background: var(--raised); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .tab:focus-visible, .vbar:focus-visible { outline: 2px solid var(--violet-text); outline-offset: 2px; }
 .ex__body { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: clamp(20px, 4vw, 48px); align-items: end; }
-.vb { position: relative; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; height: 250px; padding-bottom: 44px; }
-.vb__ref { position: absolute; left: 0; right: 0; bottom: calc(44px + var(--r) * (100% - 44px)); border-top: 1px dashed var(--ink-faint); pointer-events: none; }
+.vb { --lab: 60px; position: relative; display: grid; grid-template-columns: repeat(var(--n, 5), minmax(0, 1fr)); gap: 10px; height: 250px; padding-bottom: var(--lab); }
+.vb__ref { position: absolute; left: 0; right: 0; bottom: calc(var(--lab) + var(--r) * (100% - var(--lab))); border-top: 1px dashed var(--ink-faint); pointer-events: none; }
 .vbar {
   position: relative; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; min-width: 0;
   padding: 0; border: 0; background: transparent; cursor: pointer; color: var(--ink-soft); font-family: var(--sans);
@@ -164,7 +164,12 @@
   transition: height 0.6s var(--ease), background 0.3s, box-shadow 0.3s;
 }
 .vbar__val { position: absolute; left: 50%; top: -22px; transform: translateX(-50%); font-size: 12.5px; font-weight: 500; color: var(--ink); white-space: nowrap; }
-.vbar__lab { position: absolute; left: -4px; right: -4px; bottom: -40px; font-size: 12px; line-height: 1.25; text-align: center; color: var(--ink-soft); }
+.vbar__lab { position: absolute; left: -4px; right: -4px; top: calc(100% + 6px); font-size: 12px; line-height: 1.25; text-align: center; color: var(--ink-soft); }
+.vbar__n { display: block; font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+/* Many bars (the Topic tab): labels tilted, anchored under their bar, with room to the left for the first one. */
+.vb--tilt { --lab: 112px; padding-left: 56px; }
+.vb--tilt .vbar__lab { left: auto; right: 50%; top: calc(100% + 6px); width: max-content; max-width: 112px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transform: rotate(-50deg); transform-origin: 100% 0; }
+.vb--tilt .vbar__n { overflow: visible; }
 .vbar:hover .vbar__col { background: linear-gradient(180deg, #9466ff, #6a1bff); }
 .vbar[aria-pressed="true"] .vbar__col { background: linear-gradient(180deg, #7ff0d4, var(--cite)); box-shadow: 0 0 0 4px rgba(79, 227, 193, 0.12), 0 10px 30px rgba(79, 227, 193, 0.18); }
 .vbar[aria-pressed="true"] .vbar__lab { color: var(--ink); }
@@ -185,8 +190,9 @@
 .lc .lbl { fill: var(--ink); font-weight: 500; font-size: 11.5px; }
 .lc .area { fill: url(#lc-fill); }
 .lc .ln { fill: none; stroke: var(--cite); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
-.lc .pt { fill: var(--paper); stroke: var(--cite); stroke-width: 2; }
-.lc .pt.last { fill: var(--cite); }
+.lc .pt { fill: var(--cite); stroke: var(--cite); stroke-width: 2; }
+.lc .pt.small { fill: var(--paper); } /* a small sample (10 to 19 episodes): outline only */
+.ex__note { margin: 16px 0 0; font-size: 12.5px; color: var(--ink-faint); }
 
 .cta {
   padding-block: clamp(80px, 12vh, 130px); border-top: 1px solid var(--line);
@@ -200,6 +206,8 @@
   .vb { height: 220px; }
 }
 @media (max-width: 520px) {
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; width: 100%; border-radius: 20px; }
+  .tab { height: 36px; }
   .vb { gap: 6px; }
   .vbar__lab { font-size: 11px; }
   .ex__sel b { font-size: 24px; }

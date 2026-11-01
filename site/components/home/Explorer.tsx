@@ -4,8 +4,8 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from
 
 import type { ExplorerData } from "@/lib/home-explorer";
 
-/** The numbers come from the server (lib/home-explorer.ts): views by episode length, as a multiple of a typical
-    episode of the same year. */
+/** The numbers come from the server (lib/home-explorer.ts): views by group (episode length, title style, topic, guest
+    type), as a multiple of a typical episode of the same year. */
 const MAXV = 2.5;
 const x2 = (v: number) => v.toFixed(1) + "×";
 
@@ -58,7 +58,9 @@ export function Explorer({ data }: { data: ExplorerData }) {
     return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); clearTimeout(t); };
   }, [draw]);
 
-  const rows = (data.sets.find((x) => x.key === set) ?? data.sets[0]).groups;
+  const active = data.sets.find((x) => x.key === set) ?? data.sets[0];
+  const rows = active.groups;
+  const tilt = rows.length > 5; // many bars: the labels are tilted so they never run into each other
   const group = rows[Math.min(sel, rows.length - 1)];
   const name = group.label, episodes = group.episodes, v = group.typical;
   const series = group.byYear; // only the years with enough episodes
@@ -91,7 +93,7 @@ export function Explorer({ data }: { data: ExplorerData }) {
       <p className="sub">Views compared with a typical episode of the same age; the dashed line is typical (1.0×). Tap a bar to see how it changed by year.</p>
       <div className="ex__body">
         <div className="ex__bars">
-          <div key={`${set}-${grow}`} className={`vb${grow ? " grow" : ""}`} role="group" aria-label="Average performance by group">
+          <div key={`${set}-${grow}`} className={`vb${grow ? " grow" : ""}${tilt ? " vb--tilt" : ""}`} style={{ "--n": rows.length } as CSSProperties} role="group" aria-label="Average performance by group">
             <div className="vb__ref" style={{ "--r": 1 / MAXV } as CSSProperties} />
             {rows.map((r, i) => {
               const val = r.typical;
@@ -107,7 +109,7 @@ export function Explorer({ data }: { data: ExplorerData }) {
                   <span className="vbar__col" style={{ "--h": (val / MAXV).toFixed(3) } as CSSProperties}>
                     <span className="vbar__val num">{x2(val)}</span>
                   </span>
-                  <span className="vbar__lab">{r.label}</span>
+                  <span className="vbar__lab" title={r.label}>{r.label}<span className="vbar__n">n = {r.episodes}</span></span>
                 </button>
               );
             })}
@@ -115,13 +117,13 @@ export function Explorer({ data }: { data: ExplorerData }) {
         </div>
         <div className="ex__line">
           <div className="ex__sel"><span>{name}</span><b className="num">{x2(v)}</b></div>
-          <p className="ex__meta">{episodes} episodes · {series.length >= 2 ? `range ${x2(Math.min(...series.map((p) => p.value)))} to ${x2(Math.max(...series.map((p) => p.value)))} by year` : "too few episodes in a year to show a by-year line"}</p>
+          <p className="ex__meta">{episodes} episodes · {series.length >= 2 ? `range ${x2(Math.min(...series.map((p) => p.value)))} to ${x2(Math.max(...series.map((p) => p.value)))} by year` : "too few episodes in a year to show a by-year line"}{series.some((p) => p.small) ? " · hollow points: small sample (10 to 19 episodes)" : ""}</p>
           <svg
             className="lc"
             ref={svgRef}
             viewBox={`0 0 ${W} ${H}`}
             role="img"
-            aria-label={`${name} by year: ` + (series.length ? series.map((p) => `${p.year} ${x2(p.value)}`).join(", ") : "not enough episodes in any year")}
+            aria-label={`${name} by year: ` + (series.length ? series.map((p) => `${p.year} ${x2(p.value)} (n = ${p.n}${p.small ? ", small sample" : ""})`).join(", ") : "not enough episodes in any year")}
           >
             <defs>
               <linearGradient id="lc-fill" x1="0" y1="0" x2="0" y2="1">
@@ -143,8 +145,8 @@ export function Explorer({ data }: { data: ExplorerData }) {
             <path className="ln" d={d} />
             {pts.map((p, i) => (
               <g key={i}>
-                <circle className={`pt${i === pts.length - 1 ? " last" : ""}`} cx={p[0]} cy={p[1]} r={4}>
-                  <title>{`${series[i].year}: ${x2(series[i].value)} (${series[i].n} episodes)`}</title>
+                <circle className={`pt${series[i].small ? " small" : ""}${i === pts.length - 1 ? " last" : ""}`} cx={p[0]} cy={p[1]} r={4}>
+                  <title>{series[i].small ? `${series[i].year}: ${x2(series[i].value)}, small sample (n = ${series[i].n})` : `${series[i].year}: ${x2(series[i].value)} (n = ${series[i].n})`}</title>
                 </circle>
                 {/* First label starts at its point and last one ends at it, so neither reaches the axis labels or the edge. */}
                 <text
@@ -160,6 +162,7 @@ export function Explorer({ data }: { data: ExplorerData }) {
           </svg>
         </div>
       </div>
+      {active.note && <p className="ex__note">{active.note}</p>}
     </div>
   );
 }
