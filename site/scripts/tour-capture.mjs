@@ -80,7 +80,7 @@ const SLIDES = [
   {
     id: "welcome", url: "/ask", height: { desktop: 640, phone: 470 },
     async prepare(page, size) { if (size === "phone") { await page.locator("details.menu summary").click(); await sleep(300); } },
-    pins: { desktop: [pin(1, "nav.links:visible"), pin(2, ".qs:visible"), pin(3, ".hello", ".logout:visible")],
+    pins: { desktop: [pin(1, "nav.links:visible"), pin(2, ".qs:visible"), pin(3, ".hello", ".tour-btn:visible", ".logout:visible")],
             phone: [pin(1, ".menu__list:visible"), pin(2, ".qs:visible"), pin(3, ".hello", ".logout:visible")] },
   },
   {
@@ -226,6 +226,12 @@ async function captureSlide(page, slide, sizeName) {
   try {
     await retry(`goto ${slide.url}`, () => page.goto(BASE + slide.url, { waitUntil: "networkidle" }));
     await page.addStyleTag({ content: "*{caret-color:transparent!important}" });
+    // The welcome tour opens by itself for a name that hasn't closed it yet; close it so the page is what gets captured.
+    await sleep(900);
+    if (await page.locator("dialog.tr[open]").count()) {
+      await page.locator(".tr-skip").click();
+      await sleep(700);
+    }
     await slide.prepare?.(page, sizeName);
     // Nobody should see the test name: the top bar says "Hi there".
     await page.evaluate(() => {
