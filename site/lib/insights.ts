@@ -234,12 +234,22 @@ async function readInsights(): Promise<Insights> {
 
 /* ---------- use of Cuepoint ---------- */
 
-/** Test runs are not use: rows from these first names (any case) and rows with no first name (early test visits before
-    login asked for one) are left out of every usage count. Web research calls of the Prep brief are logged as kind
-    'brief' with the question "[web] name - line"; they are counted on their own. */
+/** Test runs are not use: rows from people flagged is_test in public.visitors (the owner and test names) and rows with
+    no first name (early test visits before login asked for one) are left out of every usage count. If that lookup
+    fails, EXCLUDED_NAMES is the fallback. Web research calls of the Prep brief are logged as kind 'brief' with the
+    question "[web] name - line"; they are counted on their own. */
 export const EXCLUDED_NAMES = ["test-script", "tester"];
-const excluded = new Set(EXCLUDED_NAMES.map((n) => n.toLowerCase()));
-export const isRealUse = (r: { first_name: string | null }) => !!r.first_name?.trim() && !excluded.has(r.first_name.trim().toLowerCase());
+
+async function testNames(): Promise<Set<string>> {
+  try {
+    const rows = await all<{ name_key: string }>((a, b) => db().from("visitors").select("name_key").eq("is_test", true).order("id").range(a, b));
+    return new Set(rows.map((r) => r.name_key.toLowerCase()));
+  } catch (e) {
+    console.warn("insights: visitors.is_test unavailable, using EXCLUDED_NAMES:", e instanceof Error ? e.message : e);
+    return new Set(EXCLUDED_NAMES.map((n) => n.toLowerCase()));
+  }
+}
+const realUse = (test: Set<string>) => (r: { first_name: string | null }) => !!r.first_name?.trim() && !test.has(r.first_name.trim().toLowerCase());
 export const isWebRow = (r: { kind: string | null; question: string | null }) => r.kind === "brief" && (r.question ?? "").startsWith("[web]");
 
 export async function getUsage(): Promise<Usage> {
@@ -249,13 +259,15 @@ export async function getUsage(): Promise<Usage> {
 }
 
 async function readUsage(): Promise<Usage> {
-  const [log, saved, dir, guestVideos] = await Promise.all([
+  const [log, saved, dir, guestVideos, test] = await Promise.all([
     all<{ kind: string | null; question: string | null; first_name: string | null; cited_chunk_ids: number[] | null; created_at: string }>((a, b) =>
       db().from("qa_log").select("kind,question,first_name,cited_chunk_ids,created_at").order("id").range(a, b)),
     all<{ kind: string; first_name: string | null }>((a, b) => db().from("saved_items").select("kind,first_name").order("id").range(a, b)),
     getDirectory(),
     getGuestVideos(),
+    testNames(),
   ]);
+  const isRealUse = realUse(test);
   const real = log.filter(isRealUse);
   const asks = real.filter((r) => r.kind === "ask");
   const keep = saved.filter(isRealUse);

@@ -7,7 +7,7 @@ import { getDirectory } from "@/lib/guests";
 import { buildBrief } from "@/lib/prep/build";
 import { briefToText } from "@/lib/prep/export";
 import { PREP_LIMITS, type PrepEvent } from "@/lib/prep/types";
-import { takeTry } from "@/lib/rate-limit";
+import { ipKey, takeTry } from "@/lib/rate-limit";
 import { SESSION_COOKIE, VISITOR_COOKIE, readSessionToken } from "@/lib/session";
 
 /** Briefs per visitor (falls back to IP) in the window; one brief is one Haiku call plus a search. */
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   if (!name && !sector) return NextResponse.json({ error: "Add a name or pick a sector" }, { status: 400 });
 
   const h = await headers();
-  const who = visitorId ?? h.get("x-forwarded-for")?.split(",")[0].trim() ?? "local";
+  const who = visitorId ?? ipKey(h);
   if (!(await takeTry(`prep:${who}`, RATE_LIMIT.max, RATE_LIMIT.windowMs))) {
     return NextResponse.json({ error: "Too many briefs. Wait a few minutes and try again." }, { status: 429 });
   }

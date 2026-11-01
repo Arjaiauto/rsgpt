@@ -2,6 +2,7 @@ import { Suspense, type ReactNode } from "react";
 import { Logo } from "@/components/Logo";
 import { NavLinks, NavLinksView } from "@/components/app/NavLinks";
 import { LogoutButton } from "@/components/app/LogoutButton";
+import { PageViewBeacon } from "@/components/app/PageViewBeacon";
 import { QuickSearch } from "@/components/app/QuickSearch";
 import { requireSession } from "@/lib/auth";
 import "./app.css";
@@ -31,6 +32,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <LogoutButton />
       </header>
       <main id="main" className="app-main" tabIndex={-1}>{children}</main>
+      <Suspense fallback={null}>
+        <PageViewBeacon />
+      </Suspense>
     </div>
   );
 }

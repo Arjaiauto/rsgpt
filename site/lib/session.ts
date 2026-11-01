@@ -16,6 +16,10 @@ function secret(): string {
 
 const sign = (payload: string) => createHmac("sha256", secret()).update(payload).digest("base64url");
 
+/** A one-way, keyed hash of an IP address (HMAC with SESSION_SECRET, cut to 22 characters), so rate limits can tell
+    callers apart without a raw IP ever being written to the database. */
+export const hashIp = (ip: string) => sign(`ip:${ip}`).slice(0, 22);
+
 export function createSessionToken(firstName: string): string {
   const exp = Math.floor(Date.now() / 1000) + COOKIE_MAX_AGE;
   const payload = Buffer.from(JSON.stringify({ n: firstName, exp })).toString("base64url");

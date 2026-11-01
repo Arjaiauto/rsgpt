@@ -7,7 +7,7 @@ import { retrieve, sourceOf } from "@/lib/ask/retrieve";
 import { getGuestScope } from "@/lib/guests";
 import { Timings } from "@/lib/ask/timing";
 import type { AskEvent, AskLanguage } from "@/lib/ask/types";
-import { takeTry } from "@/lib/rate-limit";
+import { ipKey, takeTry } from "@/lib/rate-limit";
 import { SESSION_COOKIE, VISITOR_COOKIE, readSessionToken } from "@/lib/session";
 
 /** POST /api/ask {question, earlier?: string[], guest?: slug} -> NDJSON stream of AskEvent (one JSON object per line). */
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   }
 
   const h = await headers();
-  const who = visitorId ?? h.get("x-forwarded-for")?.split(",")[0].trim() ?? "local";
+  const who = visitorId ?? ipKey(h);
   if (!(await takeTry(`ask:${who}`, ASK.rateLimit.max, ASK.rateLimit.windowMs))) {
     return NextResponse.json({ error: "Too many questions. Wait a few minutes and try again." }, { status: 429 });
   }

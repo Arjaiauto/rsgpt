@@ -1,5 +1,6 @@
 import "server-only";
 import { db } from "@/lib/db";
+import { hashIp } from "@/lib/session";
 
 /** Rate limits kept in the database (pipeline/sql/rate_limits.sql: table rate_limits and the function
     take_rate_limit, one atomic increment), so they hold across every server instance and restart.
@@ -22,8 +23,15 @@ export async function takeTry(key: string, max: number, windowMs: number): Promi
 export const takeUser = (action: string, firstName: string, max: number, windowMs: number) =>
   takeTry(`${action}:${firstName.trim().toLowerCase()}`, max, windowMs);
 
+/** The caller's address from the proxy headers, as a hashed key (never the raw IP, which must not reach the database). */
+export function ipKey(h: { get(name: string): string | null }): string {
+  const ip = h.get("x-forwarded-for")?.split(",")[0].trim() || h.get("x-real-ip");
+  return ip ? hashIp(ip) : "local";
+}
+
 /** The limits of the actions that have no route of their own, in one place (tries per window per person). */
 export const USER_LIMITS = {
+  events: { max: 300, windowMs: 10 * 60 * 1000 },
   saved: { max: 120, windowMs: 10 * 60 * 1000 },
   report: { max: 10, windowMs: 10 * 60 * 1000 },
   clips: { max: 200, windowMs: 10 * 60 * 1000 },

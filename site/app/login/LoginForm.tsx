@@ -70,7 +70,7 @@ export function LoginForm() {
       </div>
       <button className="pill pill--primary rise d2" type="submit" disabled={pending}>Enter</button>
       <p className="auth__note rise d3">
-        Your first name is saved with your questions so we can see who used Cuepoint during the beta. Nothing else is collected.
+        Your first name, the kind of device you use (phone, tablet or desktop) and the pages you open are saved with your questions so we can see who used Cuepoint during the beta. Your IP address and password are not stored.
       </p>
     </form>
   );
