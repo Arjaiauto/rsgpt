@@ -1,15 +1,55 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type TouchEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type TouchEvent } from "react";
 import { useRouter } from "next/navigation";
 import { player } from "@/components/player/store";
 import { TOUR_OPENED_EVENT, TOUR_SLIDES } from "@/lib/tour";
 import pinData from "@/public/tour/pins.json";
+import { placeBadges } from "./place";
 import "./tour.css";
 
-type Pins = Record<string, Partial<Record<"d" | "p", { width: number; height: number; pins: { n: number; x: number; y: number }[] }>>>;
+/** A screenshot and the boxes the callouts point at, as fractions of the picture (public/tour/pins.json). */
+type ShotData = { width: number; height: number; pins: { n: number; x: number; y: number; w: number; h: number }[] };
+type Pins = Record<string, Partial<Record<"d" | "p", ShotData>>>;
 const PINS = pinData as unknown as Pins;
 const N = TOUR_SLIDES.length;
+
+/** Phones get the phone screenshots; the same query switches the pictures in CSS. */
+const PHONE = "(max-width: 700px)";
+const subscribePhone = (cb: () => void) => { const m = window.matchMedia(PHONE); m.addEventListener("change", cb); return () => m.removeEventListener("change", cb); };
+const isPhone = () => window.matchMedia(PHONE).matches;
+
+/** One screenshot: the picture, an outline around each target and its number just outside the outline. */
+function Shot({ id, alt, d, p, phone, eager }: { id: string; alt: string; d: ShotData; p: ShotData; phone: boolean; eager: boolean }) {
+  const frame = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  const v = phone ? p : d;
+  useEffect(() => {
+    const el = frame.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setSize({ w: e.contentRect.width, h: e.contentRect.height }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const badges = useMemo(
+    () => (size.w > 0 ? placeBadges(v.pins.map((t) => ({ n: t.n, x: t.x * size.w, y: t.y * size.h, w: t.w * size.w, h: t.h * size.h })), size.w, size.h, phone ? 20 : 24) : []),
+    [v, size, phone],
+  );
+  return (
+    <div ref={frame} className="tr-shot" style={{ "--ard": d.width / d.height, "--arp": p.width / p.height } as CSSProperties}>
+      <picture>
+        <source media={PHONE} srcSet={`/tour/${id}-p.webp`} width={p.width} height={p.height} />
+        <img src={`/tour/${id}-d.webp`} width={d.width} height={d.height} alt={alt} loading={eager ? "eager" : "lazy"} decoding="async" draggable={false} />
+      </picture>
+      <span className="tr-marks" aria-hidden="true">
+        {v.pins.map((t) => (
+          <i key={t.n} className="tr-box" style={{ left: `${t.x * 100}%`, top: `${t.y * 100}%`, width: `${t.w * 100}%`, height: `${t.h * 100}%` }} />
+        ))}
+        {badges.map((b) => <b key={b.n} className="tr-badge" style={{ left: b.left, top: b.top }}>{b.n}</b>)}
+      </span>
+    </div>
+  );
+}
 
 /** The welcome tour: a full-screen modal over any page. A native <dialog>, so the browser keeps focus inside it, makes
     the page behind it inert and closes it on Esc. Loaded on demand by TourHost. */
@@ -21,6 +61,7 @@ export default function Tour({ onClose }: { onClose: () => void }) {
   const closed = useRef(false);
   const doneBtn = useRef<HTMLButtonElement>(null);
   const [cur, setCur] = useState(0);
+  const phone = useSyncExternalStore(subscribePhone, isPhone, () => false);
 
   const go = useCallback((to: number) => setCur(Math.max(0, Math.min(N - 1, to))), []);
   const close = useCallback(() => dialog.current?.close(), []);
@@ -108,7 +149,7 @@ export default function Tour({ onClose }: { onClose: () => void }) {
               >
                 <div className="tr-in">
                   <div className="tr-text">
-                    <p className="tr-k"><b>{i + 1}</b>{i === 0 ? "Quick tour" : `Page ${i} of ${N - 1}`}</p>
+                    <p className="tr-k">{s.kicker}</p>
                     <h2 className="tr-t">{s.title}</h2>
                     <p className="tr-tag">{s.purpose}</p>
                     <ol className="tr-calls">
@@ -122,20 +163,7 @@ export default function Tour({ onClose }: { onClose: () => void }) {
                     {i === 0 && <p className="tr-fine">Unofficial project, not affiliated with Figuring Out. Every answer links to its source.</p>}
                     {i === N - 1 && <p className="tr-fine">Reopen anytime from ? Tour.</p>}
                   </div>
-                  {d && p && (
-                    <div className="tr-shot" style={{ "--ard": `${d.width} / ${d.height}`, "--arp": `${p.width} / ${p.height}` } as React.CSSProperties}>
-                      <picture>
-                        <source media="(max-width: 700px)" srcSet={`/tour/${s.id}-p.webp`} width={p.width} height={p.height} />
-                        <img src={`/tour/${s.id}-d.webp`} width={d.width} height={d.height} alt={s.alt} loading={i <= 1 ? "eager" : "lazy"} decoding="async" draggable={false} />
-                      </picture>
-                      <span className="tr-pins tr-pins--d" aria-hidden="true">
-                        {d.pins.map((x) => <i key={x.n} style={{ left: `${x.x * 100}%`, top: `${x.y * 100}%` }}>{x.n}</i>)}
-                      </span>
-                      <span className="tr-pins tr-pins--p" aria-hidden="true">
-                        {p.pins.map((x) => <i key={x.n} style={{ left: `${x.x * 100}%`, top: `${x.y * 100}%` }}>{x.n}</i>)}
-                      </span>
-                    </div>
-                  )}
+                  {d && p && <Shot id={s.id} alt={s.alt} d={d} p={p} phone={phone} eager={i <= 1} />}
                 </div>
               </section>
             );

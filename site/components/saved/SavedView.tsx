@@ -19,7 +19,10 @@ type Item = SavedClip | SavedAnswer | SavedBrief;
 type Kind = Item["kind"];
 
 const TABS: [Kind, string][] = [["clip", "Clips"], ["answer", "Answers"], ["brief", "Prep briefs"]];
-const NEW_FOLDER = "\u0000new";
+/** The "New folder…" choice in an item's folder menu. Folder names never contain control characters (folderName strips
+    them), so this can't clash with one. Not \u0000: the HTML parser turns a NUL in the server-rendered option into U+FFFD,
+    so the page never recognised the choice and filed items in a folder called "�new". */
+const NEW_FOLDER = "\u001Fnew";
 const UNDO_MS = 6000;
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 const hueOf = (name: string) => { let h = 7; for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };

@@ -1,5 +1,5 @@
 /** The welcome tour (Ticket 25b): the slides, and the names the tour's parts share. Pictures are screenshots of the live
-    site in public/tour/ (made by scripts/tour-capture.mjs); the dots on them come from public/tour/pins.json. */
+    site in public/tour/ (made by scripts/tour-capture.mjs); the boxes the callouts point at come from public/tour/pins.json. */
 
 /** A signed cookie that says this device has already shown this person the tour (the record itself is
     visitors.tour_seen_at, keyed by name). */
@@ -11,10 +11,12 @@ export const TOUR_OPENED_EVENT = "cuepoint:tour-opened";
 
 export type TourSlide = {
   id: string;
+  /** The small line above the title: the page's name. */
+  kicker: string;
   title: string;
   /** What the page is for, in one line. */
   purpose: string;
-  /** Three numbered callouts; the numbers are the dots on the screenshot. */
+  /** Three numbered callouts; each number is on a box outlined in the screenshot. */
   callouts: [string, string, string];
   tryIt: { label: string; href: string };
   alt: string;
@@ -23,6 +25,7 @@ export type TourSlide = {
 export const TOUR_SLIDES: TourSlide[] = [
   {
     id: "welcome",
+    kicker: "Quick tour",
     title: "Welcome to Cuepoint",
     purpose: "Search every episode and jump to the moment something was said. Every answer links to its source.",
     callouts: [
@@ -35,43 +38,47 @@ export const TOUR_SLIDES: TourSlide[] = [
   },
   {
     id: "ask",
-    title: "Ask",
+    kicker: "Ask",
+    title: "Ask anything, see the source",
     purpose: "Ask in English, Hindi or Hinglish. Answers use only what was said on the show.",
     callouts: [
       "Type a question, or tap an example. “Find a line” finds a quote you half remember.",
       "Tap a timestamp to hear that exact moment.",
-      "Check the sources, or tap a follow-up under “Ask next”.",
+      "Check the sources under the answer, then tap a follow-up to go deeper.",
     ],
     tryIt: { label: "Ask a question", href: "/ask" },
-    alt: "An answered question on the Ask page: the answer with timestamp buttons, the source episodes, follow-up questions and the question box at the bottom.",
+    alt: "An answered question on the Ask page: the answer with timestamp buttons, the source episodes and the question box.",
   },
   {
     id: "prep",
-    title: "Prep brief",
-    purpose: "Get ready for an upcoming guest, built only from past episodes.",
+    kicker: "Prep brief",
+    title: "Prepare for your next guest",
+    purpose: "A brief built only from past episodes.",
     callouts: [
       "Type a name and one line about them, or pick a sector.",
       "Press Build brief. Every line links to its moment.",
       "Copy it, download it as PDF or Word, or save it to reopen later.",
     ],
     tryIt: { label: "Build a brief", href: "/prep" },
-    alt: "The Prep brief page: the guest form on the left and a finished brief with its copy, download and save buttons.",
+    alt: "The Prep brief page: the guest form and a finished brief with its copy, download and save buttons.",
   },
   {
     id: "guests",
-    title: "Guests",
-    purpose: "Browse every guest and see what they said.",
+    kicker: "Guests",
+    title: "Browse every guest",
+    purpose: "See who has been on the show and what they said.",
     callouts: [
       "Search by name or organisation.",
       "Filter by year, language, sort order or sector.",
       "Hover or tap a card for views, length and clips. Open a profile for takeaways, quotes and clips.",
     ],
     tryIt: { label: "Browse guests", href: "/guests" },
-    alt: "The Guests page: a search box, year, language and sort filters, sector chips and a grid of guest cards, one open to show its takeaway and numbers.",
+    alt: "The Guests page: a search box, year, language and sort filters, sector chips and guest cards, one open to show its numbers.",
   },
   {
     id: "clips",
-    title: "Clips + Reels",
+    kicker: "Clips + Reels",
+    title: "Find and watch moments",
     purpose: "Ready-made moments you can search, play and save.",
     callouts: [
       "Search clips, then narrow them by topic, guest, length, year or language.",
@@ -79,11 +86,12 @@ export const TOUR_SLIDES: TourSlide[] = [
       "Watch as reels: swipe or press ↑ ↓, M mutes, Esc goes back.",
     ],
     tryIt: { label: "Find clips", href: "/clips" },
-    alt: "The Clips page: a search box, filters, the Watch as reels button and a grid of clip cards.",
+    alt: "The Clips page: a search box, filters, the Watch as reels button and clip cards.",
   },
   {
     id: "saved",
-    title: "Saved",
+    kicker: "Saved",
+    title: "Keep what matters",
     purpose: "Everything you saved, in one place.",
     callouts: [
       "Switch between Clips, Answers and Prep briefs.",
@@ -91,18 +99,19 @@ export const TOUR_SLIDES: TourSlide[] = [
       "Add a note to any item. Saved items stay on this browser.",
     ],
     tryIt: { label: "See saved items", href: "/saved" },
-    alt: "The Saved page: folders on the left, tabs for clips, answers and briefs, and saved clips with notes.",
+    alt: "The Saved page: folders, tabs for clips, answers and briefs, and saved clips with a note.",
   },
   {
     id: "insights",
-    title: "Insights",
-    purpose: "The archive in numbers.",
+    kicker: "Insights",
+    title: "The archive in numbers",
+    purpose: "Patterns across the whole archive.",
     callouts: [
       "The size of the archive: episodes, guests, hours and clips.",
       "Which topics the show covers, with episodes and clips for each.",
       "Click a topic to see its clips. Further down: guests, views and more.",
     ],
     tryIt: { label: "Open Insights", href: "/insights" },
-    alt: "The Insights page: tiles with the size of the archive, then the topics chart and the guests lists.",
+    alt: "The Insights page: tiles with the size of the archive, then the topics chart.",
   },
 ];

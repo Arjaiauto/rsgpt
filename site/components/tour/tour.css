@@ -35,36 +35,34 @@ dialog.tr::backdrop { background: rgba(8, 8, 12, 0.85); }
 
 /* text side */
 .tr-k { display: flex; align-items: center; gap: 12px; margin: 0 0 clamp(8px, 1.8vh, 16px); font-size: 12.5px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--violet-text); }
-.tr-k b {
-  display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: rgba(91, 7, 251, 0.18);
-  border: 1px solid rgba(165, 139, 255, 0.35); color: var(--ink); font-size: 14px; letter-spacing: 0;
-}
 .tr-t { margin: 0; font-size: clamp(28px, min(3.8vw, 6vh), 52px); font-weight: 500; line-height: 1.04; letter-spacing: -0.05em; text-wrap: balance; }
 .tr-tag { margin: clamp(8px, 1.6vh, 14px) 0 0; font-size: clamp(14.5px, min(1.5vw, 2.5vh), 18px); line-height: 1.45; color: var(--ink-soft); max-width: 44ch; }
 .tr-calls { list-style: none; margin: clamp(14px, 2.6vh, 24px) 0 0; padding: 0; display: flex; flex-direction: column; gap: clamp(8px, 1.5vh, 12px); max-width: 48ch; }
 .tr-calls li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; align-items: start; font-size: clamp(14px, 2.1vh, 15.5px); line-height: 1.45; }
-.tr-calls b, .tr-pins i {
-  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--violet); color: #fff;
-  font: 600 13px/1 var(--sans); font-style: normal; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 2px 8px rgba(0, 0, 0, 0.5);
+.tr-calls b, .tr-badge {
+  display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--violet); color: #fff;
+  font: 600 12.5px/1 var(--sans); font-style: normal; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.92), 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 .tr-calls span { padding-top: 3px; }
 .tr-act { margin-top: clamp(16px, 3vh, 26px); }
 .tr-fine { margin: 14px 0 0; max-width: 46ch; font-size: 12.5px; line-height: 1.5; color: var(--ink-faint); }
 
-/* the screenshot, and the dots on it */
+/* the screenshot, an outline round each target and its number just outside the outline. The picture is only as big as
+   fits the screen under the text (no scrolling inside a slide); outlines are in percent of it, badges in pixels (tr-badge
+   positions are worked out in Tour.tsx from the rendered size, so they never cover a target or each other). */
 .tr-shot {
-  position: relative; min-width: 0; aspect-ratio: var(--ard); overflow: hidden; border-radius: 16px; border: 1px solid var(--line-strong);
-  background: var(--surface); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  position: relative; min-width: 0; margin-inline: auto; aspect-ratio: var(--ard); overflow: visible;
+  width: min(100%, calc((100vh - 190px) * var(--ard))); width: min(100%, calc((100dvh - 190px) * var(--ard)));
 }
 .tr-shot picture, .tr-shot img { display: block; width: 100%; height: 100%; }
-.tr-shot img { object-fit: cover; user-select: none; }
-.tr-pins { position: absolute; inset: 0; pointer-events: none; }
-.tr-pins--p { display: none; }
-.tr-pins i { position: absolute; width: clamp(22px, 2.2vw, 28px); height: clamp(22px, 2.2vw, 28px); translate: -50% -50%; font-size: clamp(11px, 1.1vw, 14px); }
-.tr-slide.on .tr-pins i { animation: tr-pop 0.45s var(--ease) both; }
-.tr-slide.on .tr-pins i:nth-child(2) { animation-delay: 0.12s; }
-.tr-slide.on .tr-pins i:nth-child(3) { animation-delay: 0.24s; }
-@keyframes tr-pop { from { opacity: 0; scale: 0.4; } to { opacity: 1; scale: 1; } }
+.tr-shot img { object-fit: cover; user-select: none; border-radius: 14px; border: 1px solid var(--line-strong); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45); }
+.tr-marks { position: absolute; inset: 0; pointer-events: none; }
+.tr-box { position: absolute; border-radius: 9px; outline: 2px solid var(--cite); outline-offset: 2px; background: rgba(79, 227, 193, 0.05); }
+.tr-badge { position: absolute; }
+.tr-slide.on .tr-box, .tr-slide.on .tr-badge { animation: tr-pop 0.45s var(--ease) both; }
+.tr-slide.on .tr-box:nth-child(2), .tr-slide.on .tr-badge:nth-child(2) { animation-delay: 0.12s; }
+.tr-slide.on .tr-box:nth-child(3), .tr-slide.on .tr-badge:nth-child(3) { animation-delay: 0.24s; }
+@keyframes tr-pop { from { opacity: 0; } to { opacity: 1; } }
 .tr-slide.on .tr-text > * { animation: tr-in 0.5s var(--ease) both; }
 .tr-slide.on .tr-text > :nth-child(2) { animation-delay: 0.05s; }
 .tr-slide.on .tr-text > :nth-child(3) { animation-delay: 0.1s; }
@@ -89,18 +87,32 @@ dialog.tr::backdrop { background: rgba(8, 8, 12, 0.85); }
 @media (max-width: 900px) {
   .tr-in { grid-template-columns: minmax(0, 1fr); gap: 18px; }
 }
-/* phones: the phone screenshot and its dots, text first */
+/* phones: title and purpose, then the phone screenshot, then the callouts and the button, all on one screen */
 @media (max-width: 700px) {
-  .tr-shot { aspect-ratio: var(--arp); max-width: 420px; margin-inline: auto; width: 100%; }
-  .tr-pins--d { display: none; }
-  .tr-pins--p { display: block; }
-  .tr-pins i { width: 24px; height: 24px; font-size: 12px; }
+  .tr-slide { padding-block: 6px 10px; }
+  .tr-in { display: flex; flex-direction: column; align-items: stretch; gap: 10px; margin: 0 auto; }
+  .tr-text { display: contents; }
+  .tr-k { order: 1; margin: 0; }
+  .tr-t { order: 2; font-size: 24px; }
+  .tr-tag { order: 3; margin: 0; font-size: 13.5px; line-height: 1.4; max-width: none; }
+  .tr-shot {
+    order: 4; aspect-ratio: var(--arp);
+    width: max(150px, min(100%, calc((100vh - 530px) * var(--arp)))); width: max(150px, min(100%, calc((100dvh - 530px) * var(--arp))));
+  }
+  .tr-calls { order: 5; margin: 0; gap: 7px; }
+  .tr-calls li { grid-template-columns: 24px minmax(0, 1fr); gap: 10px; font-size: 13px; line-height: 1.35; }
+  .tr-calls span { padding-top: 2px; }
+  .tr-act { order: 6; margin: 2px 0 0; }
+  .tr-act .pill { width: 100%; justify-content: center; }
+  .tr-fine { order: 7; margin: 0; font-size: 11.5px; }
+  .tr-badge, .tr-calls b { width: 20px; height: 20px; font-size: 11px; }
+  .tr-calls li { grid-template-columns: 20px minmax(0, 1fr); }
 }
 @media (max-width: 520px) {
   .tr-dots { padding: 7px 10px; gap: 5px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .tr-track, .tr-prog { transition: none; }
-  .tr-slide.on .tr-pins i, .tr-slide.on .tr-text > * { animation: none; }
+  .tr-slide.on .tr-box, .tr-slide.on .tr-badge, .tr-slide.on .tr-text > * { animation: none; }
   .tr-nav, .tr-dot, .tr-skip { transition: none; }
 }
