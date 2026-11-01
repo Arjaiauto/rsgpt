@@ -34,7 +34,7 @@ export async function POST(request: Request) {
 
   const h = await headers();
   const who = visitorId ?? h.get("x-forwarded-for")?.split(",")[0].trim() ?? "local";
-  if (!takeTry(`ask:${who}`, ASK.rateLimit.max, ASK.rateLimit.windowMs)) {
+  if (!(await takeTry(`ask:${who}`, ASK.rateLimit.max, ASK.rateLimit.windowMs))) {
     return NextResponse.json({ error: "Too many questions. Wait a few minutes and try again." }, { status: 429 });
   }
 

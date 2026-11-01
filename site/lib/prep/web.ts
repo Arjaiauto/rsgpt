@@ -25,8 +25,10 @@ export const WEB = {
   maxNews: 5,
   maxAppearances: 5,
   maxSince: 5,
-  /** Web research calls per session (first name and visitor) in 24 hours. */
+  /** Web research calls per first name in 24 hours. */
   perDay: 20,
+  /** Web research calls for everyone together in 24 hours (each is paid searches plus a model call). */
+  siteDay: 60,
 } as const;
 
 /** Pages that sell contact details, or list people's phone numbers and emails (rule 3), are never read. */

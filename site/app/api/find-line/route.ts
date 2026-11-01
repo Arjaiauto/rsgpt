@@ -22,7 +22,7 @@ export async function POST(request: Request) {
 
   const h = await headers();
   const who = jar.get(VISITOR_COOKIE)?.value ?? h.get("x-forwarded-for")?.split(",")[0].trim() ?? "local";
-  if (!takeTry(`line:${who}`, ASK.rateLimit.max, ASK.rateLimit.windowMs)) {
+  if (!(await takeTry(`line:${who}`, ASK.rateLimit.max, ASK.rateLimit.windowMs))) {
     return NextResponse.json({ error: "Too many searches. Wait a few minutes and try again." }, { status: 429 });
   }
 

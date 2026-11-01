@@ -6,12 +6,14 @@ import { requireSession } from "@/lib/auth";
 import { parseClipParams, type ClipLine, type ClipPage, type ClipParams } from "@/lib/clip-types";
 import { getClipIndex, queryClips } from "@/lib/clips";
 import { db } from "@/lib/db";
+import { takeUser, USER_LIMITS } from "@/lib/rate-limit";
 import { VISITOR_COOKIE } from "@/lib/session";
 
 /** The next page of clips for the same filters ("Load more" and infinite scroll). The params are read again the way
     the page reads the URL, so nothing else gets through. */
 export async function moreClips(params: ClipParams, offset: number): Promise<ClipPage> {
-  await requireSession();
+  const { firstName } = await requireSession();
+  if (!(await takeUser("clips", firstName, USER_LIMITS.clips.max, USER_LIMITS.clips.windowMs))) throw new Error("Too many requests");
   const p = parseClipParams(params as unknown as Record<string, string>);
   return queryClips(p, Number.isFinite(offset) ? offset : 0);
 }
@@ -19,8 +21,9 @@ export async function moreClips(params: ClipParams, offset: number): Promise<Cli
 /** A clip's transcript lines, for the live transcript in the player panel: the episode's lines from the clip's start
     to its end, with the English translation of a Hindi episode's lines. */
 export async function clipTranscript(id: number): Promise<ClipLine[] | null> {
-  await requireSession();
+  const { firstName } = await requireSession();
   if (!Number.isInteger(id)) return null;
+  if (!(await takeUser("clips", firstName, USER_LIMITS.clips.max, USER_LIMITS.clips.windowMs))) return null;
   const clip = (await getClipIndex()).clips.find((c) => c.id === id);
   if (!clip) return null;
   const from = clip.startS - 1, to = clip.endS;

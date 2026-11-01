@@ -277,7 +277,10 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
       });
       if (!res.ok || !res.body) {
         setWebPhase("error");
-        if (res.status === 429) toast("Daily limit for web research reached. Try again tomorrow.");
+        if (res.status === 429) {
+          const why = (await res.json().catch(() => ({}))) as { error?: string };
+          toast(why.error === "site-limit" ? "Web research has reached its limit for today. Try again tomorrow." : "Daily limit for web research reached. Try again tomorrow.");
+        }
         return;
       }
       const reader = res.body.getReader();
@@ -606,9 +609,11 @@ function BriefDoc({ brief: b, edit, strike, web, actions }: {
       {!b.already && b.firstAppearance && <p className="prep-first">{FIRST_APPEARANCE}</p>}
       {!b.web && !b.sector && (
         <div className="prep-addweb">
-          <button className="prep-ghost" type="button" onClick={web.add} disabled={web.phase === "loading"} aria-busy={web.phase === "loading"}>
-            {web.phase === "loading" ? "Searching the web…" : web.phase === "error" ? "Try web research again" : "Add web research"}
-          </button>
+          {web.phase !== "loading" && (
+            <button className="prep-ghost" type="button" onClick={web.add}>
+              {web.phase === "error" ? "Try web research again" : "Add web research"}
+            </button>
+          )}
           {web.phase === "loading" ? (
             <>
               <span className="prep-web-steps">{WEB_STEPS.map((s, i) => <span key={s} className={web.step > i + 1 ? "done" : web.step === i + 1 ? "on" : ""}>{s}</span>)}</span>

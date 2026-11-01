@@ -3,7 +3,7 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { takeTry } from "@/lib/rate-limit";
+import { LOGIN_LIMIT, takeTry } from "@/lib/rate-limit";
 import { SESSION_COOKIE, VISITOR_COOKIE, cookieOptions, createSessionToken } from "@/lib/session";
 
 export type LoginState = { error: string; field: "fname" | "pw" | ""; attempt: number };
@@ -24,7 +24,7 @@ export async function login(prev: LoginState, form: FormData): Promise<LoginStat
   const attempt = prev.attempt + 1;
   const h = await headers();
   const ip = h.get("x-forwarded-for")?.split(",")[0].trim() || h.get("x-real-ip") || "local";
-  if (!takeTry(ip)) {
+  if (!(await takeTry(`login:${ip}`, LOGIN_LIMIT.max, LOGIN_LIMIT.windowMs))) {
     return { error: "Too many tries. Wait a few minutes and try again.", field: "pw", attempt };
   }
 

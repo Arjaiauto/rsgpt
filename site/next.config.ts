@@ -19,7 +19,19 @@ const nextConfig: NextConfig = {
   partialPrefetching: true,
   poweredByHeader: false,
   async headers() {
-    return [{ source: "/:path*", headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }] }];
+    return [{
+      source: "/:path*",
+      headers: [
+        { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        // Nobody may put the site in a frame (clickjacking). This is about OTHER sites framing us; the YouTube player
+        // that Cuepoint embeds is unaffected. The referrer policy still sends the site's origin to YouTube, which its
+        // embed needs.
+        { key: "X-Frame-Options", value: "DENY" },
+        { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+        { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        { key: "X-Content-Type-Options", value: "nosniff" },
+      ],
+    }];
   },
 };
 

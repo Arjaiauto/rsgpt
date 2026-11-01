@@ -1,6 +1,5 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { logQuestion } from "@/lib/ask/answer";
 import { Timings } from "@/lib/ask/timing";
 import { db } from "@/lib/db";
 import { etaMs } from "@/lib/eta";
@@ -19,7 +18,9 @@ const tidy = (v: unknown, max: number) => (typeof v === "string" ? v.replace(/[\
 
 /** POST /api/prep/web {name, description} -> NDJSON stream of WebEvent (or JSON {error} with a status before it starts). "From the web" for a brief already built:
     a separate request, so the brief itself never waits for the web. Every call is a qa_log row (question
-    "[web] name - line"), which is also how the daily limit per session is counted, across server instances. */
+    "[web] name - line"), which is also how the daily limits are counted, across server instances: WEB.perDay per first
+    name and WEB.siteDay for everyone. The row is written BEFORE any search is called and then counted, so requests
+    that arrive together each see the others and can't slip past the cap; a request over a cap deletes its own row. */
 export async function POST(request: Request) {
   const jar = await cookies();
   const session = readSessionToken(jar.get(SESSION_COOKIE)?.value);
@@ -32,13 +33,30 @@ export async function POST(request: Request) {
   if (!name) return NextResponse.json({ error: "Add a name" }, { status: 400 });
 
   // A quick burst guard per server, then the real limit: this session's web calls in the last 24 hours.
-  if (!takeTry(`prepweb:${session.firstName}:${visitorId ?? "-"}`, 5, 60_000)) return NextResponse.json({ error: "limit" }, { status: 429 });
-  let q = db().from("qa_log").select("id", { count: "exact", head: true })
-    .eq("first_name", session.firstName).like("question", "%[web] %").gte("created_at", new Date(Date.now() - 86_400_000).toISOString());
-  q = visitorId ? q.eq("visitor_id", visitorId) : q.is("visitor_id", null);
-  const { count, error: countError } = await q;
-  if (countError) console.error("prep web count failed:", countError.message);
-  if ((count ?? 0) >= WEB.perDay) return NextResponse.json({ error: "limit" }, { status: 429 });
+  if (!(await takeTry(`prepweb:${session.firstName.toLowerCase()}`, 5, 60_000))) return NextResponse.json({ error: "limit" }, { status: 429 });
+  const questionText = `[web] ${name}${description ? ` - ${description}` : ""}`;
+  const { data: row, error: rowError } = await db().from("qa_log").insert({
+    question: questionText, language: "en", answer: "", cited_chunk_ids: [], found: false,
+    first_name: session.firstName, visitor_id: visitorId, kind: "brief",
+  }).select("id").single();
+  if (rowError || !row) {
+    // Without the row the caps can't be enforced, so nothing is searched.
+    console.error("prep web log insert failed:", rowError?.message);
+    return NextResponse.json({ error: "unavailable" }, { status: 503 });
+  }
+  const logId = row.id as number;
+  const since = new Date(Date.now() - 86_400_000).toISOString();
+  const webRows = () => db().from("qa_log").select("id", { count: "exact", head: true }).like("question", "[web] %").gte("created_at", since);
+  // A first name is the same person whatever the case or the browser; the name has only letters and . ' - in it.
+  const [mine, site] = await Promise.all([webRows().ilike("first_name", session.firstName), webRows()]);
+  const over = mine.error || site.error ? "unavailable"
+    : (mine.count ?? 0) > WEB.perDay ? "limit"
+    : (site.count ?? 0) > WEB.siteDay ? "site-limit" : null;
+  if (over) {
+    await db().from("qa_log").delete().eq("id", logId);
+    if (over === "unavailable") console.error("prep web count failed:", (mine.error ?? site.error)?.message);
+    return NextResponse.json({ error: over }, { status: over === "unavailable" ? 503 : 429 });
+  }
 
   const t = new Timings();
   const encoder = new TextEncoder();
@@ -67,10 +85,10 @@ export async function POST(request: Request) {
         console.log(t.line(`prep web ${name}`));
         // The row the limit counts, with the section as text (no keys or raw pages).
         const asText = web ? briefToText({ ...EMPTY, title: name, description, web }).split("\n\n").slice(1, 2).join("") : "";
-        await logQuestion({
-          question: `[web] ${name}${description ? ` - ${description}` : ""}`, language: "en", answer: asText, citedChunkIds: [], found: !!web?.matched,
-          firstName: session.firstName, visitorId, latencyMs: t.at.done, timings: t, kind: "brief",
-        }).catch(() => null);
+        // Fills in the row written before the search (answer, whether it matched, how long it took).
+        const done = { answer: asText, found: !!web?.matched, latency_ms: t.at.done };
+        const up = await db().from("qa_log").update({ ...done, timings: t.toJSON() }).eq("id", logId);
+        if (up.error) await db().from("qa_log").update(done).eq("id", logId);
         try { controller.close(); } catch {}
       }
     },

@@ -1,21 +1,43 @@
-// In-memory sliding window per key. Resets when the server restarts and is per server process,
-// which is enough for one small Node server; a multi-instance host would need a shared store.
-const WINDOW_MS = 10 * 60 * 1000;
-const MAX_TRIES = 10;
+import "server-only";
+import { db } from "@/lib/db";
 
-const store: Map<string, number[]> = ((globalThis as { __cpRateLimit?: Map<string, number[]> }).__cpRateLimit ??=
-  new Map());
+/** Rate limits kept in the database (pipeline/sql/rate_limits.sql: table rate_limits and the function
+    take_rate_limit, one atomic increment), so they hold across every server instance and restart.
+    A fixed window per key. If the database can't be reached the limit falls back to a per-process sliding window, so a
+    database hiccup never locks everyone out and never leaves a route unguarded. */
 
 /** Records one try for this key and says whether it is allowed. */
-export function takeTry(key: string, max = MAX_TRIES, windowMs = WINDOW_MS): boolean {
+export async function takeTry(key: string, max: number, windowMs: number): Promise<boolean> {
+  try {
+    const { data, error } = await db().rpc("take_rate_limit", { p_key: key, p_max: max, p_window_s: Math.max(1, Math.round(windowMs / 1000)) });
+    if (!error && typeof data === "boolean") return data;
+    console.error("rate limit rpc failed:", error?.message ?? "unexpected reply");
+  } catch (e) {
+    console.error("rate limit rpc failed:", e instanceof Error ? e.message : "unknown");
+  }
+  return memoryTry(key, max, windowMs);
+}
+
+/** A per-person limit for a signed-in action (first name, any letter case). */
+export const takeUser = (action: string, firstName: string, max: number, windowMs: number) =>
+  takeTry(`${action}:${firstName.trim().toLowerCase()}`, max, windowMs);
+
+/** The limits of the actions that have no route of their own, in one place (tries per window per person). */
+export const USER_LIMITS = {
+  saved: { max: 120, windowMs: 10 * 60 * 1000 },
+  report: { max: 10, windowMs: 10 * 60 * 1000 },
+  clips: { max: 200, windowMs: 10 * 60 * 1000 },
+} as const;
+export const LOGIN_LIMIT = { max: 10, windowMs: 15 * 60 * 1000 } as const;
+
+/* ---------- fallback ---------- */
+const store: Map<string, number[]> = ((globalThis as { __cpRateLimit?: Map<string, number[]> }).__cpRateLimit ??= new Map());
+function memoryTry(key: string, max: number, windowMs: number): boolean {
   const now = Date.now();
   const recent = (store.get(key) ?? []).filter((t) => now - t < windowMs);
-  if (recent.length >= max) {
-    store.set(key, recent);
-    return false;
-  }
+  if (recent.length >= max) { store.set(key, recent); return false; }
   recent.push(now);
   store.set(key, recent);
-  if (store.size > 5000) for (const [k, ts] of store) if (ts.every((t) => now - t >= WINDOW_MS)) store.delete(k);
+  if (store.size > 5000) for (const [k, ts] of store) if (ts.every((t) => now - t >= windowMs)) store.delete(k);
   return true;
 }

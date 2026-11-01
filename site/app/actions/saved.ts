@@ -9,7 +9,11 @@ import { cleanBrief } from "@/lib/prep/clean";
 import { sectionOrder } from "@/lib/prep/export";
 import { folderName } from "@/lib/saved-folder";
 import { SAVED_LIMITS, type SaveInput, type SavedList, type SavedRow } from "@/lib/saved-types";
+import { takeUser, USER_LIMITS } from "@/lib/rate-limit";
 import { VISITOR_COOKIE } from "@/lib/session";
+
+/** Writes to the saved list (save, move, note, undo) are limited per person. */
+const savedOk = (firstName: string) => takeUser("saved", firstName, USER_LIMITS.saved.max, USER_LIMITS.saved.windowMs);
 
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -54,6 +58,7 @@ function clean(input: SaveInput): { kind: "clip" | "answer" | "brief"; item_ref:
 /** Saves a clip, an answer or a brief for this visitor (server only; the table has RLS on and no policies). */
 export async function saveItem(input: SaveInput): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
   const { firstName } = await requireSession();
+  if (!(await savedOk(firstName))) return { ok: false, error: "Too many saves. Wait a few minutes and try again." };
   const row = clean(input);
   if (!row) return { ok: false, error: "Nothing to save." };
   const visitorId = (await cookies()).get(VISITOR_COOKIE)?.value ?? null;
@@ -167,6 +172,7 @@ export async function loadSavedAnswer(id: number): Promise<{ question: string; a
 export async function moveSaved(id: number, folder: string | null): Promise<{ ok: boolean; folder: string | null }> {
   if (!Number.isInteger(id)) return { ok: false, folder: null };
   const { firstName, visitorId } = await owner();
+  if (!(await savedOk(firstName))) return { ok: false, folder: null };
   let name = folderName(folder);
   if (name) {
     let inUse = db().from("saved_items").select("folder").eq("first_name", firstName).not("folder", "is", null);
@@ -186,6 +192,7 @@ export async function moveSaved(id: number, folder: string | null): Promise<{ ok
 export async function noteSaved(id: number, note: string): Promise<{ ok: boolean }> {
   if (!Number.isInteger(id)) return { ok: false };
   const { firstName, visitorId } = await owner();
+  if (!(await savedOk(firstName))) return { ok: false };
   let q = db().from("saved_items").update({ note: noteText(note) }).eq("id", id).eq("first_name", firstName);
   q = visitorId ? q.eq("visitor_id", visitorId) : q.is("visitor_id", null);
   const { data, error } = await q.select("id");
@@ -210,6 +217,7 @@ export async function removeSaved(id: number): Promise<{ ok: true; row: SavedRow
     cutting-down as a new save, so a tampered row cannot put anything else in the table. */
 export async function restoreSaved(row: SavedRow): Promise<{ ok: true; id: number } | { ok: false }> {
   const { firstName, visitorId } = await owner();
+  if (!(await savedOk(firstName))) return { ok: false };
   if (!row || !["clip", "answer", "brief"].includes(row.kind)) return { ok: false };
   const kept = clean({ kind: row.kind, ref: row.itemRef } as SaveInput);
   if (!kept) return { ok: false };

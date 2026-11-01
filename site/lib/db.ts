@@ -2,8 +2,7 @@ import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { countSupabaseCall } from "./data-log";
 
-/** The extraction run the site shows. Older test runs also have verified rows; they are never shown. */
-export const ARCHIVE_RUN_ID = "extract-haiku-v5-20261023-011718";
+export { ARCHIVE_RUN_ID } from "./archive-run";
 
 let client: SupabaseClient | null = null;
 

@@ -34,7 +34,7 @@ export async function POST(request: Request) {
 
   const h = await headers();
   const who = visitorId ?? h.get("x-forwarded-for")?.split(",")[0].trim() ?? "local";
-  if (!takeTry(`prep:${who}`, RATE_LIMIT.max, RATE_LIMIT.windowMs)) {
+  if (!(await takeTry(`prep:${who}`, RATE_LIMIT.max, RATE_LIMIT.windowMs))) {
     return NextResponse.json({ error: "Too many briefs. Wait a few minutes and try again." }, { status: 429 });
   }
 
