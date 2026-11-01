@@ -193,11 +193,17 @@ const Reel = memo(function Reel({ card, index, total, mode, started, muted, paus
 
 /* ---------- the feed ---------- */
 
-export function ReelsView({ params, initial, next: nextIn, startId }: { params: ClipParams; initial: ClipCard[]; next: number | null; startId: number | null }) {
+export function ReelsView({ params, initial, next: nextIn, prev: prevIn, startId }: { params: ClipParams; initial: ClipCard[]; next: number | null; prev: number | null; startId: number | null }) {
   const router = useRouter();
   const feed = useRef<HTMLDivElement>(null);
   const [items, setItems] = useState(initial);
   const [next, setNext] = useState(nextIn);
+  /** Offset of the page before the first one loaded (null: the top of the list is loaded). */
+  const [prev, setPrev] = useState(prevIn);
+  /** The clip that was showing when reels were added above it; the feed is put back on it before paint. */
+  const anchor = useRef<number | null>(null);
+  const itemsRef = useRef(initial);
+  const loadingPrev = useRef(false);
   const [cur, setCur] = useState(() => Math.max(0, initial.findIndex((c) => c.id === startId)));
   const [started, setStarted] = useState(tappedOnce);
   const [muted, setMuted] = useState(false);
@@ -266,6 +272,32 @@ export function ReelsView({ params, initial, next: nextIn, startId }: { params: 
     const i = Math.round(f.scrollTop / f.clientHeight);
     if (i !== cur && i >= 0 && i < items.length) { setCur(i); setPaused(false); }
   };
+
+  // Clips added above the current one push everything down: put the feed back on the same reel (before paint, so nothing
+  // jumps). The position is set from where that clip now is, not nudged by an amount, because the browser may already
+  // have moved it a little to keep its snap point.
+  useLayoutEffect(() => {
+    itemsRef.current = items;
+    const f = feed.current;
+    if (anchor.current == null) return;
+    const i = items.findIndex((c) => c.id === anchor.current);
+    anchor.current = null;
+    if (f && i >= 0) {
+      f.scrollTop = i * f.clientHeight;
+      if (i !== curRef.current) { curRef.current = i; setCur(i); }
+    }
+  }, [items]);
+
+  // The page before the first one loaded (when Reels opened deep in the list), a few reels before the top.
+  useEffect(() => {
+    if (prev == null || loadingPrev.current || cur > 5) return;
+    loadingPrev.current = true;
+    moreClips(params, prev).then((page) => {
+      anchor.current = itemsRef.current[curRef.current]?.id ?? null;
+      setItems((all) => [...page.items.filter((c) => !all.some((x) => x.id === c.id)), ...all]);
+      setPrev(prev > 0 ? Math.max(0, prev - Math.max(1, page.items.length)) : null);
+    }).catch(() => toast("Couldn't load more clips.")).finally(() => { loadingPrev.current = false; });
+  }, [cur, prev, params, items]);
 
   // The next page of clips, a few reels before the end.
   useEffect(() => {

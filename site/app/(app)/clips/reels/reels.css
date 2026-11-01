@@ -6,6 +6,7 @@ html.rl-lock, html.rl-lock body { overflow: hidden; }
 .rl-root { position: fixed; inset: 0; z-index: 50; background: #000; color: #fff; }
 .rl-loading { background: var(--paper); }
 .rl-feed {
+  overflow-anchor: none; /* reels added above the current one are handled in ReelsView, not by the browser */
   position: absolute; inset: 0; overflow-y: auto; overscroll-behavior: contain; scroll-snap-type: y mandatory; scrollbar-width: none;
   outline: none;
 }

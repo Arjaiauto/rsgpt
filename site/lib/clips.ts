@@ -150,8 +150,8 @@ const strip = (c: IndexClip): ClipCard => ({
   guestSlug: c.guestSlug, photo: c.photo, photoLicense: c.photoLicense, repeat: c.repeat, episode: c.episode, date: c.date, publishedAt: c.publishedAt, views: c.views, lang: c.lang,
 });
 
-/** One page of the clips these params ask for. In a guest's view, all their clips, grouped by episode. */
-export async function queryClips(p: ClipParams, offset: number, limit = PAGE_SIZE): Promise<ClipPage> {
+/** The clips these params ask for, filtered and in order (the search, if any, is done once here). */
+async function ordered(p: ClipParams) {
   const { clips, options } = await getClipIndex();
   let list = clips.filter((c) =>
     (!p.topic || c.topics.includes(p.topic)) && (!p.guest || c.guestSlugs.includes(p.guest)) && (!p.len || c.len === p.len)
@@ -168,7 +168,11 @@ export async function queryClips(p: ClipParams, offset: number, limit = PAGE_SIZ
       : sort === "new" ? (a, b) => b.publishedAt.localeCompare(a.publishedAt) || a.startS - b.startS || a.id - b.id
         : sort === "views" ? (a, b) => b.views - a.views || a.startS - b.startS || a.id - b.id
           : (a, b) => b.score - a.score || tie(a, b));
+  return { clips, options, list };
+}
 
+/** One page of an ordered list. In a guest's view, all their clips, grouped by episode. */
+function pageOf(list: IndexClip[], options: ClipOptions, p: ClipParams, offset: number, limit: number): ClipPage {
   if (p.guest) {
     const g = options.guests.find((x) => x.slug === p.guest);
     const groups: NonNullable<ClipPage["guestView"]>["groups"] = [];
@@ -185,5 +189,28 @@ export async function queryClips(p: ClipParams, offset: number, limit = PAGE_SIZ
   const start = Math.max(0, Math.floor(offset));
   const page = list.slice(start, start + limit).map(strip);
   return { items: page, total: list.length, next: start + limit < list.length ? start + limit : null, guestView: null };
+}
+
+/** One page of the clips these params ask for. */
+export async function queryClips(p: ClipParams, offset: number, limit = PAGE_SIZE): Promise<ClipPage> {
+  const { list, options } = await ordered(p);
+  return pageOf(list, options, p, offset, limit);
+}
+
+/** The first screen of Reels opened at one clip (?start=<id>): the page of the list that holds it (pages are
+    PAGE_SIZE clips at multiples of PAGE_SIZE, so the pages before and after it join up with no overlap), with `prev`
+    the offset of the page before it (null at the top). A start clip that is not in the filtered list is put first, and
+    the filtered list follows from its top. An unknown id is ignored: the list from its top. One pass over the clip
+    index, no database query. */
+export async function queryClipsAround(p: ClipParams, startId: number | null, limit = PAGE_SIZE): Promise<ClipPage & { prev: number | null }> {
+  const { clips, options, list } = await ordered(p);
+  const at = startId == null ? -1 : list.findIndex((c) => c.id === startId);
+  if (at >= 0 && !p.guest) {
+    const from = Math.floor(at / limit) * limit;
+    return { ...pageOf(list, options, p, from, limit), prev: from > 0 ? from - limit : null };
+  }
+  const page = pageOf(list, options, p, 0, limit);
+  const lone = startId != null && at < 0 ? clips.find((c) => c.id === startId) : undefined;
+  return { ...page, items: lone ? [strip(lone), ...page.items] : page.items, prev: null };
 }
 

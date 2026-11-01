@@ -17,3 +17,5 @@ Follow these rules in every session.
 - `pipeline/` — Python data scripts (deps in `pipeline/requirements.txt`, venv in `.venv`)
 - `site/` — website (built later)
 - `data/`, `audio/` — local working files, git-ignored
+
+10. **Never run Next builds locally.** Never run `next build`, `npm run build` or `next start` on this PC: local Next builds exhaust RAM on this machine; Vercel builds instead.
