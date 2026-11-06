@@ -6,6 +6,7 @@ import { Timings } from "@/lib/ask/timing";
 import { cosine, embedQueries } from "@/lib/ask/voyage";
 import { getClipIndex } from "@/lib/clips";
 import { db } from "@/lib/db";
+import { totalChunks } from "./stats";
 import { getDirectory } from "@/lib/guests";
 import { buildChips, refineCandidates } from "./chips";
 import { correctQuery, wordCounts } from "./correct";
@@ -35,8 +36,8 @@ const MAX_QUERY_CHARS = 200;
 /** Passages with a measured similarity (for "flat" in vague.ts and the moments' similarity). */
 const MEASURED = 10;
 
-type Store = { results: Map<string, { at: number; value: SearchResult }>; vectors: Map<string, number[]>; chunks: { at: number; n: number } | null };
-const store = ((globalThis as { __search?: Store }).__search ??= { results: new Map(), vectors: new Map(), chunks: null });
+type Store = { results: Map<string, { at: number; value: SearchResult }>; vectors: Map<string, number[]> };
+const store = ((globalThis as { __search?: Store }).__search ??= { results: new Map(), vectors: new Map() });
 
 /** The query's embedding, kept across servers in the remote cache (a query vector never changes). */
 async function remoteEmbedding(text: string): Promise<number[]> {
@@ -53,15 +54,6 @@ async function embedding(text: string): Promise<number[]> {
   store.vectors.set(text, v);
   if (store.vectors.size > 2000) store.vectors.delete(store.vectors.keys().next().value!);
   return v;
-}
-
-/** About how many passages there are (planner estimate, read once an hour), for chunk_terms shares. */
-async function totalChunks(): Promise<number> {
-  if (store.chunks && Date.now() - store.chunks.at < 3600_000) return store.chunks.n;
-  const { count, error } = await db().from("chunks").select("id", { count: "estimated", head: true });
-  if (error) throw new Error(`chunks count: ${error.message}`);
-  store.chunks = { at: Date.now(), n: count ?? 0 };
-  return store.chunks.n;
 }
 
 type Scope = { videoIds: string[]; perEpisode: number; exact: boolean };
@@ -157,7 +149,11 @@ type Prepared = {
 
 const cleanQuery = (raw: string) => raw.replace(/[\u0000-\u001F\u007F]+/g, " ").replace(/\s+/g, " ").trim().slice(0, MAX_QUERY_CHARS);
 
-async function prepare(raw: string, scopeIn: AskScope | null | undefined, t: Timings): Promise<Prepared> {
+/** How a query is read: `typing`: the last word is still being typed, so it is never corrected ("nikh" stays "nikh" until a space or
+    the search is submitted); `literal`: no correction at all (the "search instead for ..." link). */
+export type SearchOptions = { typing?: boolean; literal?: boolean };
+
+async function prepare(raw: string, scopeIn: AskScope | null | undefined, t: Timings, opts: SearchOptions = {}): Promise<Prepared> {
   const query = cleanQuery(raw);
   const scopeArg = scopeIn && !scopeIsEmpty(scopeIn) ? scopeIn : null;
   // The Roman spelling of the query: what the vocabulary, chunk_terms and the keyword side understand.
@@ -169,8 +165,11 @@ async function prepare(raw: string, scopeIn: AskScope | null | undefined, t: Tim
     t.time("chunks", () => totalChunks()),
     scopeArg ? t.time("scope", () => resolveScope(scopeArg)) : Promise.resolve(null),
   ]);
+  // The word being typed is the last one of the query; it is left as typed.
+  const lastToken = roman.split(" ").pop();
+  const checked = opts.typing ? words.filter((w, i) => !(i === words.length - 1 && w === lastToken)) : words;
   const [corrected, meta] = await Promise.all([
-    t.time("correct", () => correctQuery(roman, words, counts, (w) => inVocabulary(ix, w))),
+    opts.literal ? Promise.resolve(null) : t.time("correct", () => correctQuery(roman, checked, counts, (w) => inVocabulary(ix, w))),
     t.time("meta", () => archiveMeta(episodeTitles(ix), topicLabels(ix))),
   ]);
   const effective = corrected ? corrected.corrected : query;
@@ -191,9 +190,9 @@ const share = (p: Prepared, w: string) => (p.total > 0 ? (p.counts.get(w) ?? 0) 
 
 /** Tier (a) alone: no embedding and no passage search. The vague flag here can only see the words (a common word, a
     short query), not whether the best passages are all alike; the full search settles that. */
-export async function runFastSearch(raw: string, scopeIn?: AskScope | null): Promise<SearchResult> {
+export async function runFastSearch(raw: string, scopeIn?: AskScope | null, opts: SearchOptions = {}): Promise<SearchResult> {
   const t = new Timings();
-  const p = await prepare(raw, scopeIn, t);
+  const p = await prepare(raw, scopeIn, t, opts);
   const { groups, mode, exactEntity } = assemble(p.matches, [], p.meta);
   const vague = isVague({ raw: p.query, contentWords: p.kw, exactEntity, wordCounts: p.counts, totalChunks: p.total, topSimilarities: [] });
   t.mark("done");
@@ -202,10 +201,10 @@ export async function runFastSearch(raw: string, scopeIn?: AskScope | null): Pro
 
 /* ---------- phase 2: everything ---------- */
 
-export async function runSearch(raw: string, scopeIn?: AskScope | null, opts: { fresh?: boolean } = {}): Promise<SearchResult> {
+export async function runSearch(raw: string, scopeIn?: AskScope | null, opts: SearchOptions & { fresh?: boolean } = {}): Promise<SearchResult> {
   const query = cleanQuery(raw);
   const scopeArg = scopeIn && !scopeIsEmpty(scopeIn) ? scopeIn : null;
-  const key = `${fold(query)}|${scopeArg ? scopeKey(scopeArg) : ""}`;
+  const key = `${fold(query)}|${scopeArg ? scopeKey(scopeArg) : ""}|${opts.literal ? "literal" : ""}`;
   const cached = opts.fresh ? undefined : store.results.get(key);
   if (cached && Date.now() - cached.at < RESULT_TTL_MS) return cached.value;
 
@@ -213,7 +212,7 @@ export async function runSearch(raw: string, scopeIn?: AskScope | null, opts: { 
   // The query as typed is embedded while the words are looked up; a correction (rare) embeds the corrected text instead.
   const early = t.time("embed", () => embedding(query));
   early.catch(() => {});
-  const p = await prepare(raw, scopeArg, t);
+  const p = await prepare(raw, scopeArg, t, { literal: opts.literal });
   const vector = await (p.corrected ? t.time("embed_corrected", () => embedding(p.effective)) : early);
 
   // Only words that are not common go to the keyword side; with none left it is the meaning alone.

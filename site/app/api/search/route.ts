@@ -8,10 +8,12 @@ import { runFastSearch, runSearch } from "@/lib/search/search";
 import type { SearchResult } from "@/lib/search/types";
 import { SESSION_COOKIE, VISITOR_COOKIE, readSessionToken } from "@/lib/session";
 
-/** GET /api/search?q=&scope=&phase=fast|full|quick
+/** GET /api/search?q=&scope=&phase=fast|full|quick&submit=1&literal=1
     phase=fast: names and titles only, the correction and the vague flag (no embedding, no passage search).
     phase=full (default): the whole result. The page asks for fast first, then full, and merges.
     scope: JSON like {"guest":"khan-sir","topic":"startups","year":2025,"lang":"hi"} (any part; anything malformed is dropped).
+    submit=1 (fast): the query was submitted, so every word may be corrected; without it the last word is taken as still being
+    typed (unless the q ends with a space) and is never corrected. literal=1: no correction at all ("search instead for ...").
     phase=quick: the top bar's command palette (components/app/QuickSearch.tsx), as before this route grew the search: {guests, episodes}
     of verified guests and episode titles (lib/archive.ts), not rate limited or logged.
     Response: a SearchResult (lib/search/types.ts) with phase and ms. Errors: 400 {error}, 401 {error}, 429 {error, retryAfter}
@@ -53,7 +55,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Couldn't reach the archive" }, { status: 502 });
     }
   }
-  const q = clean(params.get("q"));
+  const rawQ = params.get("q") ?? "";
+  const q = clean(rawQ);
   if (!q) return NextResponse.json({ error: "Type something to search" }, { status: 400 });
   const phase = params.get("phase") === "fast" ? "fast" : "full";
 
@@ -62,7 +65,9 @@ export async function GET(request: Request) {
 
   try {
     const scope = scopeOf(params.get("scope"));
-    const result = phase === "fast" ? await runFastSearch(q, scope) : await runSearch(q, scope);
+    const literal = params.get("literal") === "1";
+    const typing = params.get("submit") !== "1" && !/\s$/.test(rawQ);
+    const result = phase === "fast" ? await runFastSearch(q, scope, { typing, literal }) : await runSearch(q, scope, { literal });
     // Logged after the response is sent, for the full phase only (the fast one is the same typing, asked for earlier).
     if (phase === "full") logEvent(session.firstName, jar.get(VISITOR_COOKIE)?.value ?? null, "search", eventDetail(result));
     return NextResponse.json(result, { headers: { "Cache-Control": "private, max-age=60" } });

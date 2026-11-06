@@ -1,6 +1,6 @@
 import "server-only";
-import { getEntityIndex, matchEntities, type EntityIndex } from "./entities";
-import { fold } from "./normalize";
+import { getEntityIndex, matchEntities, peekVocabulary, vocabularyMatches, type EntityIndex } from "./entities";
+import { fold, romanFold } from "./normalize";
 import { peekMeta } from "./search";
 import type { SuggestionKind } from "./types";
 
@@ -46,7 +46,7 @@ export async function suggest(raw: string): Promise<{ q: string; items: SuggestI
   const ix = await getEntityIndex();
   if (fold(q).length < 2) return { q, items: popularItems(ix), ms: Math.round(performance.now() - t0) };
   const meta = peekMeta(ix);
-  const items = matchEntities(ix, q, { perKind: SUGGEST.perKind, minScore: SUGGEST.minScore }).slice(0, SUGGEST.max).map((m): SuggestItem => {
+  const items: SuggestItem[] = matchEntities(ix, q, { perKind: SUGGEST.perKind, minScore: SUGGEST.minScore }).slice(0, SUGGEST.max).map((m): SuggestItem => {
     const { kind, ref, text } = m.s;
     let sub = kind === "guest" ? "Guest" : kind === "topic" ? "Topic" : kind === "term" ? "Search" : kind === "episode" ? "Episode" : "Clip";
     if (meta && kind === "episode") {
@@ -58,5 +58,18 @@ export async function suggest(raw: string): Promise<{ q: string; items: SuggestI
     }
     return { kind, label: text, sub, href: hrefOf(kind, ref, text), ref };
   });
+  // After the names and titles: rare words of the transcripts that start with what is typed ("agho" -> aghori), for a single
+  // word of 3 or more letters, when there is room. A Devanagari word is looked up by its Roman spelling.
+  const typed = romanFold(q);
+  const loaded = peekVocabulary(); // always asked for, so it starts loading on the first suggestion
+  const vocab = items.length < SUGGEST.max && typed && !typed.includes(" ") ? loaded : null;
+  if (vocab) {
+    const have = new Set(items.map((i) => fold(i.label)));
+    for (const w of vocabularyMatches(vocab, typed, SUGGEST.max - items.length + have.size)) {
+      if (items.length >= SUGGEST.max) break;
+      if (have.has(w.word)) continue;
+      items.push({ kind: "term", label: w.word, sub: `In ${w.count} passages`, href: hrefOf("term", w.word, w.word), ref: w.word });
+    }
+  }
   return { q, items, ms: Math.round(performance.now() - t0) };
 }

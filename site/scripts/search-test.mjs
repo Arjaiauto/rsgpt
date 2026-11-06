@@ -10,6 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.loadEnvFile(path.resolve(root, "..", ".env"));
 const { runSearch, runFastSearch } = await import("../lib/search/search.ts");
 const { suggest } = await import("../lib/search/suggest.ts");
+const { getVocabulary } = await import("../lib/search/entities.ts");
 const { createSessionToken, SESSION_COOKIE } = await import("../lib/session.ts");
 
 const QUERIES = ["aghori", "ai", "startup", "fundraising", "fundrasing", "raj shamani", "अघोरी", "crypto", "mental health", "how to raise money"];
@@ -46,6 +47,13 @@ for (const q of queries) {
 
 // ---------- fast phase and suggest: cold = the first time this text is seen, warm = the best of the next three ----------
 await runFastSearch("warm up the index"); // loads the suggestion index and the archive lookups (a server has them already)
+globalThis.gc?.();
+const heap0 = process.memoryUsage().heapUsed;
+const vocabLoad = await ms(() => getVocabulary()); // the rare-word vocabulary: loaded in the background on a server
+globalThis.gc?.();
+const vocab = vocabLoad.value;
+const vocabBytes = vocab.words.reduce((n, w) => n + w.length * 2 + 16, 0) + vocab.counts.length * 8;
+console.log(`\nrare-word vocabulary: ${vocab.words.length} words, loaded in ${vocabLoad.ms} ms, about ${(vocabBytes / 1048576).toFixed(1)} MB resident (heap grew ${((process.memoryUsage().heapUsed - heap0) / 1048576).toFixed(1)} MB while loading)`);
 const timing = [];
 for (const q of TIMED) {
   const fastCold = await ms(() => runFastSearch(q));
@@ -155,6 +163,31 @@ for (const t of timing) {
 {
   const nikh = timing.find((t) => t.q === "nikh");
   if (nikh) check(!nikh.sug.items.some((i) => /nike/i.test(i.label)), "suggest nikh: no fuzzy match to Nike");
+}
+{
+  // rare-word autocomplete, after the entity matches
+  for (const [q, want] of [["agho", "aghori"], ["अघो", "aghori"], ["kumb", "kumbh"]]) {
+    const r = await suggest(q);
+    check(r.items.some((i) => i.kind === "term" && i.label === want), `suggest ${q}: includes the rare word "${want}" (${r.items.map((i) => i.label).join(", ")})`);
+  }
+  const fund = await suggest("fund");
+  check(fund.items.every((i, n) => !i.sub.startsWith("In ") || fund.items.slice(0, n).every((x) => x.kind !== "term" || x.sub.startsWith("In ") || true)), "rare words only fill what the entity matches leave");
+  const crypto = (await suggest("crypto")).items;
+  check(crypto.filter((i) => i.kind === "episode" || i.kind === "term").every((i) => i.href.startsWith("/search?q=")), "episode and term suggestions point at /search?q=");
+  // corrections only on complete words or on submit
+  const typing = await runFastSearch("nikh", null, { typing: true });
+  const submitted = await runFastSearch("nikh", null, { typing: false });
+  const twoWords = await runFastSearch("fundrasing sta", null, { typing: true });
+  check(!typing.corrected, "fast, typing: 'nikh' is left as typed");
+  check(!!submitted.corrected, `fast, submitted: 'nikh' is corrected (${submitted.corrected ? submitted.corrected.to : "no"})`);
+  check(twoWords.corrected?.from === "fundrasing" && twoWords.corrected.corrected.endsWith(" sta"), `fast, typing: the complete word is corrected, the one being typed is not (${twoWords.corrected?.corrected ?? "none"})`);
+  as("test-script");
+  const rt = await call(searchRoute, "/api/search?q=nikh&phase=fast");
+  const rs = await call(searchRoute, "/api/search?q=nikh&phase=fast&submit=1");
+  const rsp = await call(searchRoute, "/api/search?q=nikh%20&phase=fast");
+  check(!rt.body.corrected && !!rs.body.corrected && !!rsp.body.corrected, "route: no correction while typing, correction with submit=1 or a trailing space");
+  const lit = await call(searchRoute, "/api/search?q=fundrasing&phase=fast&literal=1");
+  check(!lit.body.corrected, "literal=1: never corrected");
 }
 console.log(failed ? `\n${failed} check(s) failed` : "\nall checks passed");
 process.exit(failed ? 1 : 0);

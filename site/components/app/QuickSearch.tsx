@@ -2,28 +2,39 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { player } from "@/components/player/store";
-import { IconAsk, IconEpisode, IconPage, IconSearch, IconUser } from "@/components/Icons";
+import { IconAsk, IconEpisode, IconPage, IconPlay, IconSearch, IconTag, IconUser } from "@/components/Icons";
 import { PAGES } from "./NavLinks";
 
-type Row = { group: string; icon: ReactNode; label: string; side: string; run: () => void };
-type Results = {
-  guests: { slug: string; name: string; organisation: string | null; episodes: number }[];
-  episodes: { videoId: string; title: string; publishedAt: string | null; durationS: number | null }[];
-};
+/** Top bar search box + command palette (Ctrl K / Cmd K / "/"). While typing it asks /api/search/suggest (about 100 ms
+    after the last keystroke; an older request is cancelled when a newer one starts). Enter searches (/search?q=) unless a
+    suggestion is highlighted; Tab completes the highlighted suggestion. A combobox: the input owns a listbox of options and
+    names the highlighted one with aria-activedescendant. Under 820 px it is a full-screen sheet. */
 
-const year = (d: string | null) => (d ? new Date(d).getFullYear() : "");
-const EMPTY: Results = { guests: [], episodes: [] };
+type Kind = "guest" | "topic" | "episode" | "clip" | "term";
+type Suggestion = { kind: Kind; label: string; sub: string; href: string; ref: string };
+/** `complete`: what Tab puts in the box when this row is highlighted. */
+type Row = { id: string; group: string; icon: ReactNode; label: string; side: string; complete?: string; run: () => void };
+
+const GROUPS: { kind: Kind; title: string; icon: ReactNode }[] = [
+  { kind: "guest", title: "Guests", icon: <IconUser /> },
+  { kind: "topic", title: "Topics", icon: <IconTag /> },
+  { kind: "episode", title: "Episodes", icon: <IconEpisode /> },
+  { kind: "clip", title: "Clips", icon: <IconPlay /> },
+  { kind: "term", title: "Search for", icon: <IconSearch /> },
+];
+const DEBOUNCE_MS = 100;
 const noop = () => () => {};
 
-/** Top bar search box + command palette (Ctrl K / Cmd K / "/"). */
 export function QuickSearch() {
   const router = useRouter();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const popular = useRef<Suggestion[] | null>(null);
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
-  const [found, setFound] = useState<{ term: string; results: Results; status: "loading" | "done" | "error" }>({ term: "", results: EMPTY, status: "done" });
+  /** The last answer, kept while the next one loads so the list does not flash empty between keystrokes. */
+  const [got, setGot] = useState<{ items: Suggestion[]; status: "done" | "error" | "limited" }>({ items: [], status: "done" });
+  const [pending, setPending] = useState(false);
   const mac = useSyncExternalStore(noop, () => /Mac|iPhone|iPad/.test(navigator.platform), () => false);
 
   const open = () => {
@@ -50,66 +61,71 @@ export function QuickSearch() {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  // Guests and episodes from the server, 150 ms after the last keystroke.
+  // Suggestions from the server, 100 ms after the last keystroke. The popular ones (nothing typed) are fetched once.
+  const term = q.trim();
   useEffect(() => {
-    const term = q.trim();
-    if (term.length < 2) return;
+    const short = term.length < 2;
     const ctrl = new AbortController();
     const t = window.setTimeout(async () => {
-      setFound({ term, results: EMPTY, status: "loading" });
+      if (short && popular.current) { setGot({ items: popular.current, status: "done" }); setPending(false); return; }
+      setPending(true);
       try {
-        const r = await fetch(`/api/search?phase=quick&q=${encodeURIComponent(term)}`, { signal: ctrl.signal });
+        const r = await fetch(`/api/search/suggest?q=${encodeURIComponent(short ? "" : term)}`, { signal: ctrl.signal });
+        if (r.status === 429) { setGot((g) => ({ ...g, status: "limited" })); setPending(false); return; }
         if (!r.ok) throw new Error(String(r.status));
-        setFound({ term, results: await r.json(), status: "done" });
+        const items: Suggestion[] = (await r.json()).items ?? [];
+        if (short) popular.current = items;
+        setGot({ items, status: "done" });
+        setPending(false);
       } catch {
-        if (!ctrl.signal.aborted) setFound({ term, results: EMPTY, status: "error" });
+        if (!ctrl.signal.aborted) { setGot((g) => ({ ...g, status: "error" })); setPending(false); }
       }
-    }, 150);
+    }, short ? 0 : DEBOUNCE_MS);
     return () => { clearTimeout(t); ctrl.abort(); };
-  }, [q]);
+  }, [term]);
 
-  const term = q.trim();
-  // Server results only count for the text they were fetched for.
-  const current = term.length >= 2 && found.term === term;
-  const results = current ? found.results : EMPTY;
-  const status = !current ? (term.length >= 2 ? "loading" : "idle") : found.status === "done" ? "idle" : found.status;
   const go = (href: string) => () => router.push(href);
   const rows: Row[] = [];
-  if (term) rows.push({ group: "Ask", icon: <IconAsk />, label: `Ask Cuepoint: “${term}”`, side: "Enter", run: go(`/ask?q=${encodeURIComponent(term)}`) });
+  if (term) {
+    rows.push({ id: "search", group: "", icon: <IconSearch />, label: `Search for “${term}”`, side: "Enter", run: go(`/search?q=${encodeURIComponent(term)}`) });
+    rows.push({ id: "ask", group: "Ask", icon: <IconAsk />, label: `Ask Cuepoint: “${term}”`, side: "", run: go(`/ask?q=${encodeURIComponent(term)}`) });
+  }
+  // Suggestions for what is typed (or the popular ones), grouped by kind in a fixed order.
+  const shown = got.items.slice(0, 8);
+  for (const g of GROUPS) {
+    for (const s of shown.filter((x) => x.kind === g.kind)) {
+      rows.push({
+        id: `s-${g.kind}-${s.ref}`, group: term ? g.title : "Popular", icon: g.icon, label: s.label, side: s.sub,
+        complete: s.kind === "episode" || s.kind === "clip" ? undefined : s.label, run: go(s.href),
+      });
+    }
+  }
   const lower = term.toLowerCase();
   for (const [href, label] of PAGES) {
-    if (!lower || label.toLowerCase().includes(lower)) rows.push({ group: "Pages", icon: <IconPage />, label, side: "Go to page", run: go(href) });
-  }
-  for (const g of results.guests) {
-    rows.push({
-      group: "Guests", icon: <IconUser />, label: g.name,
-      side: [g.organisation, `${g.episodes} episode${g.episodes === 1 ? "" : "s"}`].filter(Boolean).join(" · "),
-      run: go(`/guests/${g.slug}`),
-    });
-  }
-  for (const e of results.episodes) {
-    rows.push({
-      group: "Episodes", icon: <IconEpisode />, label: e.title, side: `${year(e.publishedAt)} · Play`,
-      run: () => player.play({
-        key: `episode:${e.videoId}`, itemType: "episode", itemId: e.videoId, videoId: e.videoId,
-        startS: 0, endS: e.durationS ?? 4 * 3600, title: e.title, guest: "", episode: e.title, sourcePath: null,
-      }),
-    });
+    if (!lower || label.toLowerCase().includes(lower)) rows.push({ id: `p-${href}`, group: "Pages", icon: <IconPage />, label, side: "Go to page", run: go(href) });
   }
   const active = rows.length ? Math.min(sel, rows.length - 1) : 0;
   const runRow = (i: number) => { const r = rows[i]; if (!r) return; close(); r.run(); };
 
   const onKeyDown = (e: ReactKeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (rows.length) runRow(active);
+      else if (term) { close(); router.push(`/search?q=${encodeURIComponent(term)}`); }
+      return;
+    }
     if (!rows.length) return;
     if (e.key === "ArrowDown") { e.preventDefault(); setSel((active + 1) % rows.length); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setSel((active - 1 + rows.length) % rows.length); }
-    else if (e.key === "Enter") { e.preventDefault(); runRow(active); }
+    else if (e.key === "Tab" && !e.shiftKey && rows[active]?.complete) { e.preventDefault(); setQ(rows[active].complete!); setSel(0); }
   };
 
+  const activeId = rows.length ? `qs-${rows[active].id}` : undefined;
   useEffect(() => {
-    document.getElementById(`qs-${active}`)?.scrollIntoView({ block: "nearest" });
-  }, [active]);
+    if (activeId) document.getElementById(activeId)?.scrollIntoView({ block: "nearest" });
+  }, [activeId]);
 
+  const status = pending && !got.items.length ? "loading" : got.status === "error" ? "error" : got.status === "limited" ? "limited" : "idle";
   let lastGroup = "";
   return (
     <>
@@ -123,29 +139,36 @@ export function QuickSearch() {
           <IconSearch />
           <input
             ref={inputRef}
+            type="search"
+            enterKeyHint="search"
             value={q}
             onChange={(e) => { setQ(e.target.value); setSel(0); }}
             onKeyDown={onKeyDown}
-            placeholder="Search guests, episodes, pages… or ask a question"
+            placeholder="Search guests, episodes, clips… or ask a question"
             autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
             role="combobox"
+            aria-label="Search"
             aria-expanded="true"
+            aria-autocomplete="list"
             aria-controls="qs-results"
-            aria-activedescendant={rows.length ? `qs-${active}` : undefined}
+            aria-activedescendant={activeId}
           />
           <kbd>Esc</kbd>
+          <button type="button" className="pcancel" onClick={close}>Cancel</button>
         </div>
-        <div className="pres" id="qs-results" role="listbox" aria-busy={status === "loading"}>
+        <div className="pres" id="qs-results" role="listbox" aria-label="Suggestions" aria-busy={pending}>
           {rows.map((r, i) => {
-            const head = r.group !== lastGroup ? <div className="pg" role="presentation">{r.group}</div> : null;
-            lastGroup = r.group;
+            const head = r.group && r.group !== lastGroup ? <div className="pg" role="presentation">{r.group}</div> : null;
+            if (r.group) lastGroup = r.group;
             return (
-              <div key={`${r.group}-${i}`}>
+              <div key={r.id} role="presentation">
                 {head}
                 <div
                   className="pr"
                   role="option"
-                  id={`qs-${i}`}
+                  id={`qs-${r.id}`}
                   aria-selected={i === active}
                   onMouseMove={() => i !== active && setSel(i)}
                   onClick={() => runRow(i)}
@@ -157,11 +180,12 @@ export function QuickSearch() {
               </div>
             );
           })}
-          {status === "loading" && <div className="pnote">Searching…</div>}
-          {status === "error" && <div className="pnote">Couldn&apos;t reach the archive. Pages and Ask still work.</div>}
-          {!rows.length && status === "idle" && <div className="pnone">Nothing found. Try a guest name or a topic.</div>}
+          {status === "loading" && <div className="pnote" role="status">Searching…</div>}
+          {status === "error" && <div className="pnote" role="status">Couldn&apos;t load suggestions. Press Enter to search anyway.</div>}
+          {status === "limited" && <div className="pnote" role="status">Too many suggestions at once. Keep typing, or press Enter.</div>}
+          {!rows.length && status === "idle" && <div className="pnone">Nothing to suggest.</div>}
         </div>
-        <div className="pfoot"><span>↑ ↓ to move</span><span>Enter to open</span><span>Esc to close</span></div>
+        <div className="pfoot"><span>↑ ↓ to move</span><span>Tab to complete</span><span>Enter to search</span><span>Esc to close</span></div>
       </dialog>
     </>
   );

@@ -1,6 +1,8 @@
 import "server-only";
 import { allRows, db } from "@/lib/db";
 import { timed } from "@/lib/data-log";
+import { VAGUE } from "./vague";
+import { totalChunks } from "./stats";
 import { HOST_WORDS, STOPWORDS, editDistance, fold, romanFold, trigramSimilarity, trigrams } from "./normalize";
 import type { EntityMatch, MatchHow, Suggestion, SuggestionKind } from "./types";
 
@@ -57,6 +59,56 @@ export async function getEntityIndex(): Promise<Index> {
     .catch((e) => { if (h.index) { console.error("search suggestions reload failed:", e instanceof Error ? e.message : e); return h.index; } throw e; })
     .finally(() => { h.loading = null; });
   return h.index && Date.now() - h.index.at < TTL_MS * 2 ? h.index : h.loading;
+}
+
+/* ---------- rare-word vocabulary: words of the transcripts as low-weight "term" suggestions ---------- */
+
+/** Words people may type that no guest, topic or title is called ("aghori", "kumbh"): the words of public.chunk_terms that are
+    4 or more letters, letters only, not stopwords, in at least 2 passages and in fewer than the common-word share (1.5%) of
+    all passages. Kept sorted for prefix search, with each word's passage count; loaded a little after the suggestion index
+    (about 55,000 rows are read, 4 requests at a time) and kept an hour. */
+export type Vocabulary = { words: string[]; counts: number[]; at: number };
+const vocabHolder = globalThis as { __searchVocab?: { vocab: Vocabulary | null; loading: Promise<Vocabulary | null> | null } };
+vocabHolder.__searchVocab ??= { vocab: null, loading: null };
+export const VOCAB = { minLength: 4, minChunks: 2, minPrefix: 3 } as const;
+
+async function loadVocabulary(): Promise<Vocabulary> {
+  const total = await totalChunks();
+  const cutoff = Math.max(3, Math.floor(total * VAGUE.minShare));
+  const rows = await timed("search vocabulary", () => allRows<{ word: string; chunk_count: number }>((a, b) =>
+    db().from("chunk_terms").select("word,chunk_count").gte("chunk_count", VOCAB.minChunks).lt("chunk_count", cutoff).order("word").range(a, b)));
+  const kept = rows.filter((r) => r.word.length >= VOCAB.minLength && /^[a-z]+$/.test(r.word) && !STOPWORDS.has(r.word) && !HOST_WORDS.has(r.word));
+  kept.sort((x, y) => (x.word < y.word ? -1 : x.word > y.word ? 1 : 0));
+  return { words: kept.map((r) => r.word), counts: kept.map((r) => r.chunk_count), at: Date.now() };
+}
+
+/** The vocabulary if it is loaded (the first call starts loading it and returns null; suggestions go without it until then). */
+export function peekVocabulary(): Vocabulary | null {
+  const h = vocabHolder.__searchVocab!;
+  const fresh = h.vocab && Date.now() - h.vocab.at < TTL_MS;
+  if (!fresh && !h.loading) {
+    h.loading = loadVocabulary()
+      .then((v) => { h.vocab = v; return v; })
+      .catch((e) => { console.error("search vocabulary load failed:", e instanceof Error ? e.message : e); return h.vocab; })
+      .finally(() => { h.loading = null; });
+  }
+  return h.vocab;
+}
+
+/** The loading vocabulary, waited for (the test script and warm-up). */
+export async function getVocabulary(): Promise<Vocabulary | null> {
+  peekVocabulary();
+  return vocabHolder.__searchVocab!.loading ?? vocabHolder.__searchVocab!.vocab;
+}
+
+/** Words starting with the prefix, the ones in the most passages first. */
+export function vocabularyMatches(v: Vocabulary, prefix: string, limit: number): { word: string; count: number }[] {
+  if (prefix.length < VOCAB.minPrefix) return [];
+  let lo = 0, hi = v.words.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (v.words[mid] < prefix) lo = mid + 1; else hi = mid; }
+  const found: { word: string; count: number }[] = [];
+  for (let i = lo; i < v.words.length && v.words[i].startsWith(prefix); i++) found.push({ word: v.words[i], count: v.counts[i] });
+  return found.sort((a, b) => b.count - a.count || a.word.localeCompare(b.word)).slice(0, limit);
 }
 
 const titleMaps = new WeakMap<Index, Map<string, string>>();
