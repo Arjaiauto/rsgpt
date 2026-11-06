@@ -24,7 +24,10 @@ const results = new Map();
 const full = new Map(); // query -> { cold, warm } ms
 for (const q of queries) {
   const cold = await ms(() => runSearch(q, null, { fresh: true }));
-  const warm = await ms(() => runSearch(q, null, { fresh: true }));
+  // warm: the median of three more runs (the embedding is cached by then; a single run is at the mercy of one slow database call)
+  const warmRuns = [];
+  for (let i = 0; i < 3; i++) warmRuns.push((await ms(() => runSearch(q, null, { fresh: true }))).ms);
+  const warm = { ms: warmRuns.sort((x, y) => x - y)[1] };
   const r = cold.value;
   results.set(q, r);
   full.set(q, { cold: cold.ms, warm: warm.ms });
@@ -84,6 +87,11 @@ check((await call(searchRoute, "/api/search?q=ai")).status === 401, "/api/search
 check((await call(suggestRoute, "/api/search/suggest?q=ai")).status === 401, "/api/search/suggest without a session: 401");
 as("test-script");
 check((await call(searchRoute, "/api/search?q=")).status === 400, "/api/search with no q: 400");
+{
+  const r = await call(searchRoute, "/api/search?phase=quick&q=khan");
+  check(r.status === 200 && Array.isArray(r.body.guests) && Array.isArray(r.body.episodes) && r.body.guests.length > 0, `phase=quick (the command palette): ${r.body.guests?.length} guests, ${r.body.episodes?.length} episodes`);
+  check(r.logged === 0, "phase=quick is not logged");
+}
 {
   const r = await call(suggestRoute, "/api/search/suggest?q=fund");
   check(r.status === 200 && r.body.items.length > 0 && r.body.items.length <= 8 && r.body.items.every((i) => i.kind && i.label && i.sub && i.href), `suggest fund: ${r.body.items?.length} items with kind, label, sub, href`);

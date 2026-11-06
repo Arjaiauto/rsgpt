@@ -58,7 +58,7 @@ export function QuickSearch() {
     const t = window.setTimeout(async () => {
       setFound({ term, results: EMPTY, status: "loading" });
       try {
-        const r = await fetch(`/api/search?q=${encodeURIComponent(term)}`, { signal: ctrl.signal });
+        const r = await fetch(`/api/search?phase=quick&q=${encodeURIComponent(term)}`, { signal: ctrl.signal });
         if (!r.ok) throw new Error(String(r.status));
         setFound({ term, results: await r.json(), status: "done" });
       } catch {
