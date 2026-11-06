@@ -31,6 +31,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import re
 import sys
 import time
@@ -327,8 +328,12 @@ def fetch_existing(db) -> dict[tuple[str, str], dict] | None:
 
 
 def same(a: dict, b: dict) -> bool:
-    return (a["text"], a["folded"], a["aliases"], a["aliases_ai"], a["aliases_folded"], round(float(a["weight"]), 4)) == \
-           (b["text"], b["folded"], b["aliases"], b["aliases_ai"], b["aliases_folded"], round(float(b["weight"]), 4))
+    """Same row? The weight column is a 4-byte float (about 6 digits kept: 62449238 comes back as 62449200), so weights
+    are compared with that much give, or every big view count would look changed on every run."""
+    if math.isclose(float(a["weight"]), float(b["weight"]), rel_tol=1e-5, abs_tol=1e-4) is False:
+        return False
+    keys = ("text", "folded", "aliases", "aliases_ai", "aliases_folded")
+    return all(a[k] == b[k] for k in keys)
 
 
 def samples(items: list[dict], n: int = 10) -> list[dict]:
