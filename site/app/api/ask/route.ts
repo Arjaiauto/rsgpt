@@ -2,7 +2,7 @@ import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { etaMs } from "@/lib/eta";
 import { followups, logQuestion, sourceCards, streamAnswer } from "@/lib/ask/answer";
-import { ASK, COVERED_QUESTIONS } from "@/lib/ask/config";
+import { ANSWER_LENGTHS, ANSWER_LENGTH_COOKIE, ASK, COVERED_QUESTIONS, parseAnswerLength } from "@/lib/ask/config";
 import { retrieve, sourceOf } from "@/lib/ask/retrieve";
 import { getGuestScope } from "@/lib/guests";
 import { Timings } from "@/lib/ask/timing";
@@ -17,12 +17,16 @@ export async function POST(request: Request) {
   if (!session) return NextResponse.json({ error: "Not logged in" }, { status: 401 });
   const visitorId = jar.get(VISITOR_COOKIE)?.value ?? null;
 
-  const body = (await request.json().catch(() => ({}))) as { question?: unknown; earlier?: unknown; guest?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { question?: unknown; earlier?: unknown; guest?: unknown; length?: unknown };
   const question = typeof body.question === "string" ? body.question.trim().slice(0, ASK.maxQuestionChars) : "";
   if (!question) return NextResponse.json({ error: "Empty question" }, { status: 400 });
   const earlier = Array.isArray(body.earlier)
     ? body.earlier.filter((q): q is string => typeof q === "string").slice(-3).map((q) => q.slice(0, ASK.maxQuestionChars))
     : [];
+
+  // Answer length: the request's choice, else the visitor's remembered one (cookie set by the toggle), else Medium.
+  // Quick-search links into Ask carry no choice of their own, so they use the cookie.
+  const length = parseAnswerLength(body.length) ?? parseAnswerLength(jar.get(ANSWER_LENGTH_COOKIE)?.value) ?? "medium";
 
   // Asked from a guest page: only that guest's episodes are searched.
   let scope: { name: string; videoIds: string[] } | null = null;
@@ -39,6 +43,7 @@ export async function POST(request: Request) {
   }
 
   const t = new Timings();
+  t.mode = length;
   const debug = process.env.NODE_ENV !== "production" && request.headers.get("x-ask-debug") === "1";
   const encoder = new TextEncoder();
   /** The reader pressed Cancel (or left): nothing more is sent, and no more of the work is started. */
@@ -61,7 +66,7 @@ export async function POST(request: Request) {
       };
       try {
         emit({ type: "step", step: 1 });
-        const r = await retrieve(question, earlier, t, scope?.videoIds);
+        const r = await retrieve(question, earlier, t, scope?.videoIds, ANSWER_LENGTHS[length].toModel);
         language = r.rewritten.language;
         const episodes = new Set(r.chunks.map((c) => c.videoId)).size;
         emit({ type: "step", step: 2, moments: r.chunks.length, episodes });
@@ -89,12 +94,12 @@ export async function POST(request: Request) {
         emit({ type: "step", step: 3 });
         if (aborted) { controller.close(); return; }
         const next = t.time("followups", () => followups(question, r));
-        let a = await streamAnswer(question, r, emit, t);
+        let a = await streamAnswer(question, r, emit, t, length);
         if ((a.notFound || a.thin) && r.bestSimilarity >= ASK.retrySimilarity) {
           // The archive clearly has close matches, so NOT_FOUND (or an answer with fewer than two cited sentences)
           // is more likely a misjudgement: try once more, thinking harder. Nothing of the first attempt was shown.
           t.mark("retry");
-          a = await streamAnswer(question, r, emit, t, "medium");
+          a = await streamAnswer(question, r, emit, t, length, "medium");
         }
 
         if (aborted) { controller.close(); return; }

@@ -69,3 +69,23 @@ export const EXAMPLE_QUESTIONS = [
   "स्वास्थ्य और नींद पर गेस्ट्स ने क्या कहा?",
   "Which guests built D2C brands in India?",
 ];
+
+/** Answer length (the Short / Medium / Detailed toggle on the Ask page). The choice is remembered in the cookie below.
+    The instruction goes in the user turn after the question, not in the system prompt, so the cached system prompt is
+    the same for every mode. Medium adds nothing: it is the system prompt's own "3 to 6 short sentences". */
+export type AnswerLength = "short" | "medium" | "detailed";
+export const ANSWER_LENGTH_COOKIE = "answer_length";
+export const ANSWER_LENGTHS: Record<AnswerLength, { label: string; toModel: number; instruction: string | null }> = {
+  short: {
+    label: "Short",
+    toModel: 5,
+    instruction: "Length for this answer (this replaces the sentence count in your instructions): write 2 to 3 sentences, each citing a different moment, and nothing else. Keep only the strongest points.",
+  },
+  medium: { label: "Medium", toModel: ASK.toModel, instruction: null },
+  detailed: {
+    label: "Detailed",
+    toModel: 12,
+    instruction: "Length for this answer (this replaces the sentence count in your instructions): write 5 to 8 sentences. Group them by guest: finish what one guest said before moving to the next, and name the guest at the start of their group. Every sentence still carries its own citation.",
+  },
+};
+export const parseAnswerLength = (v: unknown): AnswerLength | null => (v === "short" || v === "medium" || v === "detailed" ? v : null);

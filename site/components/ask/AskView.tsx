@@ -1,8 +1,8 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { EXAMPLE_QUESTIONS, HOST_NAME } from "@/lib/ask/config";
+import { ANSWER_LENGTHS, ANSWER_LENGTH_COOKIE, EXAMPLE_QUESTIONS, HOST_NAME, parseAnswerLength, type AnswerLength } from "@/lib/ask/config";
 import { isQuoted, unquote } from "@/lib/ask/quote";
 import type { AskEvent, AskLanguage, Cite, FindLineResult, LineMatch, RefMoment, Source } from "@/lib/ask/types";
 import { fmtTime, youtubeAt, type Clip } from "@/lib/player-types";
@@ -40,6 +40,8 @@ type Turn = {
   /** Not found because too little of the answer could be cited (rule 2), rather than no match at all. */
   thin?: boolean;
   answerId: number | null;
+  /** Answer length this question was asked with (absent on threads kept before 28b). */
+  length?: AnswerLength;
   /** "block:cite" of the timestamp chip whose clip is open under its sentence. */
   open?: string;
 };
@@ -71,6 +73,52 @@ function ScopeBar({ scope, onClear, disabled }: { scope: Scope; onClear: () => v
   );
 }
 
+/** The visitor's answer length, remembered in a cookie for a year (the server reads it as the fallback, so quick-search
+    links into Ask use it too). */
+const LENGTHS = Object.keys(ANSWER_LENGTHS) as AnswerLength[];
+const readLength = (): AnswerLength => {
+  try {
+    const m = document.cookie.match(new RegExp(`(?:^|; )${ANSWER_LENGTH_COOKIE}=([^;]*)`));
+    return parseAnswerLength(m?.[1]) ?? "medium";
+  } catch { return "medium"; }
+};
+const writeLength = (l: AnswerLength) => {
+  try { document.cookie = `${ANSWER_LENGTH_COOKIE}=${l}; path=/; max-age=31536000; samesite=lax`; } catch {}
+};
+
+/** "Short · Medium · Detailed": a radio group (arrow keys move and choose, one tab stop). Rendered twice by the composer
+    (inside it on wide screens, above it on phones); CSS shows one. */
+function LengthPicker({ value, onChange, where }: { value: AnswerLength; onChange: (l: AnswerLength) => void; where: "in" | "above" }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const move = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const next = (i + step + LENGTHS.length) % LENGTHS.length;
+    onChange(LENGTHS[next]);
+    refs.current[next]?.focus();
+  };
+  return (
+    <div className={`lenpick lenpick--${where}`} role="radiogroup" aria-label="Answer length">
+      {LENGTHS.map((l, i) => (
+        <button
+          key={l}
+          ref={(el) => { refs.current[i] = el; }}
+          className="lenpick__opt"
+          type="button"
+          role="radio"
+          aria-checked={value === l}
+          tabIndex={value === l ? 0 : -1}
+          onClick={() => onChange(l)}
+          onKeyDown={(e) => move(e, i)}
+        >
+          {ANSWER_LENGTHS[l].label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // Threads kept in sessionStorage before 21b say "Host".
 const citeLabel = (c: Cite) => `${c.speaker === "Host" ? HOST_NAME : c.speaker} · ${c.date} · ${fmtTime(c.startS)}`;
 
@@ -90,8 +138,9 @@ function Initials({ name }: { name: string }) {
 
 const LINE_ICON = "M9.5 6C6.5 7 5 9.4 5 12.5V18h5v-5H7.6c.2-1.9 1.2-3.2 2.9-4zM18.5 6c-3 1-4.5 3.4-4.5 6.5V18h5v-5h-2.4c.2-1.9 1.2-3.2 2.9-4z";
 
-function Composer({ docked, busy, onAsk, autoFocus, lineMode, onLineMode }: {
+function Composer({ docked, busy, onAsk, autoFocus, lineMode, onLineMode, length, onLength }: {
   docked?: boolean; busy: boolean; onAsk: (q: string, line?: boolean) => void; autoFocus?: boolean; lineMode: boolean; onLineMode: (on: boolean) => void;
+  length: AnswerLength; onLength: (l: AnswerLength) => void;
 }) {
   const [value, setValue] = useState("");
   const submit = (e: FormEvent) => {
@@ -103,7 +152,10 @@ function Composer({ docked, busy, onAsk, autoFocus, lineMode, onLineMode }: {
   };
   const quoted = isQuoted(value);
   const inputRef = useRef<HTMLInputElement>(null);
+  const showLength = !lineMode && !quoted;
   return (
+    <>
+    {showLength && <LengthPicker value={length} onChange={onLength} where="above" />}
     <form className="composer" onSubmit={submit}>
       <button
         className="modebtn"
@@ -118,6 +170,7 @@ function Composer({ docked, busy, onAsk, autoFocus, lineMode, onLineMode }: {
       >
         <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={LINE_ICON} /></svg><span>Find a line</span>
       </button>
+      {showLength && <LengthPicker value={length} onChange={onLength} where="in" />}
       <label htmlFor={docked ? "ask-follow" : "ask-first"} className="sr">{docked ? "Ask a follow-up" : "Your question"}</label>
       <input
         ref={inputRef}
@@ -133,6 +186,7 @@ function Composer({ docked, busy, onAsk, autoFocus, lineMode, onLineMode }: {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
       </button>
     </form>
+    </>
   );
 }
 
@@ -168,6 +222,8 @@ export function AskView({ episodes }: { episodes: number }) {
   const [turns, setTurns] = useState<Turn[]>(load);
   const startedQ = useRef<string | null>(null);
   const [lineMode, setLineMode] = useState(false);
+  const [length, setLengthState] = useState<AnswerLength>(readLength);
+  const setLength = (l: AnswerLength) => { setLengthState(l); writeLength(l); };
   const [scope, setScope] = useState<Scope | null>(loadScope);
   const busy = turns.some((t) => t.status === "thinking" || t.status === "answering");
 
@@ -243,14 +299,14 @@ export function AskView({ episodes }: { episodes: number }) {
     const asLine = line || isQuoted(q);
     const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const earlier = fresh ? [] : turns.map((t) => t.q).slice(-3);
-    const turn: Turn = { id, q: asLine ? unquote(q) : q, kind: asLine ? "line" : undefined, scope: !asLine ? inScope?.name : undefined, status: "thinking", step: 1, t0: Date.now(), blocks: [], sources: [], followups: [], suggestions: [], answerId: null };
+    const turn: Turn = { id, q: asLine ? unquote(q) : q, kind: asLine ? "line" : undefined, scope: !asLine ? inScope?.name : undefined, status: "thinking", step: 1, t0: Date.now(), blocks: [], sources: [], followups: [], suggestions: [], answerId: null, length: !asLine ? length : undefined };
     setTurns((all) => (fresh ? [turn] : [...all, turn]));
     window.setTimeout(() => document.getElementById(`turn-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" }), 50);
     if (asLine) return findLine(id, q);
     const abort = new AbortController();
     running.current.set(id, abort);
     try {
-      const res = await fetch("/api/ask", { method: "POST", signal: abort.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q, earlier, ...(inScope ? { guest: inScope.slug } : {}) }) });
+      const res = await fetch("/api/ask", { method: "POST", signal: abort.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q, earlier, length, ...(inScope ? { guest: inScope.slug } : {}) }) });
       if (!res.ok || !res.body) {
         const msg = res.status === 429 ? "Too many questions. Wait a few minutes and try again." : "Couldn't reach the archive. Try again.";
         toast(msg);
@@ -313,7 +369,7 @@ export function AskView({ episodes }: { episodes: number }) {
         )}
         <div className="rise d1">
           {scope && <ScopeBar scope={scope} onClear={() => setScope(null)} disabled={busy} />}
-          <Composer busy={busy} onAsk={ask} autoFocus lineMode={lineMode} onLineMode={setLineMode} />
+          <Composer busy={busy} onAsk={ask} autoFocus lineMode={lineMode} onLineMode={setLineMode} length={length} onLength={setLength} />
         </div>
         {!scope && (
           <div className="chips rise d2">
@@ -369,7 +425,7 @@ export function AskView({ episodes }: { episodes: number }) {
       </section>
       <div className="dock">
         {scope && <ScopeBar scope={scope} onClear={() => setScope(null)} disabled={busy} />}
-        <Composer docked busy={busy} onAsk={ask} lineMode={lineMode} onLineMode={setLineMode} />
+        <Composer docked busy={busy} onAsk={ask} lineMode={lineMode} onLineMode={setLineMode} length={length} onLength={setLength} />
       </div>
     </>
   );
@@ -415,6 +471,7 @@ function Answer({ turn: t, episodes, busy, onAsk, onToggle, onCancel }: { turn: 
         <ClipPlayer clip={clipOf(`ask:${t.id}:ref`, t.ref, 45)} label="Best matching moment" report={false} />
       )}
       {!t.blocks.length && <Thinking turn={t} episodes={episodes} onCancel={onCancel} />}
+      {t.length && <p className="anslen">{ANSWER_LENGTHS[t.length].label} answer</p>}
       <div className="ans" lang={lang}>
         {visible.map((para, pi) => {
           const openHere = para.find((x) => x.last && t.open?.startsWith(`${x.block}:`));

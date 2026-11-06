@@ -3,7 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { db } from "@/lib/db";
 import { fmtTime } from "@/lib/player-types";
 import { claude } from "./anthropic";
-import { ASK, HOST_NAME, type AnswerEffort } from "./config";
+import { ANSWER_LENGTHS, ASK, HOST_NAME, type AnswerEffort, type AnswerLength } from "./config";
 import { guestLabel, monthYear, sourceOf, type Candidate, type Episode, type Retrieved, type Turn } from "./retrieve";
 import { SentenceGate, nameWordsOf, personWords, speakerCheck, type Person } from "./sentences";
 import type { Timings } from "./timing";
@@ -49,9 +49,11 @@ export async function streamAnswer(
   r: Retrieved,
   emit: (e: AskEvent) => void,
   t: Timings,
+  length: AnswerLength = "medium",
   effort: AnswerEffort = ASK.answerEffort,
 ): Promise<{ text: string; citedChunkIds: number[]; cited: Cite[]; notFound: boolean; thin: boolean; gateLog: string[] }> {
-  const top = r.chunks.slice(0, ASK.toModel);
+  const mode = ANSWER_LENGTHS[length];
+  const top = r.chunks.slice(0, mode.toModel);
   const prepared: Prepared[] = top
     .map((chunk) => ({ chunk, ep: r.episodes.get(chunk.videoId)!, turns: r.turns.get(chunk.id) ?? [] }))
     .filter((p) => p.turns.length > 0);
@@ -64,6 +66,9 @@ export async function streamAnswer(
     citations: { enabled: true },
   }));
 
+  // The length instruction follows the question in the user turn (the system prompt, and its cache, is the same for every mode).
+  const userText = mode.instruction ? `${question}\n\n${mode.instruction}` : question;
+
   const claudeStart = performance.now();
   const sinceClaude = () => Math.round(performance.now() - claudeStart);
   const stream = claude().messages.stream({
@@ -75,7 +80,7 @@ export async function streamAnswer(
     output_config: { effort },
     // Cached per language and host-view variant (about 1,250 tokens); the search results change every time.
     system: [{ type: "text", text: systemPrompt(r.rewritten.language, r.rewritten.hostView), cache_control: { type: "ephemeral" } }],
-    messages: [{ role: "user", content: [...searchResults, { type: "text", text: question }] }],
+    messages: [{ role: "user", content: [...searchResults, { type: "text", text: userText }] }],
   });
   // Each answer block is held until it is complete, so a NOT_FOUND reply never shows. Then the gate applies rule 2
   // sentence by sentence (lib/ask/sentences.ts): uncited sentences and verbatim copies of the transcript are

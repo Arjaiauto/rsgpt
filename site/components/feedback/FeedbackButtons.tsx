@@ -51,13 +51,16 @@ export function FeedbackButtons({ qaLogId }: { qaLogId: number | null }) {
   };
 
   return (
-    <div className="fb" role="group" aria-label="Was this helpful?">
+    <div className="fb">
+      <div className="fb__btns" role="group" aria-label="Was this helpful?">
       <button className="fb__btn" type="button" aria-pressed={vote === "up"} aria-label="Helpful" title="Helpful" onClick={() => choose("up")}>
         <IconThumbUp />
       </button>
       <button className="fb__btn" type="button" aria-pressed={vote === "down"} aria-label="Not helpful" title="Not helpful" onClick={() => choose("down")}>
         <IconThumbDown />
       </button>
+      {noteSent && <span className="fb__done">Noted</span>}
+      </div>
       {asking && (
         <form className="fb__form" onSubmit={sendNote}>
           <label htmlFor={id} className="sr">What was wrong?</label>
@@ -76,7 +79,6 @@ export function FeedbackButtons({ qaLogId }: { qaLogId: number | null }) {
           <button className="fb__skip" type="button" onClick={() => setAsking(false)}>Skip</button>
         </form>
       )}
-      {noteSent && <span className="fb__done">Noted</span>}
       <span className="sr" role="status" aria-live="polite">{live}</span>
     </div>
   );

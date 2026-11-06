@@ -162,8 +162,9 @@ function rankScoped(chunks: ScopedChunk[], vector: number[], count: number): Hit
     .map(({ c }, i) => ({ id: c.id, video_id: c.video_id, start_s: c.start_s, end_s: c.end_s, text: "", published_at: c.published_at, score: 1 / (60 + i + 1) }));
 }
 
-/** `scopeIds` limits the search to those episodes (Ask from a guest page); without it the whole archive is searched. */
-export async function retrieve(question: string, earlier: string[], t: Timings, scopeIds?: string[]): Promise<Retrieved> {
+/** `scopeIds` limits the search to those episodes (Ask from a guest page); without it the whole archive is searched.
+    `toModel`: how many of the best chunks get their transcript lines loaded (the answer length mode). */
+export async function retrieve(question: string, earlier: string[], t: Timings, scopeIds?: string[], toModel: number = ASK.toModel): Promise<Retrieved> {
   const scoped = scopeIds ? loadScoped(scopeIds) : null;
   scoped?.catch(() => {}); // a failure is reported where the chunks are used, not as an unhandled rejection
   // A first question is embedded and searched as asked straight away, while Haiku rewrites it. A follow-up
@@ -175,7 +176,7 @@ export async function retrieve(question: string, earlier: string[], t: Timings, 
   // The lines of its best chunks are fetched at once too: most of them end up among the picked chunks, and
   // reading an episode's lines from cold storage is the slow part of loading them.
   const prefetch = asAsked?.then(({ hits }) => {
-    const top = hits.slice(0, ASK.toModel).map((h) => ({ id: h.id, videoId: h.video_id, startS: h.start_s, endS: h.end_s }));
+    const top = hits.slice(0, toModel).map((h) => ({ id: h.id, videoId: h.video_id, startS: h.start_s, endS: h.end_s }));
     return { ids: new Set(top.map((c) => c.id)), turns: loadTurns(top) };
   });
   // If the rewrite fails first, the request fails as before; this keeps the early work from unhandled rejections.
@@ -244,7 +245,7 @@ export async function retrieve(question: string, earlier: string[], t: Timings, 
       const early = await prefetch;
       const [pre, rest] = await Promise.all([
         early?.turns ?? new Map<number, Turn[]>(),
-        loadTurns(picked.slice(0, ASK.toModel).filter((c) => !early?.ids.has(c.id))),
+        loadTurns(picked.slice(0, toModel).filter((c) => !early?.ids.has(c.id))),
       ]);
       return new Map([...pre, ...rest]);
     }),

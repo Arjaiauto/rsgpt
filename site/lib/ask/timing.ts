@@ -11,6 +11,9 @@ export class Timings {
   /** Sentences of the (last) answer: shown, cited, dropped (no citation), copies (verbatim transcript), connectives. */
   counts: Record<string, number> = {};
 
+  /** Answer length mode of the request (short / medium / detailed); saved in the timings JSON. */
+  mode?: string;
+
   since(): number {
     return Math.round(performance.now() - this.t0);
   }
@@ -31,7 +34,7 @@ export class Timings {
   }
 
   toJSON() {
-    return { stages: this.stages, at: this.at, tokens: this.tokens, sentences: this.counts };
+    return { stages: this.stages, at: this.at, tokens: this.tokens, sentences: this.counts, ...(this.mode ? { mode: this.mode } : {}) };
   }
 
   /** One log line, e.g. "ask 9.8s first 4.1s | rewrite 1.2s · embed 0.3s · …". */

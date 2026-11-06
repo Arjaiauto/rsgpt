@@ -171,3 +171,21 @@
 .think--run { flex-direction: column; align-items: flex-start; gap: 12px; }
 .think-row { display: flex; align-items: center; gap: 16px; }
 .turn > .rm { margin-top: 10px; }
+
+/* Answer length: Short / Medium / Detailed (28b). One radio group inside the composer on wide screens, one above it on phones. */
+.lenpick { flex: none; display: inline-flex; padding: 3px; gap: 2px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--surface); }
+.lenpick__opt {
+  height: 30px; padding: 0 12px; border-radius: var(--radius-pill); border: 0; background: none; color: var(--ink-faint); font: 500 12.5px/1 var(--sans);
+  cursor: pointer; white-space: nowrap; transition: color 0.2s, background-color 0.2s;
+}
+.lenpick__opt:hover { color: var(--ink); }
+.lenpick__opt[aria-checked="true"] { background: var(--raised-hover); color: var(--ink); }
+.lenpick__opt:focus-visible { outline: 2px solid var(--violet-text); outline-offset: 1px; }
+.lenpick--above { display: none; }
+.dock .lenpick__opt { height: 26px; }
+@media (max-width: 640px) {
+  .lenpick--in { display: none; }
+  .lenpick--above { display: flex; width: fit-content; max-width: 100%; margin: 0 auto 8px; }
+  .lenpick--above .lenpick__opt { height: 28px; }
+}
+.anslen { margin: 0 0 -4px; font-size: 12px; letter-spacing: 0.04em; color: var(--ink-faint); }
