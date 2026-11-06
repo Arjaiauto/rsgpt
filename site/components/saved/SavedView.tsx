@@ -11,6 +11,7 @@ import { stashAnswerForAsk } from "@/lib/ask/reopen";
 import { fmtDay } from "@/lib/guest-format";
 import { fmtTime, type Clip } from "@/lib/player-types";
 import { folderName } from "@/lib/saved-folder";
+import { displayName } from "@/lib/display-name";
 import { savedClipsCsv } from "@/lib/saved-csv";
 import { SAVED_LIMITS, type SavedAnswer, type SavedBrief, type SavedClip, type SavedList } from "@/lib/saved-types";
 import { toast } from "@/lib/toast";
@@ -374,7 +375,7 @@ export function SavedView({ initial }: { initial: SavedList }) {
       <div className="sv-head">
         <div>
           <h1 className="page-title rise">Saved</h1>
-          <p className="sv-whose rise d1"><b>{initial.firstName}’s</b> saved items · on this browser</p>
+          <p className="sv-whose rise d1"><b>{displayName(initial.firstName)}’s</b> saved items · on this browser</p>
         </div>
         <button className="pill pill--ghost rise d1" type="button" onClick={exportCsv} disabled={clipCount === 0} title={clipCount ? undefined : "Save a clip first"}>
           Export clips as CSV

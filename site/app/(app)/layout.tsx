@@ -7,6 +7,7 @@ import { QuickSearch } from "@/components/app/QuickSearch";
 import { TourButton } from "@/components/tour/TourButton";
 import { TourGate } from "@/components/tour/TourGate";
 import { requireSession } from "@/lib/auth";
+import { displayName } from "@/lib/display-name";
 import "./app.css";
 
 async function Hello() {
@@ -14,7 +15,7 @@ async function Hello() {
   return (
     <span className="hello">
       <span className="avatar" aria-hidden="true">{firstName.slice(0, 1).toUpperCase()}</span>
-      <span className="hello__name">Hi {firstName}</span>
+      <span className="hello__name">Hi {displayName(firstName)}</span>
     </span>
   );
 }

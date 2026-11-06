@@ -161,7 +161,11 @@
 @media (max-width: 820px) {
   .srcs { grid-template-columns: minmax(0, 1fr); }
   .ans { font-size: 16px; }
-  .thread { padding-bottom: 220px; }
+  /* The last line of the thread must clear the whole fixed dock (length pill + input + scope bar). The dock moves up by the
+     mini player's height while it is open (see the .has-mini .dock rules above), so this does too. */
+  .thread { padding-bottom: calc(220px + env(safe-area-inset-bottom, 0px)); }
+  .has-mini .thread { padding-bottom: calc(520px + env(safe-area-inset-bottom, 0px)); }
+  .has-queue .thread { padding-bottom: calc(580px + env(safe-area-inset-bottom, 0px)); }
 }
 @media (prefers-reduced-motion: reduce) {
   .wave i { animation: none; height: 60%; }
