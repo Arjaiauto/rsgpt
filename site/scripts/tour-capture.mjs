@@ -93,7 +93,8 @@ const SLIDES = [
       await sleep(800);
       // The big video poster is left out, and the question box sits under the answer instead of floating at the bottom of
       // the window, so the picture is just the answer, its timestamps, the sources and the box.
-      await hide(page, [".answer > .card.player", ".ask-new", ".thread .acts", ".ans > p:nth-of-type(n+3)"]); // a long answer shows its first two paragraphs
+      // (.refcard is the "Best matching moment" card since 28c-card; .answer > .card.player is the older markup.)
+      await hide(page, [".answer .refcard", ".answer > .card.player", ".ask-new", ".thread .acts", ".ans > p:nth-of-type(n+3)"]); // a long answer shows its first two paragraphs
       await page.addStyleTag({ content: ".dock{position:static!important;background:none!important}.thread{padding-bottom:12px!important}" });
       if (size === "phone") {
         // On a phone the whole answer is a very tall picture: keep the first paragraph (with its timestamps), the sources and
