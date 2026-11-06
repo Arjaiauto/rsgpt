@@ -5,20 +5,22 @@ import { followups, logQuestion, shouldRetry, sourceCards, streamAnswer } from "
 import { answerRef, matchRef } from "@/lib/ask/card";
 import { ANSWER_LENGTHS, ANSWER_LENGTH_COOKIE, ASK, COVERED_QUESTIONS, parseAnswerLength } from "@/lib/ask/config";
 import { retrieve } from "@/lib/ask/retrieve";
-import { getGuestScope } from "@/lib/guests";
+import { resolveScope } from "@/lib/ask/scope";
+import { parseScope, type AskScope } from "@/lib/ask/scope-types";
 import { Timings } from "@/lib/ask/timing";
 import type { AskEvent, AskLanguage } from "@/lib/ask/types";
 import { ipKey, takeTry } from "@/lib/rate-limit";
 import { SESSION_COOKIE, VISITOR_COOKIE, readSessionToken } from "@/lib/session";
 
-/** POST /api/ask {question, earlier?: string[], guest?: slug} -> NDJSON stream of AskEvent (one JSON object per line). */
+/** POST /api/ask {question, earlier?: string[], scope?: {guest?, topic?, year?, lang?}, guest?: slug, length?}
+    -> NDJSON stream of AskEvent (one JSON object per line). `guest` is the older form of scope.guest. */
 export async function POST(request: Request) {
   const jar = await cookies();
   const session = readSessionToken(jar.get(SESSION_COOKIE)?.value);
   if (!session) return NextResponse.json({ error: "Not logged in" }, { status: 401 });
   const visitorId = jar.get(VISITOR_COOKIE)?.value ?? null;
 
-  const body = (await request.json().catch(() => ({}))) as { question?: unknown; earlier?: unknown; guest?: unknown; length?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { question?: unknown; earlier?: unknown; guest?: unknown; length?: unknown; scope?: unknown };
   const question = typeof body.question === "string" ? body.question.trim().slice(0, ASK.maxQuestionChars) : "";
   if (!question) return NextResponse.json({ error: "Empty question" }, { status: 400 });
   const earlier = Array.isArray(body.earlier)
@@ -29,13 +31,15 @@ export async function POST(request: Request) {
   // Quick-search links into Ask carry no choice of their own, so they use the cookie.
   const length = parseAnswerLength(body.length) ?? parseAnswerLength(jar.get(ANSWER_LENGTH_COOKIE)?.value) ?? "medium";
 
-  // Asked from a guest page: only that guest's episodes are searched.
-  let scope: { name: string; videoIds: string[] } | null = null;
+  // Ask within a scope (28d): only the episodes matching the chips are searched. The server resolves the chips to
+  // episodes itself; a scope that matches nothing (or an unknown guest or topic) is refused before any work.
+  const asked: AskScope = parseScope(body.scope);
   if (body.guest != null) {
-    const slug = typeof body.guest === "string" ? body.guest : "";
-    scope = /^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug) && slug.length <= 120 ? await getGuestScope(slug) : null;
-    if (!scope) return NextResponse.json({ error: "Unknown guest" }, { status: 400 });
+    if (typeof body.guest !== "string" || !parseScope({ guest: body.guest }).guest) return NextResponse.json({ error: "Unknown guest" }, { status: 400 });
+    asked.guest = body.guest;
   }
+  const scope = await resolveScope(asked);
+  if (scope && !scope.videoIds.length) return NextResponse.json({ error: "No episodes match this scope. Clear a filter and try again." }, { status: 400 });
 
   const h = await headers();
   const who = visitorId ?? ipKey(h);
@@ -63,11 +67,14 @@ export async function POST(request: Request) {
       const finish = (answer: string, citedChunkIds: number[], found: boolean) => {
         t.mark("done");
         console.log(t.line(question));
-        return logQuestion({ question, language, answer, citedChunkIds, found, firstName: session.firstName, visitorId, latencyMs: t.at.done, timings: t });
+        return logQuestion({
+          question, language, answer, citedChunkIds, found, firstName: session.firstName, visitorId, latencyMs: t.at.done, timings: t,
+          scope: scope ? { ...scope.scope, label: scope.label, episodes: scope.videoIds.length } : null,
+        });
       };
       try {
         emit({ type: "step", step: 1 });
-        const r = await retrieve(question, earlier, t, scope?.videoIds, ANSWER_LENGTHS[length].toModel);
+        const r = await retrieve(question, earlier, t, scope?.search, ANSWER_LENGTHS[length].toModel);
         language = r.rewritten.language;
         t.bestSimilarity = r.bestSimilarity;
         const episodes = new Set(r.chunks.map((c) => c.videoId)).size;

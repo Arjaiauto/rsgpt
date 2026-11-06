@@ -32,6 +32,11 @@ export const ASK = {
   /** A turn of the transcript becomes one citable block; long turns are split so a citation stays precise. */
   maxTurnSeconds: 40,
 
+  /** Ask within a scope (28d): a scope of at most this many chunks is searched exactly (every chunk in it compared with
+      the question); a bigger one through the HNSW index (the 200 nearest of the archive, then those in scope). See
+      pipeline/sql/hybrid_search_scoped.sql. Lowered only if timing shows the exact search is too slow for big scopes. */
+  scopeExactMaxChunks: Number.POSITIVE_INFINITY,
+
   maxQuestionChars: 400,
   /** Questions per visitor (falls back to IP) in the window. */
   rateLimit: { max: 30, windowMs: 10 * 60 * 1000 },

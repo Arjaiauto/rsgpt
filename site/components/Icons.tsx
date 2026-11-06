@@ -73,3 +73,6 @@ export const IconPrev = (p: P) => (
 export const IconNext = (p: P) => (
   <svg {...base(p)}><path d="M17 5.5v13M6 5.5v13l8.5-6.5z" fill="currentColor" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" /></svg>
 );
+export const IconScope = (p: P) => (
+  <svg {...base(p)}><path d="M4 5h16l-6.2 7.4V18l-3.6 1.8v-7.4z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" /></svg>
+);

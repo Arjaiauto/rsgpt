@@ -253,6 +253,8 @@ export async function logQuestion(row: {
   firstName: string; visitorId: string | null; latencyMs: number; timings: Timings;
   /** 'brief' for a Prep brief (default: an Ask question, which needs no column). */
   kind?: "brief";
+  /** Ask within a scope (28d): the chips, the label shown and the episodes searched; null for the whole archive. */
+  scope?: Record<string, unknown> | null;
 }): Promise<number | null> {
   const original = { question: row.question, answer: row.answer, cited_chunk_ids: row.citedChunkIds, visitor_id: row.visitorId };
   const v2 = { ...original, language: row.language, found: row.found, first_name: row.firstName, latency_ms: row.latencyMs };
@@ -262,7 +264,11 @@ export async function logQuestion(row: {
     ? [{ ...v2, kind: row.kind, timings: row.timings.toJSON() }, { ...v2, kind: row.kind },
         { ...v2, question: `[${row.kind}] ${row.question}`, timings: row.timings.toJSON() }, { ...v2, question: `[${row.kind}] ${row.question}` },
         { ...original, question: `[${row.kind}] ${row.question}` }]
-    : [{ ...v2, timings: row.timings.toJSON() }, v2, original];
+    : [
+        // The scope column comes from pipeline/sql/qa_log_scope.sql; until that has run, the row is logged without it.
+        ...(row.scope ? [{ ...v2, timings: row.timings.toJSON(), scope: row.scope }] : []),
+        { ...v2, timings: row.timings.toJSON() }, v2, original,
+      ];
   for (const [i, insert] of attempts.entries()) {
     const { data, error } = await db().from("qa_log").insert(insert).select("id").single();
     if (!error) return data.id as number;
