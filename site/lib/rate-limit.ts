@@ -34,6 +34,8 @@ export const USER_LIMITS = {
   events: { max: 300, windowMs: 10 * 60 * 1000 },
   saved: { max: 120, windowMs: 10 * 60 * 1000 },
   report: { max: 10, windowMs: 10 * 60 * 1000 },
+  /** Thumbs up/down on answers and briefs: its own count, separate from Ask's 30 questions. */
+  feedback: { max: 60, windowMs: 10 * 60 * 1000 },
   clips: { max: 200, windowMs: 10 * 60 * 1000 },
 } as const;
 export const LOGIN_LIMIT = { max: 10, windowMs: 15 * 60 * 1000 } as const;

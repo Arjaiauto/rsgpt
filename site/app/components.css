@@ -223,3 +223,26 @@ dialog.pal { width: min(640px, calc(100% - 32px)); margin-top: 12vh; }
 .rc-shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0, 0, 0, 0.38) 0%, transparent 26%, transparent 42%, rgba(0, 0, 0, 0.84) 100%); }
 .rc--blur img { filter: blur(36px) brightness(0.5) saturate(1.2); transform: scale(1.25); }
 .rc--blur .rc-shade { background: rgba(0, 0, 0, 0.35); }
+
+/* Thumbs up / down on answers and briefs (components/feedback/FeedbackButtons.tsx) */
+.fb { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.fb__btn {
+  width: 34px; height: 34px; display: inline-grid; place-items: center; border-radius: var(--radius-pill); border: 1px solid transparent;
+  background: none; color: var(--ink-faint); cursor: pointer; transition: color 0.2s, background-color 0.2s, border-color 0.2s;
+}
+.fb__btn svg { width: 18px; height: 18px; }
+.fb__btn:hover { color: var(--ink); background: var(--raised); }
+.fb__btn[aria-pressed="true"] { color: var(--violet-text); border-color: var(--line-strong); background: var(--raised); }
+.fb__btn:focus-visible, .fb__send:focus-visible, .fb__skip:focus-visible, .fb__input:focus-visible { outline: 2px solid var(--violet-text); outline-offset: 2px; }
+.fb__form { display: flex; flex: 1 1 100%; align-items: center; gap: 8px; margin-top: 6px; }
+.fb__input {
+  flex: 1 1 auto; min-width: 0; height: 36px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--raised);
+  color: var(--ink); font: 16px var(--sans);
+}
+.fb__send { height: 36px; padding: 0 14px; border-radius: var(--radius-pill); border: 0; background: var(--violet); color: #fff; font: 500 13px var(--sans); cursor: pointer; }
+.fb__send:disabled { opacity: 0.6; cursor: default; }
+.fb__skip { border: 0; background: none; color: var(--ink-faint); font: 13px var(--sans); cursor: pointer; padding: 6px 4px; }
+.fb__skip:hover { color: var(--ink); }
+.fb__done { font-size: 13px; color: var(--ink-faint); }
+.prep-actions .fb { margin-right: auto; }
+@media (max-width: 480px) { .fb__form { flex-wrap: wrap; } .fb__input { flex-basis: 100%; } }

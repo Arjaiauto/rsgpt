@@ -13,6 +13,7 @@ import {
   webGroups, webSource, type SectionKey,
 } from "@/lib/prep/export";
 import { PREP_LIMITS, type Brief, type BriefQuestion, type BriefWeb, type PastBrief, type PrepEvent, type WebEvent } from "@/lib/prep/types";
+import { FeedbackButtons } from "@/components/feedback/FeedbackButtons";
 import { RunMeta } from "@/components/progress/RunMeta";
 import { saveWithUndo } from "@/lib/save-client";
 import { toast } from "@/lib/toast";
@@ -125,6 +126,8 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
   const [brief, setBrief] = useState<Brief | null>(null);
   const [past, setPast] = useState(pastIn);
   const [savedId, setSavedId] = useState<number | null>(null);
+  /** The qa_log row of the brief just built (for thumbs up/down); none for a brief opened from Saved. */
+  const [logId, setLogId] = useState<number | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [webPhase, setWebPhase] = useState<WebPhase>("idle");
@@ -146,6 +149,7 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
   useEffect(() => {
     if (!openId || opened.current === openId) return;
     opened.current = openId;
+    setLogId(null);
     router.replace("/prep", { scroll: false });
     void loadBrief(openId).then((b) => {
       if (b) show(b, openId);
@@ -164,6 +168,7 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
     const abort = new AbortController();
     abortRef.current = abort;
     setBrief(null);
+    setLogId(null);
     setSavedId(null);
     savedRef.current = null;
     window.setTimeout(() => outRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }), 50);
@@ -197,6 +202,7 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
           if (ev.type === "step") setStep(ev.step);
           else if (ev.type === "eta") setRun((r) => ({ ...r, eta: ev.ms }));
           else if (ev.type === "brief") { show(ev.brief, null); finished = true; }
+          else if (ev.type === "done") setLogId(ev.logId);
           else if (ev.type === "notfound") { setMessage(ev.message); setPhase("notfound"); finished = true; }
           else if (ev.type === "error") { setMessage("Nothing was lost. Try the brief again."); setPhase("error"); finished = true; }
         }
@@ -427,10 +433,11 @@ export function PrepView({ sectors, past: pastIn, openId }: { sectors: Sector[];
             <div className="prep-nf rise">
               <b>{phase === "notfound" ? "I couldn't build this brief from the episodes." : "Couldn't build the brief."}</b>
               <p>{phase === "notfound" ? `${message} Try a different description, or pick a sector.` : message}</p>
+              {phase === "notfound" && <FeedbackButtons key={logId ?? "none"} qaLogId={logId} />}
             </div>
           )}
           {phase === "done" && brief && (
-            <BriefDoc brief={brief} edit={edit} strike={strike} web={{ add: addWeb, phase: webPhase, step: webStep, run: webRun, cancel: cancelWeb }} actions={{ copy, pdf, word, save, saved: savedId != null, dirty, saving }} />
+            <BriefDoc brief={brief} edit={edit} strike={strike} web={{ add: addWeb, phase: webPhase, step: webStep, run: webRun, cancel: cancelWeb }} actions={{ copy, pdf, word, save, saved: savedId != null, dirty, saving, logId }} />
           )}
         </section>
       </div>
@@ -445,7 +452,7 @@ function BriefDoc({ brief: b, edit, strike, web, actions }: {
   edit: (id: string, text: string) => void;
   strike: (id: string) => void;
   web: { add: () => void; phase: WebPhase; step: 1 | 2 | 3; run: { t0: number; eta: number | null }; cancel: () => void };
-  actions: { copy: () => void; pdf: () => void; word: () => void; save: () => void; saved: boolean; dirty: boolean; saving: boolean };
+  actions: { copy: () => void; pdf: () => void; word: () => void; save: () => void; saved: boolean; dirty: boolean; saving: boolean; logId: number | null };
 }) {
   const gone = new Set(b.removed);
   const counts = sectionCounts(b);
@@ -588,6 +595,7 @@ function BriefDoc({ brief: b, edit, strike, web, actions }: {
   return (
     <article className="prep-doc rise" id="prep-doc">
       <div className="prep-actions" role="toolbar" aria-label="Brief actions">
+        <FeedbackButtons key={actions.logId ?? "none"} qaLogId={actions.logId} />
         <button className="prep-ghost" type="button" onClick={actions.copy}>Copy as text</button>
         <button className="prep-ghost" type="button" onClick={actions.pdf}>Download PDF</button>
         <button className="prep-ghost" type="button" onClick={actions.word}>Download Word</button>

@@ -10,6 +10,7 @@ import { saveWithUndo } from "@/lib/save-client";
 import { toast } from "@/lib/toast";
 import { ClipPlayer } from "@/components/player/ClipPlayer";
 import { getPlayer, player } from "@/components/player/store";
+import { FeedbackButtons } from "@/components/feedback/FeedbackButtons";
 import { ReportButton } from "@/components/report/ReportButton";
 import { RunMeta } from "@/components/progress/RunMeta";
 import { LineAnswer, LineThinking } from "./LineAnswer";
@@ -355,6 +356,7 @@ export function AskView({ episodes }: { episodes: number }) {
                 <div className="chips">
                   {t.suggestions.map((s) => <button key={s} className="chip chip--follow" type="button" onClick={() => ask(s)} disabled={busy}>{s}</button>)}
                 </div>
+                <div className="acts"><FeedbackButtons key={t.answerId ?? "none"} qaLogId={t.answerId} /></div>
               </div>
             )}
             {t.kind !== "line" && (t.status === "thinking" || t.status === "answering" || t.status === "done") && (t.blocks.length > 0 || t.ref) && <Answer turn={t} episodes={episodes} busy={busy} onAsk={ask} onCancel={() => cancel(t.id)} onToggle={(k) => patch(t.id, (x) => ({ ...x, open: x.open === k ? undefined : k }))} />}
@@ -486,6 +488,7 @@ function Answer({ turn: t, episodes, busy, onAsk, onToggle, onCancel }: { turn: 
             </>
           )}
           {t.status === "done" && <div className="acts">
+            <FeedbackButtons key={t.answerId ?? "none"} qaLogId={t.answerId} />
             <button className="linkbtn" type="button" onClick={copy}>Copy answer</button>
             <button className="linkbtn" type="button" onClick={saveAnswer} disabled={saved}>{saved ? "Saved" : "Save answer"}</button>
             <ReportButton
