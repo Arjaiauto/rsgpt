@@ -435,6 +435,39 @@ export function AskView({ episodes }: { episodes: number }) {
   );
 }
 
+/** Same moment (episode and start): the card keeps its content and only the quoted line may differ. */
+const sameMoment = (a: RefMoment, b: RefMoment) => a.videoId === b.videoId && a.startS === b.startS && a.chunkId === b.chunkId;
+
+/** The "Best matching moment" card. When the answer moves it to another moment, the old card fades out while the new one
+    fades in on top of it (both fill the same grid cell and the quoted line has a fixed height, so nothing jumps). A card
+    the reader has already played never changes (AskView's "ref" event handling). */
+function RefCard({ id, moment }: { id: string; moment: RefMoment }) {
+  const [shown, setShown] = useState(moment);
+  const [leaving, setLeaving] = useState<RefMoment | null>(null);
+  if (!sameMoment(shown, moment) || shown.snippet !== moment.snippet) {
+    // A different moment crossfades; the same moment with another quoted line just updates.
+    if (!sameMoment(shown, moment)) setLeaving(shown);
+    setShown(moment);
+  }
+  useEffect(() => {
+    if (!leaving) return;
+    const done = window.setTimeout(() => setLeaving(null), 260);
+    return () => window.clearTimeout(done);
+  }, [leaving]);
+  return (
+    <div className="refcard">
+      {leaving && (
+        <div className="refcard__out" aria-hidden="true" inert>
+          <ClipPlayer clip={clipOf(`ask:${id}:ref:out`, leaving, 45)} label="Best matching moment" report={false} snippet={leaving.snippet ?? ""} />
+        </div>
+      )}
+      <div key={`${shown.videoId}@${shown.startS}`} className={leaving ? "refcard__in" : undefined}>
+        <ClipPlayer clip={clipOf(`ask:${id}:ref`, shown, 45)} label="Best matching moment" report={false} snippet={shown.snippet ?? ""} />
+      </div>
+    </div>
+  );
+}
+
 function Answer({ turn: t, episodes, busy, onAsk, onToggle, onCancel }: { turn: Turn; episodes: number; busy: boolean; onAsk: (q: string) => void; onToggle: (key: string) => void; onCancel: () => void }) {
   const lang = t.language === "hi" ? "hi" : undefined;
 
@@ -478,9 +511,7 @@ function Answer({ turn: t, episodes, busy, onAsk, onToggle, onCancel }: { turn: 
 
   return (
     <div className="answer">
-      {t.ref && (
-        <ClipPlayer clip={clipOf(`ask:${t.id}:ref`, t.ref, 45)} label="Best matching moment" report={false} />
-      )}
+      {t.ref && <RefCard id={t.id} moment={t.ref} />}
       {!t.blocks.length && <Thinking turn={t} episodes={episodes} onCancel={onCancel} />}
       {t.length && <p className="anslen">{ANSWER_LENGTHS[t.length].label} answer</p>}
       <div className="ans" lang={lang}>

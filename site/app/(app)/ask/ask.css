@@ -192,3 +192,19 @@
 }
 .anslen { margin: 0 0 -4px; font-size: 12px; letter-spacing: 0.04em; color: var(--ink-faint); }
 .playall svg { width: 13px; height: 13px; color: var(--violet-text); }
+
+/* "Best matching moment" card (28c-card): the quoted line, and the crossfade when the answer moves the card. */
+.pmeta__q {
+  margin: 8px 0 0; font-size: 14px; line-height: 1.45; color: var(--ink-soft); overflow-wrap: anywhere;
+  min-height: calc(2 * 1.45em); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
+@media (max-width: 560px) { .pmeta__q { min-height: calc(3 * 1.45em); -webkit-line-clamp: 3; } }
+.refcard { display: grid; }
+.refcard > * { grid-area: 1 / 1; min-width: 0; }
+.refcard .pmeta__g { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* one line, so both cards are the same height */
+.refcard__out { pointer-events: none; animation: refOut 0.24s ease both; }
+.refcard__in { animation: refIn 0.24s ease both; }
+@keyframes refOut { to { opacity: 0; } }
+@keyframes refIn { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .refcard__in { animation: none; } .refcard__out { display: none; } }
+.refcard .pmeta { grid-template-columns: minmax(0, 1fr); } /* a long guest line shrinks to "…" instead of widening the card */

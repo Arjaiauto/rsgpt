@@ -2,8 +2,9 @@ import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { etaMs } from "@/lib/eta";
 import { followups, logQuestion, shouldRetry, sourceCards, streamAnswer } from "@/lib/ask/answer";
+import { answerRef, matchRef } from "@/lib/ask/card";
 import { ANSWER_LENGTHS, ANSWER_LENGTH_COOKIE, ASK, COVERED_QUESTIONS, parseAnswerLength } from "@/lib/ask/config";
-import { retrieve, sourceOf } from "@/lib/ask/retrieve";
+import { retrieve } from "@/lib/ask/retrieve";
 import { getGuestScope } from "@/lib/guests";
 import { Timings } from "@/lib/ask/timing";
 import type { AskEvent, AskLanguage } from "@/lib/ask/types";
@@ -90,8 +91,9 @@ export async function POST(request: Request) {
         // The page fills in while the answer is written: source cards and the best-matching moment now (the
         // reference player moves to the first cited moment once the answer cites one), follow-ups in parallel.
         emit({ type: "found", sources: sourceCards(r, []), language });
-        const best = r.chunks[0];
-        emit({ type: "ref", ref: { ...sourceOf(r.episodes.get(best.videoId)!, best.startS, best.endS), chunkId: best.id } });
+        // The card shows the top-ranked passage now so it appears fast; once the answer is complete it moves to the cited
+        // passage most similar to the question.
+        emit({ type: "ref", ref: matchRef(question, r) });
         t.mark("found");
         emit({ type: "step", step: 3 });
         if (aborted) { controller.close(); return; }
@@ -115,6 +117,8 @@ export async function POST(request: Request) {
           if (debug) emit({ type: "debug", data: { timings: t, notFound: a.notFound, gate: a.gateLog } });
           emit({ type: "done", answerId, followups: [], cited: 0 });
         } else {
+          const cardRef = answerRef(question, r, a.cited);
+          if (cardRef) emit({ type: "ref", ref: cardRef });
           emit({ type: "sources", sources: sourceCards(r, a.cited) });
           const followupList = await next;
           const answerId = await finish(a.text, a.citedChunkIds, true);

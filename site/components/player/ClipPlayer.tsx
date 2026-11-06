@@ -63,7 +63,11 @@ export function PlayerSlot({ clip, caption }: { clip: Clip; caption?: string }) 
 }
 
 /** Big player card: slot, title, guest, episode, start time, progress, actions. */
-export function ClipPlayer({ clip, label, report = true, canSave = true }: { clip: Clip; label?: string; report?: boolean; canSave?: boolean }) {
+export function ClipPlayer({ clip, label, report = true, canSave = true, snippet }: {
+  clip: Clip; label?: string; report?: boolean; canSave?: boolean;
+  /** The line of the moment to quote under the title (a line in the transcript's language). "" reserves the room with nothing in it. */
+  snippet?: string;
+}) {
   const { clip: current, pos } = usePlayer();
   const isCurrent = current?.key === clip.key;
   const len = clip.endS - clip.startS;
@@ -88,6 +92,7 @@ export function ClipPlayer({ clip, label, report = true, canSave = true }: { cli
           <div className="pmeta__g">
             {[clip.guest, clip.date].filter(Boolean).join(" · ")} · starts <span className="ts">{fmtTime(clip.startS)}</span>
           </div>
+          {snippet !== undefined && <p className="pmeta__q">{snippet ? `“${snippet}”` : null}</p>}
         </div>
         <div
           className="track"

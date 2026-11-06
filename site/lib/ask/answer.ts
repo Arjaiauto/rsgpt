@@ -126,10 +126,6 @@ export async function streamAnswer(
     emit({ type: "text", block: out, text: sentence });
     text += sentence;
     for (const cite of cites) {
-      if (!cited.length) {
-        const ep = r.episodes.get(cite.videoId)!;
-        emit({ type: "ref", ref: { ...sourceOf(ep, cite.startS, Math.max(cite.endS, cite.startS + 45)), chunkId: cite.chunkId } });
-      }
       cited.push(cite);
       emit({ type: "cite", block: out, cite });
     }

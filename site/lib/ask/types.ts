@@ -29,7 +29,9 @@ export type Source = {
   endS: number;
 };
 
-export type RefMoment = Source & { chunkId: number };
+/** The "Best matching moment" card: a moment, the passage it is from, and the line of it the card quotes (about 120
+    characters, in the transcript's own language). */
+export type RefMoment = Source & { chunkId: number; snippet?: string };
 
 /** Events on the NDJSON stream from POST /api/ask, one JSON object per line. */
 export type AskEvent =
