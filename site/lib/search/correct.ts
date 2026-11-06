@@ -12,22 +12,46 @@ export const CORRECT = {
   minLength: 4,
 } as const;
 
-/** chunk_terms counts for these words (a missing word is in no passage). */
+/** What this server already knows about words (chunk_terms changes only when the chunks are reloaded): counts and
+    nearest words are kept an hour, so the fast search phase usually has no database call at all. */
+const TTL_MS = 60 * 60 * 1000;
+const MAX_CACHED = 20_000;
+type Memo = { counts: Map<string, { at: number; n: number }>; near: Map<string, { at: number; to: { word: string; similarity: number } | null }> };
+const memo = ((globalThis as { __searchWords?: Memo }).__searchWords ??= { counts: new Map(), near: new Map() });
+const fresh = (at: number) => Date.now() - at < TTL_MS;
+function remember<V>(map: Map<string, V>, key: string, value: V) {
+  map.set(key, value);
+  if (map.size > MAX_CACHED) map.delete(map.keys().next().value!);
+}
+
+/** chunk_terms counts for these words (a missing word is in no passage and is not in the result). */
 export async function wordCounts(words: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
-  const unique = [...new Set(words.filter(Boolean))];
-  if (!unique.length) return out;
-  const { data, error } = await db().from("chunk_terms").select("word,chunk_count").in("word", unique);
+  const need: string[] = [];
+  for (const w of new Set(words.filter(Boolean))) {
+    const c = memo.counts.get(w);
+    if (c && fresh(c.at)) { if (c.n > 0) out.set(w, c.n); } else need.push(w);
+  }
+  if (!need.length) return out;
+  const { data, error } = await db().from("chunk_terms").select("word,chunk_count").in("word", need);
   if (error) throw new Error(`chunk_terms: ${error.message}`);
-  for (const r of data ?? []) out.set(r.word as string, r.chunk_count as number);
+  const found = new Map((data ?? []).map((r) => [r.word as string, r.chunk_count as number]));
+  for (const w of need) {
+    remember(memo.counts, w, { at: Date.now(), n: found.get(w) ?? 0 });
+    if (found.has(w)) out.set(w, found.get(w)!);
+  }
   return out;
 }
 
 async function nearest(word: string): Promise<{ word: string; similarity: number } | null> {
+  const hit = memo.near.get(word);
+  if (hit && fresh(hit.at)) return hit.to;
   const { data, error } = await db().rpc("near_words", { p_word: word, p_limit: 3, p_min_similarity: CORRECT.minSimilarity });
   if (error) throw new Error(`near_words: ${error.message}`);
   const top = (data ?? [])[0] as { word: string; similarity: number } | undefined;
-  return top && top.similarity >= CORRECT.minSimilarity ? { word: top.word, similarity: top.similarity } : null;
+  const to = top && top.similarity >= CORRECT.minSimilarity ? { word: top.word, similarity: top.similarity } : null;
+  remember(memo.near, word, { at: Date.now(), to });
+  return to;
 }
 
 /** The query with its misspelt words corrected, or null when nothing changed. `known(word)` says whether a word is a

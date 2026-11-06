@@ -5,7 +5,13 @@
 import { STOPWORDS, contentWords, fold } from "./normalize";
 import type { Chip } from "./types";
 
-export const CHIPS = { min: 3, max: 5, topics: 2, guests: 2, refine: 2, minRefineTitles: 2, minWordLength: 4 } as const;
+export const CHIPS = {
+  min: 3, max: 5, topics: 2, guests: 2, refine: 2, minRefineTitles: 2, minWordLength: 4,
+  /** A topic chip needs this many of the top passages, and at least this many times its share of the archive's episodes
+      ("Law of attraction" is in 2% of episodes: 3 passages of 30 is 10%, five times that, but only 3 passages, so a chip
+      needs both). */
+  topicMinHits: 3, topicMinLift: 2,
+} as const;
 
 /** Words of the clip titles (content words, at least 4 letters, not the query's own), with how many titles have each. */
 export function refineCandidates(titles: string[], queryWords: string[]): Map<string, number> {
@@ -26,7 +32,9 @@ export function refineCandidates(titles: string[], queryWords: string[]): Map<st
 export type ChipInput = {
   query: string;
   queryWords: string[];
-  topics: { key: string; label: string; hits: number }[];
+  /** `baseline`: the share of all episodes that have the topic; `poolSize`: the passages the hits were counted over. */
+  topics: { key: string; label: string; hits: number; baseline: number }[];
+  poolSize: number;
   guests: { slug: string; name: string; hits: number }[];
   /** refineCandidates(...) */
   refine: Map<string, number>;
@@ -41,7 +49,7 @@ const echoes = (label: string, queryWords: string[]) => {
 };
 
 export function buildChips(c: ChipInput): Chip[] {
-  const topics = c.topics.filter((t) => t.hits > 0 && !echoes(t.label, c.queryWords));
+  const topics = c.topics.filter((t) => t.hits >= CHIPS.topicMinHits && t.hits / Math.max(1, c.poolSize) >= CHIPS.topicMinLift * t.baseline && !echoes(t.label, c.queryWords));
   const guests = c.guests.filter((g) => g.hits > 0 && !echoes(g.name, c.queryWords));
   const total = Math.max(1, c.totalChunks);
   const refine = [...c.refine.entries()]

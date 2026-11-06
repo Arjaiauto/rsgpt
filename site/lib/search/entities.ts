@@ -9,9 +9,11 @@ import type { EntityMatch, MatchHow, Suggestion, SuggestionKind } from "./types"
     here, not in the database: prefix, whole-word and typo-tolerant (edit distance, trigrams) on the text, its folded form
     and its aliases (Devanagari ones too). Used by autocomplete and by the search's first tier. */
 
-type Form = { s: string; words: string[]; grams: Set<string> };
+/** `alias`: a spelling other than the suggestion's own text (a Devanagari spelling, a Hinglish or typo form, a variant name). */
+type Form = { s: string; words: string[]; grams: Set<string>; alias: boolean };
 type Entry = { sug: Suggestion; forms: Form[]; boost: number };
-type Index = { entries: Entry[]; vocabulary: Set<string>; at: number };
+export type EntityIndex = { entries: Entry[]; vocabulary: Set<string>; at: number };
+type Index = EntityIndex;
 
 const TTL_MS = 60 * 60 * 1000;
 const holder = globalThis as { __searchIndex?: { index: Index | null; loading: Promise<Index> | null } };
@@ -35,7 +37,7 @@ async function load(): Promise<Index> {
     const forms = strings.map((s) => {
       const words = s.split(" ").filter(keep);
       for (const w of words) if (!/^\d+$/.test(w)) vocabulary.add(w);
-      return { s: words.join(" "), words, grams: trigrams(words.join(" ")) };
+      return { s: words.join(" "), words, grams: trigrams(words.join(" ")), alias: s !== r.folded };
     }).filter((f) => f.s);
     const top = maxLog.get(r.kind) || 1;
     return {
@@ -82,14 +84,19 @@ export function topicLabels(ix: Index): Map<string, string> {
 /** Is this word in a suggestion's text or alias (a guest, topic, title or curated term)? */
 export const inVocabulary = (ix: Index, word: string) => ix.vocabulary.has(word);
 
-/** Typo allowance for a word of this length. */
-const maxEdits = (len: number) => (len >= 8 ? 2 : len >= 4 ? 1 : 0);
+/** Typo allowance for a word of this length: none under 5 letters, where one letter apart is usually another word
+    ("nikh" is not "nike"); words that short are corrected by correct.ts against the transcripts instead. */
+const maxEdits = (len: number) => (len >= 9 ? 2 : len >= 5 ? 1 : 0);
 
 type Scored = { score: number; how: MatchHow };
 
 /** How well one stored form matches the query (folded), or null. */
 function scoreForm(f: Form, q: string, qWords: string[], kind: SuggestionKind, qGrams: Set<string>): Scored | null {
   if (f.s === q) return { score: 1, how: "exact" };
+  // A spelling under 3 characters ("ai", "a i") is only ever matched whole, and a query under 3 characters only finds a
+  // suggestion by its own text or an alias that is exactly it: "ai" must not pull in a guest through a longer alias such
+  // as "Madhav Seth AI Plus".
+  if (f.alias && (f.s.length < 3 || q.length < 3)) return null;
   if (q.length >= 2 && f.s.startsWith(q) && (q.length >= 3 || f.s.startsWith(q + " "))) {
     return { score: 0.85 + 0.1 * (q.length / f.s.length), how: "prefix" };
   }

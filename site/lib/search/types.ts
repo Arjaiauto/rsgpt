@@ -46,6 +46,8 @@ export type Chip = { label: string; kind: "topic" | "guest" | "refine"; value: s
 export type SearchGroups = { guests: GuestHit[]; episodes: EpisodeHit[]; clips: ClipHit[]; moments: MomentHit[]; topics: TopicHit[] };
 
 export type SearchResult = {
+  /** fast: the names and titles only (no embedding, no passage search); full: everything. The page asks for fast first. */
+  phase?: "fast" | "full";
   query: string;
   corrected?: Correction;
   /** exact: something matched the words typed (a name, a title or a passage); closest: only the nearest in meaning. */
