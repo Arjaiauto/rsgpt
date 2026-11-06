@@ -67,6 +67,11 @@ export function facetCounts(ix: ScopeIndex, s: AskScope) {
   };
 }
 
+/** "1 episode", "23 episodes". */
+export const episodeCount = (n: number) => `${n} episode${n === 1 ? "" : "s"}`;
+/** "this 1 episode", "these 23 episodes". */
+export const theseEpisodes = (n: number) => (n === 1 ? "this 1 episode" : `these ${n} episodes`);
+
 /** "Health · 2025 · Hindi", "Vaibhav Sisinty". Empty for the whole archive. */
 export function scopeLabel(ix: ScopeIndex | null, s: AskScope): string {
   const guest = s.guest ? ix?.guests.find((g) => g.slug === s.guest)?.name ?? s.guest : null;

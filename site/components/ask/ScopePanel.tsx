@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { IconScope, IconX } from "@/components/Icons";
 import {
-  SCOPE_LANGS, facetCounts, matchEpisodes, scopeIsEmpty, scopeLabel,
+  SCOPE_LANGS, episodeCount, facetCounts, matchEpisodes, scopeIsEmpty, scopeLabel,
   type AskScope, type ScopeFacet, type ScopeIndex,
 } from "@/lib/ask/scope-types";
 
@@ -26,7 +26,6 @@ function valueOf(ix: ScopeIndex, s: AskScope, f: ScopeFacet): string | null {
   return s.lang ? SCOPE_LANGS[s.lang] : null;
 }
 
-const plural = (n: number) => `${n} episode${n === 1 ? "" : "s"}`;
 const activeCount = (s: AskScope) => [s.guest, s.topic, s.year, s.lang].filter(Boolean).length;
 
 /** Under the empty Ask box: Guest · Topic · Year · Language, each opening the sheet at its own section. */
@@ -42,7 +41,7 @@ export function ScopeChips({ ix, scope, onOpen }: { ix: ScopeIndex; scope: AskSc
           </button>
         );
       })}
-      <span className="scopechips__n" aria-live="polite">{scopeIsEmpty(scope) ? `All ${ix.episodes.length} episodes` : plural(n)}</span>
+      <span className="scopechips__n" aria-live="polite">{scopeIsEmpty(scope) ? `All ${ix.episodes.length} episodes` : episodeCount(n)}</span>
     </div>
   );
 }
@@ -161,7 +160,7 @@ export function ScopeDialog({ ix, scope, onChange, open, focus, onClose }: {
         </fieldset>
       </div>
       <div className="df">
-        <span className="note" aria-live="polite">{scopeIsEmpty(scope) ? `All ${ix.episodes.length} episodes` : `${plural(total)}: ${scopeLabel(ix, scope)}`}</span>
+        <span className="note" aria-live="polite">{scopeIsEmpty(scope) ? `All ${ix.episodes.length} episodes` : `${episodeCount(total)}: ${scopeLabel(ix, scope)}`}</span>
         <button className="pill pill--ghost" type="button" onClick={() => onChange({})} disabled={scopeIsEmpty(scope)}>Clear all</button>
         <button className="pill pill--primary pill--sm" type="button" onClick={() => ref.current?.close()}>Done</button>
       </div>

@@ -18,7 +18,7 @@ import { ReportButton } from "@/components/report/ReportButton";
 import { RunMeta } from "@/components/progress/RunMeta";
 import { LineAnswer, LineThinking } from "./LineAnswer";
 import { ScopeButton, ScopeChips, ScopeDialog } from "./ScopePanel";
-import { matchEpisodes, parseScope, scopeIsEmpty, scopeKey, scopeLabel, type AskScope, type ScopeFacet, type ScopeIndex } from "@/lib/ask/scope-types";
+import { episodeCount, matchEpisodes, parseScope, scopeIsEmpty, scopeKey, scopeLabel, theseEpisodes, type AskScope, type ScopeFacet, type ScopeIndex } from "@/lib/ask/scope-types";
 
 type Block = { text: string; cites: Cite[] };
 type Turn = {
@@ -74,7 +74,7 @@ const loadScope = (): AskScope => {
 function ScopeBar({ label, n, onClear, disabled }: { label: string; n?: number; onClear: () => void; disabled: boolean }) {
   return (
     <div className="scopebar" role="status">
-      <span>Searching only <b>{label}</b>{n != null ? ` · ${n} episode${n === 1 ? "" : "s"}` : ""}</span>
+      <span title={n != null ? `${label} · ${episodeCount(n)}` : label}>Searching only <b>{label}</b>{n != null ? ` · ${episodeCount(n)}` : ""}</span>
       <button className="linkbtn" type="button" onClick={onClear} disabled={disabled}>Search all episodes</button>
     </div>
   );
@@ -208,8 +208,8 @@ function Composer({ docked, busy, onAsk, autoFocus, lineMode, onLineMode, length
 /** The names of the stages, each ticked when the server finishes it. */
 function stagesOf(turn: Turn, episodes: number): string[] {
   return [
-    turn.scope ? (turn.scopeN != null ? `Searching ${turn.scopeN} episodes: ${turn.scope}` : `Searching ${turn.scope}’s episodes`) : `Searching ${episodes} episodes`,
-    turn.moments != null ? `Found ${turn.moments} moments in ${turn.episodes} episodes` : "Finding the moments",
+    turn.scope ? (turn.scopeN != null ? `Searching ${episodeCount(turn.scopeN)}: ${turn.scope}` : `Searching ${turn.scope}’s episodes`) : `Searching ${episodeCount(episodes)}`,
+    turn.moments != null ? `Found ${turn.moments} moment${turn.moments === 1 ? "" : "s"} in ${episodeCount(turn.episodes ?? 0)}` : "Finding the moments",
     "Writing the answer",
     "Checking citations",
   ];
@@ -393,7 +393,7 @@ export function AskView({ episodes, scopeIndex }: { episodes: number; scopeIndex
         {scoped && scope.guest && !scope.topic && !scope.year && !scope.lang ? (
           <h1 className="ask-h rise">Ask about {label}<span>using only their episodes</span></h1>
         ) : scoped ? (
-          <h1 className="ask-h rise">Ask about {label}<span>using only {scopeN != null ? `these ${scopeN}` : "these"} episodes</span></h1>
+          <h1 className="ask-h rise">Ask about {label}<span>using only {scopeN != null ? theseEpisodes(scopeN) : "these episodes"}</span></h1>
         ) : (
           <h1 className="ask-h rise">Ask anything from {episodes} episodes<span>in English, Hindi or Hinglish</span></h1>
         )}
@@ -551,7 +551,7 @@ function Answer({ turn: t, episodes, busy, onAsk, onToggle, onCancel }: { turn: 
       {!t.blocks.length && <Thinking turn={t} episodes={episodes} onCancel={onCancel} />}
       {(t.length || t.scope) && (
         <p className="anslen">
-          {[t.length && `${ANSWER_LENGTHS[t.length].label} answer`, t.scope && `${t.scope}${t.scopeN != null ? ` · ${t.scopeN} episode${t.scopeN === 1 ? "" : "s"}` : ""}`].filter(Boolean).join(" · ")}
+          {[t.length && `${ANSWER_LENGTHS[t.length].label} answer`, t.scope && `${t.scope}${t.scopeN != null ? ` · ${episodeCount(t.scopeN)}` : ""}`].filter(Boolean).join(" · ")}
         </p>
       )}
       <div className="ans" lang={lang}>
