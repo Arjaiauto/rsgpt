@@ -32,10 +32,14 @@ export const ASK = {
   /** A turn of the transcript becomes one citable block; long turns are split so a citation stays precise. */
   maxTurnSeconds: 40,
 
-  /** Ask within a scope (28d): a scope of at most this many chunks is searched exactly (every chunk in it compared with
-      the question); a bigger one through the HNSW index (the 200 nearest of the archive, then those in scope). See
-      pipeline/sql/hybrid_search_scoped.sql. Lowered only if timing shows the exact search is too slow for big scopes. */
-  scopeExactMaxChunks: Number.POSITIVE_INFINITY,
+  /** Ask within a scope (28d): a scope of at most this many chunks (estimated, lib/ask/scope.ts) is searched exactly
+      (every chunk in it compared with the question); a bigger one through the HNSW index (the 200 nearest of the
+      archive, then those in scope). See pipeline/sql/hybrid_search_scoped.sql. Measured 2026-11-06: exact takes
+      0.1-0.2 s warm for a guest or a topic (up to about 2,400 chunks; 1.4-2.6 s for the first question on a cold
+      topic), but 6.5 s cold for 2023 (about 3,500) and hits the 8 s statement timeout for 2026, English and Hindi.
+      The index takes 0.1-0.6 s for those, but on a topic keeps only 4-18 of the exact search's 20 results, so topics
+      and guests stay exact and years, languages and big combinations use the index. */
+  scopeExactMaxChunks: 3000,
 
   maxQuestionChars: 400,
   /** Questions per visitor (falls back to IP) in the window. */
