@@ -6,6 +6,9 @@ import { ANSWER_LENGTHS, ANSWER_LENGTH_COOKIE, EXAMPLE_QUESTIONS, HOST_NAME, par
 import { isQuoted, unquote } from "@/lib/ask/quote";
 import type { AskEvent, AskLanguage, Cite, FindLineResult, LineMatch, RefMoment, Source } from "@/lib/ask/types";
 import { fmtTime, youtubeAt, type Clip } from "@/lib/player-types";
+import { recordPlayAll } from "@/app/actions/play";
+import { IconPlay } from "@/components/Icons";
+import { buildPlaylist } from "@/lib/ask/playlist";
 import { saveWithUndo } from "@/lib/save-client";
 import { toast } from "@/lib/toast";
 import { ClipPlayer } from "@/components/player/ClipPlayer";
@@ -296,6 +299,7 @@ export function AskView({ episodes }: { episodes: number }) {
   /** `inScope` limits the question to a guest's episodes (default: the current scope); `fresh` ignores earlier questions. */
   const ask = async (q: string, line = false, inScope: Scope | null = scope, fresh = false) => {
     if (busy) return;
+    player.stopQueue();
     const asLine = line || isQuoted(q);
     const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const earlier = fresh ? [] : turns.map((t) => t.q).slice(-3);
@@ -357,7 +361,7 @@ export function AskView({ episodes }: { episodes: number }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
-  const reset = () => { setTurns([]); setLineMode(false); window.scrollTo({ top: 0 }); };
+  const reset = () => { player.stopQueue(); setTurns([]); setLineMode(false); window.scrollTo({ top: 0 }); };
 
   if (!turns.length) {
     return (
@@ -452,6 +456,13 @@ function Answer({ turn: t, episodes, busy, onAsk, onToggle, onCancel }: { turn: 
     catch { toast("Copy isn't available here; select the text instead"); }
   };
 
+  // Play the answer: the cited moments back to back (needs two or more clips once repeats are merged).
+  const playlist = t.status === "done" ? buildPlaylist(t.id, t.blocks.flatMap((b) => b.cites)) : [];
+  const playAll = () => {
+    player.playQueue(playlist);
+    void recordPlayAll({ answerId: t.answerId, clips: playlist.length }).catch(() => {});
+  };
+
   const [saved, setSaved] = useState(false);
   const saveAnswer = async () => {
     if (saved) return;
@@ -491,7 +502,10 @@ function Answer({ turn: t, episodes, busy, onAsk, onToggle, onCancel }: { turn: 
                 {para.map((x, xi) => (
                   <Fragment key={xi}>
                     {x.text}
-                    {x.last && t.blocks[x.block].cites.map((c, ci) => {
+                    {x.last && t.blocks[x.block].cites.map((c, ci, all) => {
+                      // Two chips in a row for the same moment (same episode and start) show once.
+                      const before = all[ci - 1];
+                      if (before && before.videoId === c.videoId && before.startS === c.startS) return null;
                       const k = `${x.block}:${ci}`;
                       return (
                         <button
@@ -546,6 +560,11 @@ function Answer({ turn: t, episodes, busy, onAsk, onToggle, onCancel }: { turn: 
           )}
           {t.status === "done" && <div className="acts">
             <FeedbackButtons key={t.answerId ?? "none"} qaLogId={t.answerId} />
+            {playlist.length >= 2 && (
+              <button className="linkbtn playall" type="button" onClick={playAll} aria-label={`Play all ${playlist.length} cited moments`}>
+                <IconPlay />Play all ({playlist.length})
+              </button>
+            )}
             <button className="linkbtn" type="button" onClick={copy}>Copy answer</button>
             <button className="linkbtn" type="button" onClick={saveAnswer} disabled={saved}>{saved ? "Saved" : "Save answer"}</button>
             <ReportButton

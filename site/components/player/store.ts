@@ -15,9 +15,13 @@ export type PlayerState = {
   muted: boolean;
   /** Captions shown (YouTube's captions module, switched with the IFrame API). */
   captions: boolean;
+  /** "Play the answer": the cited moments playing back to back. The current clip is queue.clips[queue.index]. */
+  queue: { clips: Clip[]; index: number } | null;
+  /** Guest of the next clip while the video switches to another episode (about 1-2 s), else null. */
+  switching: string | null;
 };
 
-const initial: PlayerState = { clip: null, pos: 0, playing: false, slots: 0, muted: false, captions: false };
+const initial: PlayerState = { clip: null, pos: 0, playing: false, slots: 0, muted: false, captions: false, queue: null, switching: null };
 let state = initial;
 const listeners = new Set<() => void>();
 function set(patch: Partial<PlayerState>) {
@@ -95,6 +99,9 @@ let yt: YTPlayer | null = null;
 let ytReady = false;
 let pending: (() => void) | null = null;
 let poll = 0;
+/** Right after a jump inside the same video, getCurrentTime() can still report the old position for a moment; the end of
+    the clip is not checked until then. */
+let ignoreEndUntil = 0;
 
 /** Called once by PlayerLayer with the element the iframe lives in. */
 export function setPlayerHost(el: HTMLElement | null) { host = el; }
@@ -105,10 +112,14 @@ function startPoll() {
     const c = state.clip;
     if (!yt || !ytReady || !c) return;
     const t = yt.getCurrentTime();
+    if (Date.now() < ignoreEndUntil) return;
     if (t >= c.endS - 0.05) {
-      // Clips stop at end_s.
+      const q = state.queue;
+      // Playing the answer: the next cited moment follows, without a toast.
+      if (q && q.index < q.clips.length - 1) { goTo(q.index + 1); return; }
+      // Clips stop at end_s; after the last clip of a queue too.
       yt.pauseVideo();
-      set({ pos: c.endS, playing: false });
+      set({ pos: c.endS, playing: false, queue: null, switching: null });
       stopPoll();
       toast("Clip ended");
       return;
@@ -152,7 +163,7 @@ async function withPlayer(clip: Clip, autoplay: boolean, then?: () => void) {
           const p = pending; pending = null; p?.();
         },
         onStateChange: (e: { data: number }) => {
-          if (e.data === YT.PlayerState.PLAYING) { set({ playing: true }); startPoll(); }
+          if (e.data === YT.PlayerState.PLAYING) { set({ playing: true, switching: null }); startPoll(); }
           else if (e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED) {
             set({ playing: false, pos: yt!.getCurrentTime() });
             stopPoll();
@@ -175,12 +186,34 @@ function resetCaptions(nextVideoId: string) {
   set({ captions: false });
 }
 
+/** Plays the queue's clip at `index`. Another episode loads the video (the mini player shows "Next: <guest>…" until it
+    plays); the same episode just jumps, which is instant. */
+function goTo(index: number) {
+  const q = state.queue;
+  const c = q?.clips[index];
+  if (!q || !c) return;
+  const sameVideo = !!yt && ytReady && state.clip?.videoId === c.videoId;
+  stopPoll();
+  resetCaptions(c.videoId);
+  ignoreEndUntil = Date.now() + 1500;
+  set({ queue: { clips: q.clips, index }, clip: c, pos: c.startS, playing: sameVideo ? state.playing : false, switching: sameVideo ? null : c.guest });
+  if (sameVideo) {
+    yt!.seekTo(c.startS, true);
+    yt!.playVideo();
+    startPoll();
+  } else {
+    void withPlayer(c, true).catch(() => { set({ switching: null }); toast("Couldn't load the YouTube player. Try again."); });
+  }
+}
+
 /* ---------- actions ---------- */
 export const player = {
   /** Plays a clip (or resumes it if it is already the current one). */
   play(clip?: Clip) {
     const c = clip ?? state.clip;
     if (!c) return;
+    // Playing a single clip that is not part of the queue ends the queue.
+    if (clip && state.queue && !state.queue.clips.some((x) => x.key === clip.key)) set({ queue: null, switching: null });
     if (state.clip?.key === c.key && yt && ytReady) {
       if (state.pos >= c.endS - 0.3 || state.pos < c.startS - 1) yt.seekTo(c.startS, true);
       yt.playVideo();
@@ -188,9 +221,28 @@ export const player = {
     }
     stopPoll();
     resetCaptions(c.videoId);
-    set({ clip: c, pos: c.startS, playing: false });
+    set({ clip: c, pos: c.startS, playing: false, switching: null });
     void withPlayer(c, true).catch(() => toast("Couldn't load the YouTube player. Try again."));
   },
+  /** Play the answer: the clips back to back, starting with the first. */
+  playQueue(clips: Clip[]) {
+    if (!clips.length) return;
+    set({ queue: { clips, index: 0 } });
+    goTo(0);
+  },
+  /** Next moment of the queue (nothing after the last one). */
+  next() {
+    const q = state.queue;
+    if (q && q.index < q.clips.length - 1) goTo(q.index + 1);
+  },
+  /** Previous moment; more than 3 s into a clip, or on the first one, it restarts the current clip instead. */
+  prev() {
+    const q = state.queue;
+    if (!q || !state.clip) return;
+    goTo(q.index > 0 && state.pos - state.clip.startS <= 3 ? q.index - 1 : q.index);
+  },
+  /** Ends the queue; the clip that is playing carries on to its end. */
+  stopQueue() { if (state.queue || state.switching) set({ queue: null, switching: null }); },
   pause() { if (yt && ytReady) yt.pauseVideo(); },
   toggle(clip?: Clip) {
     if (state.playing && (!clip || clip.key === state.clip?.key)) player.pause();
@@ -202,6 +254,7 @@ export const player = {
     if (!c) return;
     const t = c.startS + Math.max(0, Math.min(1, f)) * (c.endS - c.startS);
     if (state.clip?.key !== c.key) {
+      if (state.queue) set({ queue: null, switching: null });
       stopPoll();
       resetCaptions(c.videoId);
       set({ clip: c, pos: t, playing: false });
@@ -240,6 +293,6 @@ export const player = {
   close() {
     stopPoll();
     if (yt && ytReady) yt.stopVideo();
-    set({ clip: null, pos: 0, playing: false });
+    set({ clip: null, pos: 0, playing: false, queue: null, switching: null });
   },
 };

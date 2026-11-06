@@ -44,6 +44,16 @@
 .pl__yt svg, .pl__save svg { width: 11px; height: 11px; }
 .pl__save[aria-pressed="true"] { color: var(--ink-soft); cursor: default; }
 .pl__track { grid-column: 1 / -1; height: 3px; }
+/* "Play all" queue row of the mini player: previous, "2 of 5 · Guest", next */
+.pl__q { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
+.pl__qbtn {
+  flex: none; width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line-strong); background: var(--raised); color: var(--ink);
+  display: grid; place-items: center; cursor: pointer; padding: 0;
+}
+.pl__qbtn svg { width: 16px; height: 16px; }
+.pl__qbtn:disabled { opacity: 0.4; cursor: default; }
+.pl__qbtn:focus-visible { outline: 2px solid var(--violet-text); outline-offset: 2px; }
+.pl__qtx { flex: 1; min-width: 0; text-align: center; font-size: 13px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------- player controls: Cuepoint's own bar over the iframe (YouTube's controls are off) ---------- */
 .pc { position: absolute; inset: 0; z-index: 2; cursor: pointer; -webkit-tap-highlight-color: transparent; } /* catches every click */
@@ -80,6 +90,9 @@
     left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px));
     bottom: calc(12px + env(safe-area-inset-bottom, 0px)); width: auto; max-width: none;
   }
+  /* tap targets of at least 44 px */
+  .pl__pp, .pl__mini .ib, .pl__qbtn { width: 44px; height: 44px; }
+  .pl__qbtn svg { width: 18px; height: 18px; }
 }
 
 /* ---------- big player card ---------- */
@@ -179,6 +192,7 @@ dialog.pal { width: min(640px, calc(100% - 32px)); margin-top: 12vh; }
   display: grid; justify-items: center; gap: 8px; pointer-events: none; transition: bottom 0.25s var(--ease);
 }
 .has-mini .toasts { bottom: calc(330px + env(safe-area-inset-bottom, 0px)); }
+.has-queue .toasts { bottom: calc(390px + env(safe-area-inset-bottom, 0px)); }
 .toast {
   pointer-events: auto; display: flex; align-items: center; gap: 12px; max-width: calc(100% - 32px); padding: 10px 12px 10px 16px;
   border-radius: var(--radius-pill); background: var(--raised); border: 1px solid var(--line-strong); font-size: 14px;

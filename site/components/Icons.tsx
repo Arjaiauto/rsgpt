@@ -67,3 +67,9 @@ export const IconThumbUp = (p: P) => (
 export const IconThumbDown = (p: P) => (
   <svg {...base(p)} style={{ transform: "scaleY(-1)", ...p.style }}><path d="M7 11v9H4a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1zm0 0l4-7a2 2 0 0 1 2 2v4h5.5a2 2 0 0 1 2 2.3l-1.2 6a2 2 0 0 1-2 1.7H7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" /></svg>
 );
+export const IconPrev = (p: P) => (
+  <svg {...base(p)}><path d="M7 5.5v13M18 5.5v13L9.5 12z" fill="currentColor" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" /></svg>
+);
+export const IconNext = (p: P) => (
+  <svg {...base(p)}><path d="M17 5.5v13M6 5.5v13l8.5-6.5z" fill="currentColor" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" /></svg>
+);

@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { fmtTime, youtubeAt } from "@/lib/player-types";
-import { IconBookmark, IconExternal, IconLink, IconPause, IconPlay, IconX } from "@/components/Icons";
+import { IconBookmark, IconExternal, IconLink, IconNext, IconPause, IconPlay, IconPrev, IconX } from "@/components/Icons";
 import { toast } from "@/lib/toast";
 import { PlayerControls } from "./PlayerControls";
 import { player, setPlayerHost, slotFor, usePlayer } from "./store";
@@ -13,7 +13,7 @@ import { useClipSave } from "./useClipSave";
     the mini player at the bottom right (full width under 820px). The iframe's DOM node never moves. */
 export function PlayerLayer() {
   const router = useRouter();
-  const { clip, pos, playing, slots, muted, captions } = usePlayer();
+  const { clip, pos, playing, slots, muted, captions, queue, switching } = usePlayer();
   const layerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -27,6 +27,13 @@ export function PlayerLayer() {
     document.body.classList.toggle("has-mini", mode === "mini");
     return () => document.body.classList.remove("has-mini");
   }, [mode]);
+
+  // The mini player is taller while it shows the queue row; pages that clear it (the Ask dock) use this class.
+  const queued = mode === "mini" && !!queue;
+  useEffect(() => {
+    document.body.classList.toggle("has-queue", queued);
+    return () => document.body.classList.remove("has-queue");
+  }, [queued]);
 
   // Sit exactly over the slot: follow it every frame while it is on the page (scroll, resize, layout shifts).
   useLayoutEffect(() => {
@@ -111,6 +118,16 @@ export function PlayerLayer() {
             </div>
           </div>
           <button className="ib" type="button" onClick={() => player.close()} aria-label="Close player"><IconX /></button>
+          {queue && (
+            <div className="pl__q">
+              <button className="pl__qbtn" type="button" onClick={() => player.prev()} aria-label="Previous moment"><IconPrev /></button>
+              <span className="pl__qtx">
+                {switching ? `Next: ${switching}…` : `${queue.index + 1} of ${queue.clips.length} · ${clip.guest}`}
+              </span>
+              <button className="pl__qbtn" type="button" onClick={() => player.next()} disabled={queue.index >= queue.clips.length - 1} aria-label="Next moment"><IconNext /></button>
+              <span className="sr" role="status" aria-live="polite">{`Playing ${queue.index + 1} of ${queue.clips.length}, ${clip.guest}`}</span>
+            </div>
+          )}
           <div
             className="track pl__track"
             role="slider"
