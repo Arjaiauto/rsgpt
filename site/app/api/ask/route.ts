@@ -1,7 +1,7 @@
 import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { etaMs } from "@/lib/eta";
-import { followups, logQuestion, sourceCards, streamAnswer } from "@/lib/ask/answer";
+import { followups, logQuestion, shouldRetry, sourceCards, streamAnswer } from "@/lib/ask/answer";
 import { ANSWER_LENGTHS, ANSWER_LENGTH_COOKIE, ASK, COVERED_QUESTIONS, parseAnswerLength } from "@/lib/ask/config";
 import { retrieve, sourceOf } from "@/lib/ask/retrieve";
 import { getGuestScope } from "@/lib/guests";
@@ -68,6 +68,7 @@ export async function POST(request: Request) {
         emit({ type: "step", step: 1 });
         const r = await retrieve(question, earlier, t, scope?.videoIds, ANSWER_LENGTHS[length].toModel);
         language = r.rewritten.language;
+        t.bestSimilarity = r.bestSimilarity;
         const episodes = new Set(r.chunks.map((c) => c.videoId)).size;
         emit({ type: "step", step: 2, moments: r.chunks.length, episodes });
         if (debug) emit({ type: "debug", data: {
@@ -77,6 +78,7 @@ export async function POST(request: Request) {
 
         const suggestions = COVERED_QUESTIONS.filter((q) => q.toLowerCase() !== question.toLowerCase()).slice(0, 3);
         if (!r.found) {
+          t.outcome = "retrieval";
           emit({ type: "notfound", suggestions, language });
           await finish("", [], false);
           if (debug) emit({ type: "debug", data: { timings: t } });
@@ -95,12 +97,14 @@ export async function POST(request: Request) {
         if (aborted) { controller.close(); return; }
         const next = t.time("followups", () => followups(question, r));
         let a = await streamAnswer(question, r, emit, t, length);
-        if ((a.notFound || a.thin) && r.bestSimilarity >= ASK.retrySimilarity) {
-          // The archive clearly has close matches, so NOT_FOUND (or an answer with fewer than two cited sentences)
-          // is more likely a misjudgement: try once more, thinking harder. Nothing of the first attempt was shown.
+        if (shouldRetry(a, r.bestSimilarity)) {
+          // A thin answer (fewer than two cited sentences survived) is always retried; NOT_FOUND only when the archive
+          // clearly has close matches (ASK.retrySimilarity), as it is then more likely a misjudgement. The retry thinks
+          // harder and is told to cite every sentence. Nothing of the first attempt was shown.
           t.mark("retry");
-          a = await streamAnswer(question, r, emit, t, length, "medium");
+          a = await streamAnswer(question, r, emit, t, length, "medium", true);
         }
+        t.outcome = a.notFound ? "not_found" : a.thin ? "thin" : "answered";
 
         if (aborted) { controller.close(); return; }
         emit({ type: "step", step: 4 });

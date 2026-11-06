@@ -13,6 +13,15 @@ export class Timings {
 
   /** Answer length mode of the request (short / medium / detailed); saved in the timings JSON. */
   mode?: string;
+  /** Best cosine similarity of the retrieved chunks (the retrieval gate is ASK.minSimilarity, the NOT_FOUND retry gate ASK.retrySimilarity). */
+  bestSimilarity?: number;
+  /** How the question ended: "answered", "thin" (fewer than ASK.minCitedSentences cited sentences survived), "not_found"
+      (the model replied NOT_FOUND) or "retrieval" (best similarity below ASK.minSimilarity, no model call). */
+  outcome?: "answered" | "thin" | "not_found" | "retrieval";
+  /** Every answer attempt, in order: the first, and the retry if there was one. `counts` are that attempt's sentence counts
+      (shown, cited, dropped = no citation, copies = verbatim transcript, orphans, connectives, speaker_mismatch), i.e. why
+      sentences were thrown away, which `sentences` (the last attempt only) no longer shows after a retry. */
+  readonly attempts: { effort: string; strict: boolean; result: "ok" | "thin" | "not_found"; counts: Record<string, number> }[] = [];
 
   since(): number {
     return Math.round(performance.now() - this.t0);
@@ -34,7 +43,13 @@ export class Timings {
   }
 
   toJSON() {
-    return { stages: this.stages, at: this.at, tokens: this.tokens, sentences: this.counts, ...(this.mode ? { mode: this.mode } : {}) };
+    return {
+      stages: this.stages, at: this.at, tokens: this.tokens, sentences: this.counts,
+      ...(this.mode ? { mode: this.mode } : {}),
+      ...(this.bestSimilarity != null ? { best_similarity: Math.round(this.bestSimilarity * 1000) / 1000 } : {}),
+      ...(this.outcome ? { outcome: this.outcome } : {}),
+      ...(this.attempts.length ? { attempts: this.attempts } : {}),
+    };
   }
 
   /** One log line, e.g. "ask 9.8s first 4.1s | rewrite 1.2s · embed 0.3s · …". */

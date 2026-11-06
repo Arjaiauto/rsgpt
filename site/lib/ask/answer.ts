@@ -17,6 +17,16 @@ const LANGUAGE_NAME: Record<AskLanguage, string> = {
 
 const NOT_FOUND = "NOT_FOUND";
 
+/** Added to the user turn of a retry (not the system prompt, which stays cached): the first attempt left too few cited
+    sentences, so the retry is told to cite every sentence or leave the point out. The citation gate itself is unchanged. */
+const CITE_EVERY_SENTENCE = "Every sentence must end with a citation to the search result it comes from. If a point can't be cited, leave it out instead of writing it uncited.";
+
+/** Whether the first attempt gets a retry. A thin result (the model did cite something, but fewer than
+    ASK.minCitedSentences sentences survived the gate) is always retried: it shows the archive has the topic. NOT_FOUND is
+    retried only when the best chunk is similar enough (ASK.retrySimilarity) that it is more likely a misjudgement. */
+export const shouldRetry = (a: { notFound: boolean; thin: boolean }, bestSimilarity: number) =>
+  a.thin || (a.notFound && bestSimilarity >= ASK.retrySimilarity);
+
 function systemPrompt(language: AskLanguage, hostView: boolean) {
   return `You answer questions about the Figuring Out podcast, hosted by Raj Shamani, using only the search results provided. Each search result is a stretch of one episode's transcript; its title is "episode title | guest names | month". Each block is one turn, starting with its time and speaker ("Host" is Raj Shamani). Hindi turns come with an English translation.
 
@@ -51,6 +61,8 @@ export async function streamAnswer(
   t: Timings,
   length: AnswerLength = "medium",
   effort: AnswerEffort = ASK.answerEffort,
+  /** A retry: the user turn also tells the model to cite every sentence. */
+  strictCitations = false,
 ): Promise<{ text: string; citedChunkIds: number[]; cited: Cite[]; notFound: boolean; thin: boolean; gateLog: string[] }> {
   const mode = ANSWER_LENGTHS[length];
   const top = r.chunks.slice(0, mode.toModel);
@@ -67,7 +79,7 @@ export async function streamAnswer(
   }));
 
   // The length instruction follows the question in the user turn (the system prompt, and its cache, is the same for every mode).
-  const userText = mode.instruction ? `${question}\n\n${mode.instruction}` : question;
+  const userText = [question, mode.instruction, strictCitations ? CITE_EVERY_SENTENCE : null].filter(Boolean).join("\n\n");
 
   const claudeStart = performance.now();
   const sinceClaude = () => Math.round(performance.now() - claudeStart);
@@ -184,6 +196,7 @@ export async function streamAnswer(
   t.stages.claude_total = sinceClaude();
   t.at.answer_done = t.since(); // the last attempt, if retried
   if (first) notFound = true; // no text at all
+  t.attempts.push({ effort, strict: strictCitations, result: notFound ? "not_found" : !enough ? "thin" : "ok", counts: { ...gate.counts } });
 
   // thin: Claude answered, but fewer than two sentences survived the gate; nothing was sent.
   return { text, citedChunkIds: [...new Set(cited.map((c) => c.chunkId))], cited, notFound, thin: !notFound && !enough, gateLog: gate.log };
