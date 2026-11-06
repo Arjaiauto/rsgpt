@@ -37,10 +37,13 @@ returns table (
 )
 language sql
 stable
--- The index path asks HNSW for 200 neighbours; HNSW returns at most ef_search rows.
-set hnsw.ef_search = 200
 set search_path = public, extensions
 as $$
+-- The index path asks HNSW for 200 neighbours, and an HNSW scan returns at most hnsw.ef_search rows (40 by default).
+-- Set for this transaction only (is_local = true), at run time like find_line.sql does for pg_trgm: a SET clause on the
+-- function itself is refused in Supabase ("permission denied to set parameter").
+select set_config('hnsw.ef_search', '200', true);
+
 with exact_hits as materialized (
     -- every chunk in scope, compared exactly; only read when exact_scan is true. "+ 0" keeps the planner from ordering
     -- by the HNSW index here (an index scan filtered to a small scope would return fewer than 40 rows).
