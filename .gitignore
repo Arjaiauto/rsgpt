@@ -1,4 +1,5 @@
-.env
+.env*
+!.env.example
 data/
 audio/
 __pycache__/
