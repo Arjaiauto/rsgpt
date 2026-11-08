@@ -35,7 +35,7 @@ export function recordLogin(firstName: string, device: DeviceType, deviceId: str
   background((signal) => db().rpc("record_login", { p_name: firstName, p_device_type: device, p_device_id: deviceId }).abortSignal(signal));
 }
 
-export type EventType = "page_view" | "find_line" | "play_all";
+export type EventType = "page_view" | "find_line" | "play_all" | "search";
 
 /** One action by a signed-in person. `detail` is small JSON (the database refuses more than 1,000 characters). */
 export function logEvent(firstName: string, deviceId: string | null, type: EventType, detail: Record<string, string>): void {

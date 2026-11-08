@@ -13,7 +13,9 @@ const STUBS = {
   // Cookies come from globalThis.__testCookies ({name: value}) when a script sets it (scripts/saved-test.mjs does).
   "next/headers": stub("export const cookies = async () => ({ get: (n) => { const v = globalThis.__testCookies?.[n]; return v == null ? undefined : { name: n, value: v }; } }); export const headers = async () => new Headers();"),
   "next/navigation": stub("export const redirect = (to) => { throw new Error('redirect ' + to); };"),
-  "next/server": stub("export const connection = async () => {};"),
+  // NextResponse.json builds a plain Response; after() keeps its callbacks in globalThis.__afterCallbacks instead of running
+  // them (scripts/search-test.mjs counts them to see what a route would have logged, without writing anything).
+  "next/server": stub("export const connection = async () => {}; export class NextResponse extends Response { static json(body, init) { return new Response(JSON.stringify(body), { ...init, headers: { 'content-type': 'application/json', ...(init && init.headers) } }); } }; export const after = (fn) => { (globalThis.__afterCallbacks ??= []).push(fn); };"),
 };
 
 function withExtension(file) {
