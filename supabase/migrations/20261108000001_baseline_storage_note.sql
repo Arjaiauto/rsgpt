@@ -1,0 +1,3 @@
+-- Baseline note (no statements). The storage schema is not part of the public-schema dump.
+-- Live state at 2026-11-08: storage bucket "guest-photos" exists and is public (guest photos, 400 px webp).
+-- It is created through the Supabase API by pipeline/13_guest_photos.py, not by SQL.
